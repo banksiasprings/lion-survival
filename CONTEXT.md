@@ -77,7 +77,10 @@ not flavour.
 - [x] Phase 3 — mutual stealth detection (`updateStealth` visual×audio model: grass+crouch+
       stillness slash visibility, running is loud; lions hidden in grass sink + drop off radar;
       wind scent extends downwind detection; HIDDEN/EXPOSED + spotted-growl + rustle cues)
-- [ ] Phase 4 — grappling hook to trees
+- [x] Phase 4 — grappling hook to trees (aim-cone target on climbable acacia/baobab/marula →
+      reel up to a branch perch; safe from lions + foliage concealment; grip-stamina drains to
+      force a drop; Space/G/RMB drop; drop-attack deals damage+stun. Note: target via aim cone,
+      NOT geometry raycast — LOD trees don't recurse in raycast.)
 - [ ] Phase 5 — atmosphere picks (TBD 2–3)
 
 Each phase is an independent commit so it can be iterated in isolation.

@@ -77,10 +77,11 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
 </div>
 <div id="overlay">
   <h1>🦁 LION SURVIVAL</h1>
-  <p>Survive as long as possible against hunting lions.<br>Collect wood, build walls, light campfires, use your grapple hook.</p>
+  <p>Survive the savanna. Lions hunt hardest at dawn, dusk and through the night — rest in shade by day.<br>
+     Hide in tall grass, stay low and quiet, mind the wind, and grapple into a tree when the pride closes in.</p>
   <div style="font-size:12px;opacity:0.65;line-height:1.9;text-align:center">
-    WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch<br>
-    1/G Grapple (LMB fire · RMB release) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe<br>
+    WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hide in grass)<br>
+    1/G Grapple → tree (LMB fire · RMB/Space drop · drop onto a lion = attack) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe<br>
     E Collect Wood/Rocks &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; T Craft Torch &nbsp;|&nbsp; LMB+Axe Chop Wall
   </div>
   <button id="start-btn">▶ START GAME</button>
@@ -110,7 +111,9 @@ const PLAYER = {
   eyeHeight: 1.7, crouchHeight: 1.0,
   maxHealth: 100, maxStamina: 100,
   staminaDrain: 30, staminaRegen: 18,
-  healthRegen: 1.5, lionDamage: 25
+  healthRegen: 1.5, lionDamage: 25,
+  climbSpeed: 14, perchDrain: 7,   // grapple reel-up speed; grip stamina/sec while perched
+  grappleRange: 36                 // max climb-grapple distance to a tree
 };
 let player = {};
 
@@ -852,6 +855,8 @@ function initPlayer(){
     crouching: false,
     sprinting: false,
     inDanger: false,
+    inTree: false, climbing: false,   // Phase 4 grapple/perch state
+    _dropCd: 0, _grappleCd: 0,         // drop-attack + re-grapple cooldowns
   };
   camera.position.copy(player.pos);
   camera.position.y += PLAYER.eyeHeight;
@@ -872,9 +877,10 @@ function registerControls(){
     if(e.code==='Digit5') setSlot(5);
     if(e.code==='KeyG'){
       setSlot(1);
-      if(grapple.active) releaseGrapple();
+      if(grapple.active || player.inTree || player.climbing) releaseGrapple();
       else fireGrapple();
     }
+    if(e.code==='Space' && player.inTree) dropFromTree();   // drop off the branch
     if(e.code==='KeyF') throwRock();
     if(e.code==='KeyE') doCollect();
     if(e.code==='KeyT') craftTorch();
@@ -917,7 +923,8 @@ function onLeftClick(){
 }
 
 function onRightClick(){
-  if(activeSlot===1) releaseGrapple();
+  // RMB always releases the grapple / drops from a tree, whatever slot is held.
+  if(player.inTree || grapple.active || player.climbing) releaseGrapple();
 }
 
 // =====================================================================
@@ -942,11 +949,15 @@ function updatePlayer(dt){
   // Sprinting + stamina (can't sprint while crouched)
   const wantSprint = !!keys['ShiftLeft'] && player.stamina > 0 && !player.crouching &&
     (keys['KeyW']||keys['KeyA']||keys['KeyS']||keys['KeyD']);
+  if(player._dropCd>0)    player._dropCd    -= dt;
+  if(player._grappleCd>0) player._grappleCd -= dt;
+
   if(wantSprint){
     player.stamina = Math.max(0, player.stamina - PLAYER.staminaDrain*dt);
     player.sprinting = true;
   } else {
-    player.stamina = Math.min(PLAYER.maxStamina, player.stamina + PLAYER.staminaRegen*dt);
+    // No passive regen while perched — grip stamina only drains up there (anti-camp).
+    if(!player.inTree) player.stamina = Math.min(PLAYER.maxStamina, player.stamina + PLAYER.staminaRegen*dt);
     player.sprinting = false;
   }
 
@@ -964,28 +975,35 @@ function updatePlayer(dt){
   if(keys['KeyD']) move.addScaledVector(right,   1);
   if(move.lengthSq()>0) move.normalize().multiplyScalar(speed);
 
-  // Grapple pull
-  if(grapple.active && grapple.point){
+  // ---- Grapple / climbing / perched (Phase 4) ----
+  if(player.inTree){
+    // Perched on a branch: anchored, no gravity, safe from lions. Grip tires —
+    // when stamina hits zero you slip and fall (no infinite tree-camping).
+    player.vel.set(0,0,0);
+    player.pos.copy(grapple.perch);
+    player.stamina = Math.max(0, player.stamina - PLAYER.perchDrain*dt);
+    if(player.stamina <= 0){ showKillfeed('💪 Grip gave out!'); dropFromTree(); }
+  } else if(grapple.active && grapple.mode==='climb'){
+    // Reeling up to the perch point.
+    const to = grapple.perch.clone().sub(player.pos);
+    const d = to.length();
+    if(d > 0.4){ player.pos.addScaledVector(to.normalize(), Math.min(d, PLAYER.climbSpeed*dt)); player.vel.set(0,0,0); }
+    else arriveInTree();
+  } else if(grapple.active && grapple.point){
+    // Generic pull toward a non-tree surface (mobility — original behaviour).
     const toHook = grapple.point.clone().sub(player.pos);
     const dist = toHook.length();
-    if(dist > 0.5){
-      const pull = toHook.normalize().multiplyScalar(14);
-      player.vel.copy(pull);
-    } else {
-      releaseGrapple();
-    }
+    if(dist > 0.5) player.vel.copy(toHook.normalize().multiplyScalar(14));
+    else releaseGrapple();
   } else {
     player.vel.x = move.x;
     player.vel.z = move.z;
     // Gravity
-    if(!player.onGround){
-      player.vel.y += PLAYER.gravity * dt;
-    }
+    if(!player.onGround) player.vel.y += PLAYER.gravity * dt;
     // Jump
-    if(keys['Space'] && player.onGround){
-      player.vel.y = PLAYER.jumpForce;
-      player.onGround = false;
-    }
+    if(keys['Space'] && player.onGround){ player.vel.y = PLAYER.jumpForce; player.onGround = false; }
+    // Drop attack: falling onto a lion from above (post-drop or a jump) hits hard.
+    if(player.vel.y < -3 && !player.onGround) checkDropAttack();
   }
 
   // Integrate position
@@ -1069,14 +1087,17 @@ function updateHealth(dt){
   if(gameState!=='playing') return;
   let nearLion = false;
   let veryNear = false;
-  lionMeshes.forEach(L=>{
-    const d = L.pos.distanceTo(player.pos);
-    if(d < 1.5){
-      player.health -= (L.damage || PLAYER.lionDamage) * dt;
-      nearLion = true;
-    }
-    if(d < 6) veryNear = true;
-  });
+  // Up a tree you're out of reach — lions can't climb, so no damage or danger.
+  if(!player.inTree){
+    lionMeshes.forEach(L=>{
+      const d = L.pos.distanceTo(player.pos);
+      if(d < 1.5){
+        player.health -= (L.damage || PLAYER.lionDamage) * dt;
+        nearLion = true;
+      }
+      if(d < 6) veryNear = true;
+    });
+  }
   player.inDanger = veryNear;
   if(!nearLion){
     player.health = Math.min(PLAYER.maxHealth, player.health + PLAYER.healthRegen*dt);
@@ -1231,12 +1252,15 @@ function updateStealth(dt){
   let aud = !moving ? 2 : crouch ? 4 : sprint ? 22 : 12;
   if(inGrass && moving) aud += crouch ? 1 : sprint ? 8 : 4;
 
+  // Up in the canopy the foliage hides you — lions quickly lose your scent/sight.
+  if(player.inTree){ visMul *= 0.15; aud = Math.min(aud, 2); }
+
   stealth.inGrass=inGrass; stealth.moving=moving; stealth.sprint=sprint;
   stealth.crouch=crouch; stealth.visMul=visMul; stealth.aud=aud;
 
   const detected = lionMeshes.some(L=>L.state==='chase');
   stealth.detected = detected;
-  const wellHidden = inGrass && visMul < 0.45 && !detected;
+  const wellHidden = (inGrass && visMul < 0.45 && !detected) || (player.inTree && !detected);
   stealth.hidden = wellHidden;
 
   // Cues: a sharp growl + jolt the instant the pride first locks onto you.
@@ -1451,36 +1475,98 @@ function updateCorpses(dt){
 // =====================================================================
 //  GRAPPLE
 // =====================================================================
-function fireGrapple(){
-  if(grapple.active) return;
-  const center = new THREE.Vector2(0,0);
-  raycaster.setFromCamera(center, camera);
-
-  // Grapple ignores lions — it can no longer kill them. The ray only attaches
-  // to world geometry (trees, walls, boundary, terrain), passing over any lion.
-
-  // Check scene objects (trees, walls, boundary, terrain)
-  const targets = scene.children.filter(c=>c.name==='tree'||c.name==='wall'||c.name==='boundary'||c.name==='terrain');
-  const hits = raycaster.intersectObjects(targets, true);
-  if(!hits.length) return;
-  const hit = hits[0];
-  if(hit.distance > 40) return;
-
-  grapple.active = true;
-  grapple.point  = hit.point.clone();
-
-  // Draw line
+function drawGrappleLine(pt){
   const mat = new THREE.LineBasicMaterial({color:0xffee00});
-  const geo = new THREE.BufferGeometry().setFromPoints([camera.position.clone(), grapple.point]);
+  const geo = new THREE.BufferGeometry().setFromPoints([camera.position.clone(), pt.clone()]);
   grapple.line = new THREE.Line(geo, mat);
   scene.add(grapple.line);
+}
+
+function fireGrapple(){
+  if(grapple.active || player.inTree || player.climbing) return;
+  if(player._grappleCd > 0) return;                 // rope cooldown after a drop
+  raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+
+  // Prefer a climbable tree you're looking at → reel up to a perch (Phase 4).
+  // (Geometry-raycasting LOD trees is unreliable — LOD.raycast doesn't recurse —
+  // so we target by an aim cone toward the trunk, which is also easier to aim.)
+  const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+  let best=null, bestDot=0.92;                       // ~23° cone
+  treeObjects.forEach(t=>{
+    if(!t.climbable) return;
+    const tp = t.pos;
+    const to = new THREE.Vector3(tp.x-camera.position.x,
+                                 (terrainY(tp.x,tp.z)+t.perchY)-camera.position.y,
+                                 tp.z-camera.position.z);
+    if(to.length() > PLAYER.grappleRange) return;
+    const dot = to.normalize().dot(fwd);
+    if(dot > bestDot){ bestDot = dot; best = t; }
+  });
+  if(best){
+    const tp = best.pos;
+    const away = new THREE.Vector3(player.pos.x-tp.x, 0, player.pos.z-tp.z);
+    if(away.lengthSq() < 0.01) away.set(1,0,0);
+    away.normalize().multiplyScalar((best.trunkR||0.4) + 0.6);   // sit on a branch beside the trunk
+    grapple.perch = new THREE.Vector3(tp.x+away.x, terrainY(tp.x,tp.z)+best.perchY, tp.z+away.z);
+    grapple.active = true; grapple.mode = 'climb'; grapple.tree = best;
+    grapple.point = grapple.perch.clone();
+    player.climbing = true;
+    drawGrappleLine(grapple.perch);
+    playSound('grapple');
+    return;
+  }
+
+  // Fallback: pull toward any surface (mobility) — original behaviour.
+  const targets = scene.children.filter(c=>c.name==='tree'||c.name==='wall'||c.name==='boundary'||c.name==='terrain');
+  const hits = raycaster.intersectObjects(targets, true);
+  if(!hits.length || hits[0].distance > 40) return;
+  grapple.active = true; grapple.mode = 'pull'; grapple.point = hits[0].point.clone();
+  drawGrappleLine(grapple.point);
   playSound('grapple');
 }
 
+// Arrived at the perch — lock in.
+function arriveInTree(){
+  player.inTree = true; player.climbing = false;
+  grapple.active = false; grapple.mode = 'perch';
+  player.pos.copy(grapple.perch); player.vel.set(0,0,0);
+  if(grapple.line){ killObj(grapple.line); grapple.line=null; }
+  showKillfeed('🌳 Perched — safe from lions (grip tiring)');
+  playSound('collect');
+}
+
+// Drop off the branch into a fall (Space / G / RMB / grip-out).
+function dropFromTree(){
+  if(!player.inTree) return;
+  player.inTree = false;
+  grapple.active = false; grapple.mode = null; grapple.tree = null; grapple.perch = null;
+  player.vel.set(0, -2, 0); player.onGround = false;
+  player._dropCd = 0;                 // arm the drop attack
+  player._grappleCd = 2.5;            // can't immediately re-grapple (anti tree-bob)
+}
+
+// Falling onto a lion from above deals heavy damage + stun, then you bounce.
+function checkDropAttack(){
+  if(player._dropCd > 0) return;
+  for(const L of lionMeshes){
+    const dx = L.pos.x-player.pos.x, dz = L.pos.z-player.pos.z;
+    if(dx*dx+dz*dz < 4 && player.pos.y > L.pos.y + 0.4){
+      L.health -= 14; L.stunTimer = 4; L.state = 'stunned'; L.flashTimer = 0.3;
+      player.vel.y = 6;               // bounce off the kill
+      player._dropCd = 1.0;
+      shakeTime = 0.2; shakeAmt = 0.005;
+      playSound('throw');
+      showKillfeed(L.health<=0 ? '🪂 Drop-attack KILL!' : '🪂 Drop attack!');
+      break;
+    }
+  }
+}
+
 function releaseGrapple(){
+  if(player.inTree){ dropFromTree(); return; }   // perched → drop down
   if(!grapple.active) return;
-  grapple.active = false;
-  grapple.point  = null;
+  grapple.active = false; grapple.mode = null; grapple.tree = null; grapple.perch = null;
+  grapple.point  = null; player.climbing = false;
   if(grapple.line){ killObj(grapple.line); grapple.line=null; }
   player.vel.set(0,0,0);
 }
@@ -1872,7 +1958,9 @@ function updateHUD(){
   // Top left
   document.getElementById('topleft').innerHTML =
     `⏱ ${fmtTime(elapsed)}<br>📅 Day ${dn.day}`+
-    (player.crouching?'<br>🧎 CROUCHING':'');
+    (player.inTree?`<br>🌳 IN TREE · grip ${player.stamina|0}`:
+       player.climbing?'<br>🧗 CLIMBING':
+       player.crouching?'<br>🧎 CROUCHING':'');
 
   // Top right
   const timeLeft = dn.isDay
@@ -1893,6 +1981,8 @@ function updateHUD(){
   if(player.inDanger){
     const pulse = (Math.sin(Date.now()*0.006)+1)*0.5;
     shadow = `inset 0 0 100px rgba(200,0,0,${0.25+pulse*0.35})`;
+  } else if(player.inTree){
+    shadow = 'inset 0 0 150px rgba(20,40,10,0.55)';   // foliage tint in the canopy
   } else if(player._hidden){
     // Concealment cue — screen edges darken softly while you're hidden in grass.
     shadow = 'inset 0 0 140px rgba(0,0,0,0.5)';
@@ -1902,6 +1992,8 @@ function updateHUD(){
   // Prompt
   const promptEl = document.getElementById('prompt');
   let promptText = '';
+  if(player.inTree) promptText = '[Space] Drop  ·  drop onto a lion to attack';
+  else if(player.climbing) promptText = '…climbing…';
   treeObjects.forEach(t=>{ if(t.pos.distanceTo(player.pos)<3.5 && t.cooldown<=0) promptText='[E] Collect Wood'; });
   rockSpawns.forEach(r=>{ if(r.available && r.pos.distanceTo(player.pos)<3) promptText='[E] Pick up Rock'; });
   promptEl.textContent = promptText;
@@ -2064,7 +2156,7 @@ function resetGame(){
   corpses.length    = 0;
   thrownRocks.length= 0;
 
-  grapple   = { active:false, point:null, line:null };
+  grapple   = { active:false, point:null, line:null, mode:null, perch:null, tree:null };
   torchState= { crafted:false, on:false, fuel:90, light:null };
 
   woodCount  = 0;
