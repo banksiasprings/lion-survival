@@ -16,7 +16,7 @@ grapple into a tree when the pride closes in.
 
 ### Controls
 - **WASD** move · **Mouse** look · **Shift** sprint · **Space** jump · **C** crouch (hide in grass)
-- **1 / G** grapple → tree (LMB fire · RMB/Space drop · drop onto a lion = attack)
+- **1 / G** grapple → tree (LMB fire · RMB/Space drop · safe from lions while perched)
 - **Q** pounce (hunt prey — ambush from grass for ×3) · **E** eat a kill / collect
 - **2** walls · **3** campfire · **4** torch · **5** axe · **F** throw rock · **T** craft torch
 
@@ -27,7 +27,7 @@ grapple into a tree when the pride closes in.
   coordinate, flank and converge, a hunger→aggression cycle, midday shade-resting.
 - **Mutual stealth** — grass + crouch + stillness shrink how far you're seen/heard;
   lions stalk hidden in grass too; wind carries your scent downwind.
-- **Grapple-to-tree** — perch out of reach, drop-attack from above (grip stamina limits camping).
+- **Grapple-to-tree** — perch out of reach when the pride closes in (grip stamina limits camping).
 - **Food chain** — 6 prey species in herds (zebra, wildebeest, gazelle, impala, warthog,
   kudu); lions hunt them, vultures circle kills, you can hunt ahead of the pride or
   scavenge their kills (risky — they guard them). Keep your hunger up or you starve.

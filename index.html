@@ -83,7 +83,7 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
      Hide in tall grass, stay low and quiet, mind the wind, and grapple into a tree when the pride closes in.</p>
   <div style="font-size:12px;opacity:0.65;line-height:1.9;text-align:center">
     WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hide in grass)<br>
-    1/G Grapple → tree (LMB fire · RMB/Space drop · drop onto a lion = attack) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe<br>
+    1/G Grapple → tree (LMB fire · RMB/Space drop · safe from lions while perched) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe<br>
     Q Pounce (hunt prey — ambush from grass for ×3) &nbsp;|&nbsp; E Eat kill / Collect &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; T Craft Torch &nbsp;|&nbsp; LMB+Axe Chop Wall<br>
     <span style="opacity:0.8">Watch your 🍖 hunger — eat prey you hunt or scavenge lion kills (they'll fight you for it).</span>
   </div>
@@ -250,6 +250,19 @@ function tallGrassAt(x, z){
     if((x-c.x)*(x-c.x)+(z-c.z)*(z-c.z) < c.r*c.r) return c;
   }
   return null;
+}
+
+// Push an XZ position out of any player-built wall (sphere vs AABB). Used by
+// lions and prey so animals can't walk through walls.
+function collideWalls(pos, radius){
+  for(let i=0;i<wallAABBs.length;i++){
+    const a = wallAABBs[i];
+    if(pos.y > a.max.y - 0.1) continue;                 // cleared the top — let it pass over
+    const cx = clamp(pos.x, a.min.x, a.max.x), cz = clamp(pos.z, a.min.z, a.max.z);
+    const dx = pos.x-cx, dz = pos.z-cz, d = Math.sqrt(dx*dx+dz*dz);
+    if(d > 0.0001){ if(d < radius){ pos.x += (dx/d)*(radius-d); pos.z += (dz/d)*(radius-d); } }
+    else { pos.x += radius; }                            // dead-centre — shove out
+  }
 }
 
 // Procedural dry-savanna ground texture — mottled gold/brown with scattered
@@ -1028,7 +1041,7 @@ function initPlayer(){
     sprinting: false,
     inDanger: false,
     inTree: false, climbing: false,   // Phase 4 grapple/perch state
-    _dropCd: 0, _grappleCd: 0,         // drop-attack + re-grapple cooldowns
+    _grappleCd: 0,                     // re-grapple cooldown after dropping
     hunger: PLAYER.maxHunger, _pounceCd: 0,   // Phase 6 food chain
   };
   camera.position.copy(player.pos);
@@ -1123,7 +1136,6 @@ function updatePlayer(dt){
   // Sprinting + stamina (can't sprint while crouched)
   const wantSprint = !!keys['ShiftLeft'] && player.stamina > 0 && !player.crouching &&
     (keys['KeyW']||keys['KeyA']||keys['KeyS']||keys['KeyD']);
-  if(player._dropCd>0)    player._dropCd    -= dt;
   if(player._grappleCd>0) player._grappleCd -= dt;
   if(player._pounceCd>0)  player._pounceCd  -= dt;
 
@@ -1177,8 +1189,6 @@ function updatePlayer(dt){
     if(!player.onGround) player.vel.y += PLAYER.gravity * dt;
     // Jump
     if(keys['Space'] && player.onGround){ player.vel.y = PLAYER.jumpForce; player.onGround = false; }
-    // Drop attack: falling onto a lion from above (post-drop or a jump) hits hard.
-    if(player.vel.y < -3 && !player.onGround) checkDropAttack();
   }
 
   // Integrate position
@@ -1674,6 +1684,7 @@ function updateLions(dt){
     L.pos.addScaledVector(dir, speed*dt);
     L.pos.x = clamp(L.pos.x, -HALF+0.3, HALF-0.3);
     L.pos.z = clamp(L.pos.z, -HALF+0.3, HALF-0.3);
+    collideWalls(L.pos, 0.7);                       // hard stop at walls (avoidance alone leaked through)
     L.pos.y = terrainY(L.pos.x, L.pos.z);
     L.mesh.position.copy(L.pos);
     // Stalkers lying up in grass crouch lower so the blades cover them.
@@ -1809,7 +1820,7 @@ function makePrey(key,x,z,herdId){
   const P={ mesh:built.group, legs:built.legs, legLen:built.legLen, species:key, label:s.label,
     pos:new THREE.Vector3(x,ty,z), vel:new THREE.Vector3(),
     health:s.hp, maxHealth:s.hp, speed:s.speed, fleeDist:s.flee, food:s.food, counter:s.counter||0,
-    herdId, state:'graze', alertTimer:0, grazeTimer:rand(1,4),
+    herdId, state:'graze', alertTimer:0, grazeTimer:rand(1,4), stunTimer:0,
     wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
     legPhase:Math.random()*6.28, jukeTimer:0, jukeDir:0, hopPhase:0, flashTimer:0, _lastSpeed:0 };
   preyMeshes.push(P);
@@ -1857,6 +1868,13 @@ function updatePrey(dt){
     P.legs.forEach((leg,i)=>{ leg.position.y = legBase + Math.sin(P.legPhase+i*Math.PI/2)*0.09*s.size*(P.state==='flee'?1.5:0.5); });
     if(P.flashTimer>0){ P.flashTimer-=dt; const fl=P.flashTimer>0; P.mesh.children.forEach(c=>{ if(c.isMesh) c.material=fl?FLASH_MAT:c.userData.origMat; }); }
 
+    // Stunned by a thrown rock — frozen in place for a moment.
+    if(P.stunTimer>0){
+      P.stunTimer-=dt; P.state='stunned'; P._lastSpeed=0;
+      P.pos.y=terrainY(P.pos.x,P.pos.z); P.mesh.position.set(P.pos.x,P.pos.y,P.pos.z);
+      return;
+    }
+
     // nearest predator (lion or player) — prey flee both
     let threat=null, td=Infinity;
     lionMeshes.forEach(L=>{ const d=L.pos.distanceTo(P.pos); if(d<td){td=d;threat=L.pos;} });
@@ -1890,7 +1908,9 @@ function updatePrey(dt){
     if(s.dust && P.state==='flee' && Math.random()<dt*3.5) spawnDustPuff(P.pos);
 
     P.pos.addScaledVector(dir, speed*dt);
-    P.pos.x=clamp(P.pos.x,-47,47); P.pos.z=clamp(P.pos.z,-47,47); P.pos.y=terrainY(P.pos.x,P.pos.z);
+    P.pos.x=clamp(P.pos.x,-47,47); P.pos.z=clamp(P.pos.z,-47,47);
+    collideWalls(P.pos, 0.7);                       // don't run through walls
+    P.pos.y=terrainY(P.pos.x,P.pos.z);
     P.mesh.position.set(P.pos.x, P.pos.y+hopY, P.pos.z);
     if(dir.lengthSq()>0.001) P.mesh.rotation.y = Math.atan2(dir.x, dir.z);
   });
@@ -2059,25 +2079,7 @@ function dropFromTree(){
   player.inTree = false;
   grapple.active = false; grapple.mode = null; grapple.tree = null; grapple.perch = null;
   player.vel.set(0, -2, 0); player.onGround = false;
-  player._dropCd = 0;                 // arm the drop attack
   player._grappleCd = 2.5;            // can't immediately re-grapple (anti tree-bob)
-}
-
-// Falling onto a lion from above deals heavy damage + stun, then you bounce.
-function checkDropAttack(){
-  if(player._dropCd > 0) return;
-  for(const L of lionMeshes){
-    const dx = L.pos.x-player.pos.x, dz = L.pos.z-player.pos.z;
-    if(dx*dx+dz*dz < 4 && player.pos.y > L.pos.y + 0.4){
-      L.health -= 14; L.stunTimer = 4; L.state = 'stunned'; L.flashTimer = 0.3;
-      player.vel.y = 6;               // bounce off the kill
-      player._dropCd = 1.0;
-      shakeTime = 0.2; shakeAmt = 0.005;
-      playSound('throw');
-      showKillfeed(L.health<=0 ? '🪂 Drop-attack KILL!' : '🪂 Drop attack!');
-      break;
-    }
-  }
 }
 
 function releaseGrapple(){
@@ -2242,7 +2244,7 @@ function throwRock(){
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.copy(pos);
   scene.add(mesh);
-  thrownRocks.push({ mesh, vel:dir.multiplyScalar(25), dist:0 });
+  thrownRocks.push({ mesh, vel:dir.multiplyScalar(48), dist:0 });   // fast, flat throw
   playSound('throw');
 }
 
@@ -2251,11 +2253,11 @@ function updateThrownRocks(dt){
     const r = thrownRocks[i];
     r.mesh.position.addScaledVector(r.vel, dt);
     r.dist += r.vel.length()*dt;
-    r.vel.y -= 9.8*dt; // gravity on rock
+    r.vel.y -= 5*dt; // light gravity → flatter, faster-feeling throw
 
     let hit = false;
     lionMeshes.forEach(L=>{
-      if(r.mesh.position.distanceTo(L.pos) < 1.2){
+      if(r.mesh.position.distanceTo(L.pos) < 1.7){   // wider radius so fast rocks don't skip past
         L.health--;
         L.stunTimer = 5;
         L.state = 'stunned';
@@ -2264,16 +2266,16 @@ function updateThrownRocks(dt){
         if(L.health<=0){ showKillfeed('🪨 Rock kill!'); }
       }
     });
-    // Rocks also wound prey (ranged hunting) — and scatter the herd (Phase 6).
+    // Rocks also wound + STUN prey (ranged hunting) and scatter the herd.
     if(!hit) preyMeshes.forEach(P=>{
-      if(r.mesh.position.distanceTo(P.pos) < 1.2){
-        P.health -= 9; P.flashTimer = 0.25; P.state='flee'; P.alertTimer = 3;
+      if(r.mesh.position.distanceTo(P.pos) < 1.7){
+        P.health -= 9; P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
         hit = true;
-        showKillfeed(P.health<=0 ? '🪨 Rock kill — '+P.label+'!' : '🪨 Hit the '+P.label);
+        showKillfeed(P.health<=0 ? '🪨 Rock kill — '+P.label+'!' : '🪨 Stunned the '+P.label);
       }
     });
 
-    if(hit || r.dist > 30){
+    if(hit || r.dist > 50){
       killObj(r.mesh);
       thrownRocks.splice(i,1);
     }
@@ -2529,7 +2531,7 @@ function updateHUD(){
   // Prompt
   const promptEl = document.getElementById('prompt');
   let promptText = '';
-  if(player.inTree) promptText = '[Space] Drop  ·  drop onto a lion to attack';
+  if(player.inTree) promptText = '[Space] Drop down  ·  safe from lions up here';
   else if(player.climbing) promptText = '…climbing…';
   else {
     let nearPrey=false; for(const P of preyMeshes){ if(P.pos.distanceTo(player.pos)<PLAYER.pounceRange){ nearPrey=true; break; } }
