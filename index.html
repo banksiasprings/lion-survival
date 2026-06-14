@@ -117,6 +117,16 @@ let campfires   = [];
 let lionMeshes  = [];
 let corpses     = [];
 
+// Savanna environment (Phase 1) — also feeds stealth (Phase 3) & grapple (Phase 4)
+let wind = { angle: rand(0, Math.PI*2), dirX: 0, dirZ: 0, speed: 0.55, time: 0 };
+wind.dirX = Math.cos(wind.angle); wind.dirZ = Math.sin(wind.angle);
+let tallGrassClumps = [];   // {x,z,r}  — hide spots (player & lions), drive Phase 3 stealth
+let grassSys  = null;       // {mesh, mat}  InstancedBufferGeometry of blades
+let dustSys   = null;       // THREE.Points
+let skyDome   = null;       // gradient dome {mesh, mat}
+let hillBand  = null;       // distant rolling hills (fog-immune silhouette)
+let wateringHole = null;    // {x,z,r,mesh} — Phase 5 focal point
+
 // Grapple
 let grapple = { active: false, point: null, line: null, targetLion: null };
 
@@ -202,6 +212,65 @@ function terrainY(x,z){
        + Math.sin(x*0.4+z*0.3)*0.25 - 0.4;
 }
 
+// In-game hour 0..24. dn.time 0 = dawn ≈ 05:00; HALF_CYCLE (120) = dusk ≈ 17:00.
+// Drives lion activity (Phase 2) and the sky gradient (Phase 1).
+function gameHour(){ return (5 + (dn.time / 240) * 24) % 24; }
+
+// Nearest tall-grass clump to an XZ position (or null). Shared by the grass
+// visuals and the mutual stealth system (Phase 3).
+function tallGrassAt(x, z){
+  for(let i=0;i<tallGrassClumps.length;i++){
+    const c = tallGrassClumps[i];
+    if((x-c.x)*(x-c.x)+(z-c.z)*(z-c.z) < c.r*c.r) return c;
+  }
+  return null;
+}
+
+// Procedural dry-savanna ground texture — mottled gold/brown with scattered
+// darker patches and faded green tufts. One CanvasTexture, tiled across the map.
+function makeGroundTexture(){
+  const S = 512;
+  const cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const g = cv.getContext('2d');
+  // base dry gold
+  g.fillStyle = '#b59a5e'; g.fillRect(0,0,S,S);
+  // layered mottling
+  const blobs = [
+    {n:140, r:[18,46], c:['#a3854a','#c2a86a','#9c7f44']},
+    {n:90,  r:[8,22],  c:['#8f7338','#6f5a2c','#cab27a']},
+    {n:70,  r:[10,30],  c:['#7d8a45','#6b7d3a','#869155']}, // faded green patches
+    {n:160, r:[3,9],   c:['#7a6533','#5f4e28','#d8c48a']}, // speckle
+  ];
+  blobs.forEach(b=>{
+    for(let i=0;i<b.n;i++){
+      const x = Math.random()*S, y = Math.random()*S;
+      const r = b.r[0] + Math.random()*(b.r[1]-b.r[0]);
+      g.fillStyle = b.c[(Math.random()*b.c.length)|0];
+      g.globalAlpha = 0.35 + Math.random()*0.4;
+      g.beginPath(); g.arc(x,y,r,0,Math.PI*2); g.fill();
+    }
+  });
+  g.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(9, 9);
+  tex.anisotropy = 4;
+  return tex;
+}
+
+// Soft radial alpha sprite for dust motes (and reused for tree imposters).
+function makeSoftDot(){
+  const S = 64, cv = document.createElement('canvas'); cv.width=cv.height=S;
+  const g = cv.getContext('2d');
+  const grd = g.createRadialGradient(S/2,S/2,0,S/2,S/2,S/2);
+  grd.addColorStop(0,'rgba(255,255,255,1)');
+  grd.addColorStop(0.5,'rgba(255,255,255,0.5)');
+  grd.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0,0,S,S);
+  const tex = new THREE.CanvasTexture(cv);
+  return tex;
+}
+
 // =====================================================================
 //  SCENE SETUP
 // =====================================================================
@@ -274,7 +343,7 @@ function createTerrain(){
     pos.setY(i, terrainY(x,z));
   }
   geo.computeVertexNormals();
-  const mat = new THREE.MeshLambertMaterial({color:0x4a7c3f});
+  const mat = new THREE.MeshLambertMaterial({ map: makeGroundTexture(), color:0xffffff });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.name = 'terrain';
@@ -299,63 +368,463 @@ function createTerrain(){
 }
 
 // =====================================================================
+//  SAVANNA ENVIRONMENT  (Phase 1)
+// =====================================================================
+function createSavanna(){
+  generateTallGrassClumps();
+  createSkyDome();
+  createDistantHills();
+  createGrass();
+  createDustMotes();
+}
+
+// Scatter tall-grass hide spots. These are the tactical heart of stealth
+// (Phase 3): both player and lions can vanish in them.
+function generateTallGrassClumps(){
+  tallGrassClumps.length = 0;
+  let attempts = 0;
+  while(tallGrassClumps.length < 26 && attempts < 500){
+    attempts++;
+    const x = rand(-44,44), z = rand(-44,44);
+    if(tallGrassClumps.some(c=>Math.hypot(c.x-x,c.z-z) < 7)) continue;
+    tallGrassClumps.push({ x, z, r: rand(3.5,6.5) });
+  }
+}
+
+// Thousands of grass blades in ONE draw call (InstancedBufferGeometry) with a
+// vertex-shader wind sway. Tall blades cluster in the hide spots; the rest is
+// short ground cover. Fog + day/night brightness are computed in-shader so the
+// grass ties into the cycle (no per-frame CPU work beyond two uniforms).
+const GRASS_VERT = `
+  attribute vec3 iOffset;
+  attribute vec4 iParams;   // x=width y=height z=rot w=phase
+  attribute float iTint;
+  uniform float uTime; uniform vec2 uWindDir; uniform float uWindStr;
+  uniform float uFogDensity;
+  varying float vY; varying float vTint; varying float vFog;
+  void main(){
+    float w=iParams.x, h=iParams.y, rot=iParams.z, ph=iParams.w;
+    vec3 p = position; p.x *= w; p.y *= h;
+    float lean = sin(ph*7.0)*0.30;            // static per-blade lean (no rigid spikes)
+    float cl=cos(lean), sl=sin(lean);
+    p = vec3(p.x, p.y*cl - p.z*sl, p.y*sl + p.z*cl);
+    float c=cos(rot), s=sin(rot);
+    vec3 pr = vec3(p.x*c + p.z*s, p.y, -p.x*s + p.z*c);
+    float sway = sin(uTime*1.6 + ph + iOffset.x*0.15 + iOffset.z*0.15) * uWindStr;
+    float bend = position.y*position.y;        // tips move most
+    pr.x += uWindDir.x * sway * bend * h * 0.6;
+    pr.z += uWindDir.y * sway * bend * h * 0.6;
+    vec4 mv = modelViewMatrix * vec4(pr + iOffset, 1.0);
+    gl_Position = projectionMatrix * mv;
+    vY = position.y; vTint = iTint;
+    float d = -mv.z; float fe = uFogDensity*d; vFog = 1.0 - exp(-fe*fe);
+  }`;
+const GRASS_FRAG = `
+  precision mediump float;
+  uniform float uLight; uniform vec3 uFogColor;
+  varying float vY; varying float vTint; varying float vFog;
+  void main(){
+    vec3 baseC = vec3(0.36,0.40,0.19);          // soft olive base
+    vec3 tipC  = vec3(0.80,0.75,0.43);          // golden-straw tip (dry savanna)
+    vec3 dry   = vec3(0.84,0.71,0.35);
+    vec3 col = mix(baseC, tipC, vY);
+    col = mix(col, mix(vec3(0.50,0.44,0.21), dry, vY), vTint*0.6);
+    col *= (0.5 + 0.55*uLight);
+    col = mix(col, uFogColor, clamp(vFog,0.0,1.0));
+    gl_FragColor = vec4(col, 1.0);
+  }`;
+
+function createGrass(){
+  const COUNT = 9000;
+  const base = new THREE.InstancedBufferGeometry();
+  base.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    -0.5,0,0,  0.5,0,0,  -0.12,1,0,  0.12,1,0
+  ]),3));
+  base.setIndex([0,1,2, 2,1,3]);
+  const offs = new Float32Array(COUNT*3);
+  const params = new Float32Array(COUNT*4);
+  const tints = new Float32Array(COUNT);
+  let n=0;
+  function place(x,z,tall){
+    const y = terrainY(x,z);
+    offs[n*3]=x; offs[n*3+1]=y; offs[n*3+2]=z;
+    params[n*4]   = tall ? rand(0.13,0.20) : rand(0.16,0.26); // width (wider = grassy, not spiky)
+    params[n*4+1] = tall ? rand(1.1,1.95) : rand(0.3,0.65);   // height
+    params[n*4+2] = rand(0,Math.PI);                       // rot
+    params[n*4+3] = rand(0,Math.PI*2);                     // phase
+    tints[n] = Math.random();
+    n++;
+  }
+  // ~40% of blades pack into the tall clumps (visibly dense), rest scattered
+  const tallBudget = tallGrassClumps.length ? Math.floor(COUNT*0.4) : 0;
+  for(let i=0;i<tallBudget && n<COUNT;i++){
+    const cl = tallGrassClumps[(Math.random()*tallGrassClumps.length)|0];
+    const a = Math.random()*Math.PI*2, rr = Math.sqrt(Math.random())*cl.r;
+    place(cl.x+Math.cos(a)*rr, cl.z+Math.sin(a)*rr, true);
+  }
+  while(n<COUNT) place(rand(-HALF+2,HALF-2), rand(-HALF+2,HALF-2), false);
+
+  base.setAttribute('iOffset', new THREE.InstancedBufferAttribute(offs,3));
+  base.setAttribute('iParams', new THREE.InstancedBufferAttribute(params,4));
+  base.setAttribute('iTint',   new THREE.InstancedBufferAttribute(tints,1));
+  base.instanceCount = COUNT;
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: GRASS_VERT, fragmentShader: GRASS_FRAG,
+    side: THREE.DoubleSide,
+    uniforms: {
+      uTime:{value:0}, uWindDir:{value:new THREE.Vector2(wind.dirX,wind.dirZ)},
+      uWindStr:{value:0.22}, uLight:{value:1.0},
+      uFogColor:{value:new THREE.Color(0xd8c9a8)}, uFogDensity:{value:0.018},
+    }
+  });
+  mat.userData.keep = true;
+  const mesh = new THREE.Mesh(base, mat);
+  mesh.frustumCulled = false;   // one giant draw call — never cull
+  mesh.name = 'grass';
+  scene.add(mesh);
+  grassSys = { mesh, mat };
+}
+
+// Gradient sky dome: deep-blue zenith → warm tan horizon (savanna haze).
+// Colours are uniforms the day/night cycle drives.
+function createSkyDome(){
+  const geo = new THREE.SphereGeometry(260, 24, 16);
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite:false, fog:false,
+    uniforms:{ uTop:{value:new THREE.Color(0x2e6fc4)}, uBottom:{value:new THREE.Color(0xd8c9a8)} },
+    vertexShader:`varying vec3 vW; void main(){ vW=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+    fragmentShader:`varying vec3 vW; uniform vec3 uTop; uniform vec3 uBottom;
+      void main(){ float h=normalize(vW).y; float t=pow(clamp(h,0.0,1.0),0.85);
+        vec3 c=mix(uBottom,uTop,t);
+        if(h<0.0) c=mix(uBottom, uBottom*0.75, clamp(-h*2.0,0.0,1.0));
+        gl_FragColor=vec4(c,1.0);}`
+  });
+  mat.userData.keep = true;
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false; mesh.renderOrder = -10; mesh.name = 'sky';
+  scene.add(mesh);
+  skyDome = { mesh, mat };
+}
+
+// Distant rolling hills ringing the map. fog:false so they read as a constant
+// hazy silhouette on the horizon (they sit at R=150, well beyond the boundary).
+function createDistantHills(){
+  const R=150, segs=84, pos=[], idx=[]; let b=0;
+  for(let i=0;i<segs;i++){
+    const a0=(i/segs)*Math.PI*2, a1=((i+1)/segs)*Math.PI*2;
+    const h0=7 + (Math.sin(i*0.7)+Math.sin(i*0.23))*4 + Math.random()*3;
+    const h1=7 + (Math.sin((i+1)*0.7)+Math.sin((i+1)*0.23))*4 + Math.random()*3;
+    pos.push(Math.cos(a0)*R,-3,Math.sin(a0)*R, Math.cos(a1)*R,-3,Math.sin(a1)*R,
+             Math.cos(a0)*R,h0,Math.sin(a0)*R, Math.cos(a1)*R,h1,Math.sin(a1)*R);
+    idx.push(b,b+1,b+2, b+2,b+1,b+3); b+=4;
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  geo.setIndex(idx);
+  const mat=new THREE.MeshBasicMaterial({color:0xb4ac8e, fog:false, side:THREE.DoubleSide});
+  mat.userData.keep = true;
+  const mesh=new THREE.Mesh(geo,mat);
+  mesh.frustumCulled=false; mesh.renderOrder=-9; mesh.name='hills';
+  scene.add(mesh);
+  hillBand={mesh,mat};
+}
+
+// Low-density drifting dust — subtle Points sprite that moves with the wind.
+function createDustMotes(){
+  const N=240, p=new Float32Array(N*3);
+  for(let i=0;i<N;i++){ p[i*3]=rand(-HALF,HALF); p[i*3+1]=rand(0.3,6); p[i*3+2]=rand(-HALF,HALF); }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(p,3));
+  const mat=new THREE.PointsMaterial({ map:makeSoftDot(), color:0xcebd92, size:0.22,
+    transparent:true, opacity:0.4, depthWrite:false, sizeAttenuation:true });
+  mat.userData.keep = true;
+  const pts=new THREE.Points(geo,mat);
+  pts.frustumCulled=false; pts.name='dust';
+  scene.add(pts);
+  dustSys={pts,geo,mat};
+}
+
+function updateWind(dt){
+  wind.time += dt;
+  wind.angle += Math.sin(wind.time*0.05)*dt*0.12;   // slow lazy drift
+  wind.dirX = Math.cos(wind.angle); wind.dirZ = Math.sin(wind.angle);
+}
+function updateGrass(dt){
+  if(!grassSys) return;
+  grassSys.mat.uniforms.uTime.value += dt;
+  grassSys.mat.uniforms.uWindDir.value.set(wind.dirX, wind.dirZ);
+}
+function updateDust(dt){
+  if(!dustSys) return;
+  const a = dustSys.geo.attributes.position.array;
+  const px = player.pos ? player.pos.x : 0, pz = player.pos ? player.pos.z : 0;
+  for(let i=0;i<a.length;i+=3){
+    a[i]   += wind.dirX*wind.speed*dt;
+    a[i+2] += wind.dirZ*wind.speed*dt;
+    a[i+1] += Math.sin(wind.time*1.5 + i)*dt*0.04;
+    if(a[i]   > px+HALF) a[i]   -= WORLD;  else if(a[i]   < px-HALF) a[i]   += WORLD;
+    if(a[i+2] > pz+HALF) a[i+2] -= WORLD;  else if(a[i+2] < pz-HALF) a[i+2] += WORLD;
+    if(a[i+1] > 7) a[i+1] = 0.3;
+  }
+  dustSys.geo.attributes.position.needsUpdate = true;
+}
+
+// =====================================================================
 //  TREES
 // =====================================================================
-function createTrees(){
-  const trunkMat = new THREE.MeshLambertMaterial({color:0x6b4226});
-  const leafMat  = new THREE.MeshLambertMaterial({color:0x2d6a2d});
-  const positions = [];
-  let attempts = 0;
-  while(positions.length < 15 && attempts < 200){
-    attempts++;
-    const x = rand(-42,42), z = rand(-42,42);
-    if(positions.some(p=>Math.hypot(p[0]-x,p[1]-z)<6)) continue;
-    positions.push([x,z]);
+// --- savanna flora builders -------------------------------------------------
+// Each returns { group, climbable, perchY, canopyR, trunkR, canopyCol, top }.
+// `climbable` + `perchY` feed the grapple-to-tree perch (Phase 4).
+// Faceted low-poly look comes free from non-indexed IcosahedronGeometry
+// (per-face normals). MeshLambertMaterial ignores `flatShading`, so we don't set it.
+function lmat(color, flat){ return new THREE.MeshLambertMaterial({color}); }
+function jcol(hex, j){ const c=new THREE.Color(hex); const f=1+rand(-j,j); return c.multiplyScalar(f); }
+function blob(mat, r, x,y,z, sx,sy,sz){
+  const m=new THREE.Mesh(new THREE.IcosahedronGeometry(r,0), mat);
+  m.position.set(x,y,z); m.scale.set(sx||1, sy||1, sz||1); m.castShadow=true; return m;
+}
+
+function makeAcacia(){               // umbrella thorn — the iconic flat-top
+  const g=new THREE.Group(); const s=rand(0.85,1.25);
+  const trunkCol=jcol(0x8a7150,0.12), canCol=jcol(0x7c8a4a,0.1);
+  const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.16*s,0.32*s,3.4*s,7), lmat(trunkCol));
+  trunk.position.y=1.7*s; trunk.castShadow=true; g.add(trunk);
+  // V-branches splaying to the canopy
+  for(let i=0;i<3;i++){
+    const a=(i/3)*Math.PI*2+rand(-0.4,0.4);
+    const br=new THREE.Mesh(new THREE.CylinderGeometry(0.07*s,0.12*s,1.6*s,5), lmat(trunkCol));
+    br.position.set(Math.cos(a)*0.5*s, 3.2*s, Math.sin(a)*0.5*s);
+    br.rotation.z=Math.cos(a)*0.6; br.rotation.x=-Math.sin(a)*0.6; br.castShadow=true; g.add(br);
   }
-  positions.forEach(([x,z])=>{
-    const y = terrainY(x,z);
-    const group = new THREE.Group();
-    group.position.set(x,y,z);
-    // Trunk
-    const tG = new THREE.CylinderGeometry(0.22,0.32,2.5,8);
-    const trunk = new THREE.Mesh(tG, trunkMat);
-    trunk.position.y = 1.25;
-    trunk.castShadow = true;
-    group.add(trunk);
-    // Leaves (stacked cones)
-    [[1.8,2.4,0],[2.6,2.0,0.4],[3.2,1.5,0.7]].forEach(([cy,h,off])=>{
-      const cG = new THREE.ConeGeometry(1.4-off*0.6, h, 8);
-      const cone = new THREE.Mesh(cG, leafMat);
-      cone.position.y = cy+1;
-      cone.castShadow = true;
-      group.add(cone);
-    });
-    group.name = 'tree';
-    group.userData.isTree = true;
-    scene.add(group);
-    treeObjects.push({ mesh:group, pos:new THREE.Vector3(x,y,z), cooldown:0 });
+  const cm=lmat(canCol,true), um=lmat(jcol(0x5f6b34,0.1),true);
+  g.add(blob(um, 2.5*s, 0,3.5*s,0, 1.05,0.34,1.05));   // shadowed underside
+  g.add(blob(cm, 2.7*s, 0,3.9*s,0, 1.0,0.36,1.0));     // flat top
+  g.add(blob(cm, 1.6*s, rand(-1,1)*s,4.2*s,rand(-1,1)*s, 1,0.4,1));
+  return { group:g, climbable:true, perchY:3.5*s, canopyR:2.7*s, trunkR:0.32*s, canopyCol:canCol };
+}
+function makeMarula(){               // rounded fruiting canopy
+  const g=new THREE.Group(); const s=rand(0.9,1.2);
+  const trunkCol=jcol(0x6e5436,0.12), canCol=jcol(0x4f7a35,0.12);
+  const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.24*s,0.4*s,2.7*s,7), lmat(trunkCol));
+  trunk.position.y=1.35*s; trunk.castShadow=true; g.add(trunk);
+  const cm=lmat(canCol,true);
+  [[0,3.4,0,1.9],[ -1,3.1,0.6,1.3],[1,3.2,-0.5,1.4],[0.3,4.1,0.4,1.3]].forEach(([x,y,z,r])=>
+    g.add(blob(cm, r*s, x*s,y*s,z*s, 1,0.95,1)));
+  return { group:g, climbable:true, perchY:2.7*s, canopyR:2.4*s, trunkR:0.4*s, canopyCol:canCol };
+}
+function makeBaobab(){               // fat trunk, sparse crown — distinctive
+  const g=new THREE.Group(); const s=rand(1.0,1.4);
+  const trunkCol=jcol(0xa89a82,0.08);
+  const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.8*s,1.15*s,2.9*s,10), lmat(trunkCol));
+  trunk.position.y=1.45*s; trunk.castShadow=true; g.add(trunk);
+  const cap=new THREE.Mesh(new THREE.SphereGeometry(0.85*s,8,6), lmat(trunkCol));
+  cap.position.y=2.9*s; cap.scale.y=0.5; cap.castShadow=true; g.add(cap);
+  const fm=lmat(jcol(0x6b7350,0.12),true);
+  for(let i=0;i<6;i++){
+    const a=(i/6)*Math.PI*2;
+    const br=new THREE.Mesh(new THREE.CylinderGeometry(0.05*s,0.13*s,1.3*s,5), lmat(trunkCol));
+    br.position.set(Math.cos(a)*0.6*s,3.3*s,Math.sin(a)*0.6*s);
+    br.rotation.z=Math.cos(a)*1.0; br.rotation.x=-Math.sin(a)*1.0; br.castShadow=true; g.add(br);
+    g.add(blob(fm,0.5*s, Math.cos(a)*1.3*s,3.8*s,Math.sin(a)*1.3*s,1,0.8,1));
+  }
+  return { group:g, climbable:true, perchY:3.0*s, canopyR:1.6*s, trunkR:1.15*s, canopyCol:0x6b7350 };
+}
+function makeSausage(){              // drooping branches + hanging seed pods
+  const g=new THREE.Group(); const s=rand(0.9,1.15);
+  const trunkCol=jcol(0x6a5238,0.1), canCol=jcol(0x5a6e30,0.1);
+  const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.28*s,0.45*s,2.5*s,7), lmat(trunkCol));
+  trunk.position.y=1.25*s; trunk.castShadow=true; g.add(trunk);
+  const cm=lmat(canCol,true);
+  [[0,3.0,0,1.8],[-1.2,2.8,0.3,1.2],[1.1,2.9,-0.4,1.2]].forEach(([x,y,z,r])=>
+    g.add(blob(cm,r*s,x*s,y*s,z*s,1,0.85,1)));
+  const pm=lmat(jcol(0x6b4a26,0.1));
+  for(let i=0;i<7;i++){
+    const a=rand(0,Math.PI*2), rr=rand(0.6,1.6)*s;
+    const pod=new THREE.Mesh(new THREE.CylinderGeometry(0.1*s,0.13*s,0.7*s,5), pm);
+    pod.position.set(Math.cos(a)*rr, rand(1.9,2.5)*s, Math.sin(a)*rr); pod.castShadow=true; g.add(pod);
+  }
+  return { group:g, climbable:false, perchY:0, canopyR:2.0*s, trunkR:0.45*s, canopyCol:canCol };
+}
+function makeDatePalm(){             // clustered fan fronds
+  const g=new THREE.Group(); const s=rand(0.9,1.2);
+  const trunkCol=jcol(0x7a5c34,0.1), frCol=jcol(0x6f7d4a,0.1);
+  const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.2*s,0.3*s,2.9*s,7), lmat(trunkCol));
+  trunk.position.y=1.45*s; trunk.castShadow=true; g.add(trunk);
+  const fm=lmat(frCol,true);
+  for(let i=0;i<9;i++){
+    const a=(i/9)*Math.PI*2;
+    const fr=new THREE.Mesh(new THREE.ConeGeometry(0.16*s,2.0*s,4), fm);
+    fr.position.set(Math.cos(a)*0.7*s,3.0*s,Math.sin(a)*0.7*s);
+    fr.rotation.z=Math.cos(a)*1.15;   // splay outward
+    fr.rotation.x=-Math.sin(a)*1.15;  // …and droop down (fan shape)
+    fr.castShadow=true; g.add(fr);
+  }
+  return { group:g, climbable:false, perchY:0, canopyR:1.6*s, trunkR:0.3*s, canopyCol:frCol };
+}
+function makeCombretum(){            // small leafy scrub tree (common)
+  const g=new THREE.Group(); const s=rand(0.8,1.1);
+  const trunkCol=jcol(0x6b5236,0.12), canCol=jcol(0x577e33,0.12);
+  const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.13*s,0.2*s,1.5*s,6), lmat(trunkCol));
+  trunk.position.y=0.75*s; trunk.castShadow=true; g.add(trunk);
+  const cm=lmat(canCol,true);
+  [[0,1.9,0,1.1],[-0.6,1.7,0.3,0.8],[0.5,1.8,-0.3,0.8]].forEach(([x,y,z,r])=>
+    g.add(blob(cm,r*s,x*s,y*s,z*s,1,0.9,1)));
+  return { group:g, climbable:false, perchY:0, canopyR:1.3*s, trunkR:0.2*s, canopyCol:canCol };
+}
+function makeThornBush(){            // low thorny bush (Phase 5: thorns hurt)
+  const g=new THREE.Group(); const s=rand(0.7,1.1);
+  const bm=lmat(jcol(0x6a7038,0.12),true);
+  const n=3+(Math.random()*3|0);
+  for(let i=0;i<n;i++) g.add(blob(bm, rand(0.5,0.8)*s, rand(-0.6,0.6)*s, rand(0.4,0.8)*s, rand(-0.6,0.6)*s, 1,0.8,1));
+  const tm=lmat(jcol(0x9a8a5a,0.1));
+  for(let i=0;i<5;i++){
+    const sp=new THREE.Mesh(new THREE.ConeGeometry(0.04*s,0.4*s,4), tm);
+    sp.position.set(rand(-0.7,0.7)*s, rand(0.5,1.0)*s, rand(-0.7,0.7)*s);
+    sp.rotation.set(rand(0,3),rand(0,3),rand(0,3)); g.add(sp);
+  }
+  g.userData.thorn=true;
+  return { group:g, climbable:false, perchY:0, canopyR:0.9*s, trunkR:0, canopyCol:0x6a7038 };
+}
+function makeGrassTuft(){            // tall grass mound (extra hide flavour)
+  const g=new THREE.Group(); const s=rand(0.8,1.2);
+  const tm=lmat(jcol(0x8a9152,0.12),true);
+  for(let i=0;i<8;i++){
+    const a=(i/8)*Math.PI*2;
+    const bl=new THREE.Mesh(new THREE.ConeGeometry(0.07*s,1.2*s,4), tm);
+    bl.position.set(Math.cos(a)*0.25*s,0.6*s,Math.sin(a)*0.25*s);
+    bl.rotation.z=Math.cos(a)*0.3; bl.rotation.x=-Math.sin(a)*0.3; g.add(bl);
+  }
+  return { group:g, climbable:false, perchY:0, canopyR:0.7*s, trunkR:0, canopyCol:0x8a9152 };
+}
+function makeLowScrub(){             // very low green blobs
+  const g=new THREE.Group(); const s=rand(0.8,1.3);
+  const bm=lmat(jcol(0x6f7e3c,0.12),true);
+  for(let i=0;i<3;i++) g.add(blob(bm, rand(0.4,0.7)*s, rand(-0.5,0.5)*s, rand(0.2,0.45)*s, rand(-0.5,0.5)*s, 1,0.6,1));
+  return { group:g, climbable:false, perchY:0, canopyR:0.7*s, trunkR:0, canopyCol:0x6f7e3c };
+}
+
+// Far-distance imposter so we don't draw full tree geometry across the map.
+// THREE.LOD auto-swaps levels during render (no manual update needed).
+function lodWrap(built){
+  const lod=new THREE.LOD();
+  lod.addLevel(built.group, 0);
+  const far=new THREE.Mesh(new THREE.IcosahedronGeometry(Math.max(0.7,built.canopyR*0.85),0),
+                           lmat(built.canopyCol,true));
+  far.position.y=Math.max(0.7,built.perchY||built.canopyR);
+  lod.addLevel(far, 75);
+  lod.addLevel(new THREE.Group(), 155);   // cull when very distant
+  return lod;
+}
+
+function createTrees(){
+  // weighted bag: scrub/bushes common, baobab rare & iconic
+  const bag=[];
+  const W=[['acacia',8,makeAcacia,1],['marula',5,makeMarula,1],['baobab',2,makeBaobab,1],
+           ['sausage',3,makeSausage,1],['datepalm',3,makeDatePalm,1],['combretum',7,makeCombretum,1],
+           ['thornbush',8,makeThornBush,0],['grasstuft',6,makeGrassTuft,0],['lowscrub',6,makeLowScrub,0]];
+  W.forEach(([name,w,fn,big])=>{ for(let i=0;i<w;i++) bag.push({name,fn,big}); });
+  // shuffle
+  for(let i=bag.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; [bag[i],bag[j]]=[bag[j],bag[i]]; }
+
+  const placed=[];
+  bag.forEach(item=>{
+    let x,z,ok=false,att=0;
+    const spacing=item.big?6:3.8;
+    while(att++<40 && !ok){
+      x=rand(-43,43); z=rand(-43,43);
+      ok = !placed.some(p=>Math.hypot(p[0]-x,p[1]-z)<spacing)
+        && !(wateringHole && Math.hypot(x-wateringHole.x,z-wateringHole.z)<wateringHole.r+2);
+    }
+    if(!ok) return;
+    placed.push([x,z]);
+    const built=item.fn();
+    const y=terrainY(x,z);
+    let obj;
+    if(item.big){ obj=lodWrap(built); } else { obj=built.group; }
+    obj.position.set(x,y,z);
+    obj.rotation.y=rand(0,Math.PI*2);
+    obj.name='tree';
+    obj.userData.isTree=true;
+    scene.add(obj);
+    treeObjects.push({ mesh:obj, pos:new THREE.Vector3(x,y,z), cooldown:0,
+      type:item.name, big:!!item.big, climbable:built.climbable, perchY:built.perchY,
+      canopyR:built.canopyR, trunkR:built.trunkR, thorn:!!built.group.userData.thorn });
   });
 }
 
 // =====================================================================
 //  ROCKS
 // =====================================================================
+const ROCK_TINTS = [0x8f8f93, 0x7f7f84, 0xb39a6d, 0xc2ac7c, 0x46464c, 0x55524e]; // granite/sandstone/basalt
+function rockMat(){ return new THREE.MeshLambertMaterial({color:jcol(ROCK_TINTS[(Math.random()*ROCK_TINTS.length)|0],0.08)}); }
+// Perturb an icosahedron's vertices for a jagged weathered look.
+function noisyRock(r, detail, jag){
+  const geo=new THREE.IcosahedronGeometry(r, detail||0);
+  const p=geo.attributes.position;
+  for(let i=0;i<p.count;i++){
+    const f=1+rand(-jag,jag);
+    p.setXYZ(i, p.getX(i)*f, p.getY(i)*f*0.85, p.getZ(i)*f);
+  }
+  geo.computeVertexNormals(); return geo;
+}
+
+// Small pickup pebbles (the throwable-rock source). Keeps the rockSpawns
+// contract: {mesh, pos, available, cooldown}; pickup hides mesh.
 function createRocks(){
-  const mat = new THREE.MeshLambertMaterial({color:0x888888});
   for(let i=0;i<10;i++){
     let x,z,attempts=0;
     do{ x=rand(-44,44); z=rand(-44,44); attempts++; }
     while(attempts<30 && treeObjects.some(t=>t.pos.distanceTo(v3(x,0,z))<4));
-    const y = terrainY(x,z);
-    const sx=rand(0.4,0.8), sy=rand(0.3,0.6), sz=rand(0.4,0.8);
-    const geo = new THREE.BoxGeometry(sx,sy,sz);
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(x, y+sy/2, z);
-    mesh.rotation.y = rand(0,Math.PI);
-    mesh.castShadow = true;
-    mesh.name = 'rock';
+    const y=terrainY(x,z), r=rand(0.28,0.42);
+    const mesh=new THREE.Mesh(noisyRock(r,0,0.25), rockMat());
+    mesh.position.set(x, y+r*0.5, z);
+    mesh.rotation.set(rand(0,3),rand(0,3),rand(0,3));
+    mesh.castShadow=true; mesh.name='rock';
     scene.add(mesh);
-    rockSpawns.push({ mesh, pos:new THREE.Vector3(x,y+sy/2,z), available:true, cooldown:0 });
+    rockSpawns.push({ mesh, pos:new THREE.Vector3(x,y+r*0.5,z), available:true, cooldown:0 });
+  }
+}
+
+// Scenery rock formations — 5 distinct types, random tint/rotation/scale.
+// Decorative + shade for resting lions; not pickable.
+function createRockFormations(){
+  const placed=[];
+  const TYPES=['boulder','flat','standing','pebbles','outcrop'];
+  for(let i=0;i<15;i++){
+    let x,z,ok=false,att=0;
+    while(att++<40 && !ok){
+      x=rand(-44,44); z=rand(-44,44);
+      ok = !placed.some(p=>Math.hypot(p[0]-x,p[1]-z)<5)
+        && !treeObjects.some(t=>t.pos.distanceTo(v3(x,0,z))<3.5)
+        && !(wateringHole && Math.hypot(x-wateringHole.x,z-wateringHole.z)<wateringHole.r+2)
+        && Math.hypot(x,z)>5;
+    }
+    if(!ok) continue;
+    placed.push([x,z]);
+    const y=terrainY(x,z);
+    const type=TYPES[(Math.random()*TYPES.length)|0];
+    const grp=new THREE.Group(); grp.position.set(x,y,z); grp.rotation.y=rand(0,Math.PI*2);
+    if(type==='boulder'){
+      const r=rand(0.9,1.7); const m=new THREE.Mesh(noisyRock(r,1,0.35), rockMat());
+      m.position.y=r*0.55; m.castShadow=true; grp.add(m);
+    } else if(type==='flat'){      // large flat sitting-rock
+      const r=rand(1.4,2.4); const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r*1.1,rand(0.3,0.5),7,1), rockMat());
+      m.position.y=0.2; m.scale.set(1,1,rand(0.7,1)); m.castShadow=true; grp.add(m);
+    } else if(type==='standing'){  // weathered standing stone, tilted
+      const h=rand(1.8,3.0); const m=new THREE.Mesh(noisyRock(0.6,0,0.2), rockMat());
+      m.scale.set(rand(0.6,0.9), h, rand(0.5,0.8)); m.position.y=h*0.5;
+      m.rotation.z=rand(-0.2,0.2); m.castShadow=true; grp.add(m);
+    } else if(type==='pebbles'){   // scatter cluster
+      const n=4+(Math.random()*4|0);
+      for(let k=0;k<n;k++){ const r=rand(0.2,0.5); const m=new THREE.Mesh(noisyRock(r,0,0.3), rockMat());
+        m.position.set(rand(-1,1),r*0.4,rand(-1,1)); m.castShadow=true; grp.add(m); }
+    } else {                       // outcrop — several stacked boulders
+      const n=3+(Math.random()*3|0);
+      for(let k=0;k<n;k++){ const r=rand(0.6,1.2); const m=new THREE.Mesh(noisyRock(r,1,0.3), rockMat());
+        m.position.set(rand(-1.1,1.1), r*0.5, rand(-1.1,1.1)); m.castShadow=true; grp.add(m); }
+    }
+    grp.name='rockform';
+    scene.add(grp);
   }
 }
 
@@ -1117,51 +1586,55 @@ const CYCLE = 240; // full cycle seconds (4 min)
 const HALF_CYCLE = CYCLE/2; // 120 = 2 min day, 120 = 2 min night
 const TWILIGHT = 10;
 
-const SKY_COLORS = {
-  dawn:  new THREE.Color(0xff8c44),
-  day:   new THREE.Color(0x87ceeb),
-  dusk:  new THREE.Color(0xff5533),
-  night: new THREE.Color(0x0a0a2e),
+// Per-phase sky/light keyframes. zen/hor = sky-dome zenith/horizon colours;
+// light = grass/world brightness 0..1; amb/sun = light intensities; fog = density.
+const SKY = {
+  dawn:  { zen:0x39548c, hor:0xff9c4e, light:0.46, amb:0.40, sun:0.70, fog:0.028 },
+  day:   { zen:0x2e6fc4, hor:0xd8c9a8, light:1.00, amb:0.60, sun:1.25, fog:0.016 },
+  dusk:  { zen:0x483a6c, hor:0xff5f32, light:0.50, amb:0.30, sun:0.60, fog:0.030 },
+  night: { zen:0x05060f, hor:0x121a30, light:0.18, amb:0.12, sun:0.05, fog:0.050 },
 };
+const _C1=new THREE.Color(), _C2=new THREE.Color(), _CW=new THREE.Color(0xffffff),
+      _CSUN=new THREE.Color(0xfff4e0), _CHILL=new THREE.Color(0x6a6450);
+function lerpSky(a,b,f){
+  return {
+    zen: _C1.set(a.zen).lerp(_C2.set(b.zen), f).clone(),
+    hor: _C1.set(a.hor).lerp(_C2.set(b.hor), f).clone(),
+    light: lerp(a.light,b.light,f), amb: lerp(a.amb,b.amb,f),
+    sun: lerp(a.sun,b.sun,f), fog: lerp(a.fog,b.fog,f),
+  };
+}
+function dnState(t){
+  if(t < 12)               return lerpSky(SKY.dawn, SKY.day, t/12);          // sunrise
+  if(t < HALF_CYCLE-12)    return lerpSky(SKY.day, SKY.day, 0);              // full day
+  if(t < HALF_CYCLE)       return lerpSky(SKY.day, SKY.dusk, (t-(HALF_CYCLE-12))/12);
+  if(t < HALF_CYCLE+12)    return lerpSky(SKY.dusk, SKY.night, (t-HALF_CYCLE)/12);
+  if(t < CYCLE-12)         return lerpSky(SKY.night, SKY.night, 0);          // deep night
+  return lerpSky(SKY.night, SKY.dawn, (t-(CYCLE-12))/12);                    // pre-dawn
+}
 
 function updateDayNight(dt){
   dn.time = (dn.time + dt) % CYCLE;
-  const t = dn.time;
   const wasDay = dn.isDay;
+  const s = dnState(dn.time);
 
-  let sky, ambI, sunI, fogD;
-  if(t < TWILIGHT){ // dawn
-    const f = t/TWILIGHT;
-    sky  = SKY_COLORS.night.clone().lerp(SKY_COLORS.dawn, f);
-    ambI = lerp(0.15, 0.4, f); sunI = lerp(0.1, 0.8, f); fogD=lerp(0.06,0.018,f);
-    dn.isDay = f>0.5;
-  } else if(t < HALF_CYCLE-TWILIGHT){ // full day
-    sky  = SKY_COLORS.day.clone();
-    ambI = 0.6; sunI = 1.2; fogD=0.018;
-    dn.isDay = true;
-  } else if(t < HALF_CYCLE){ // dusk
-    const f = (t-(HALF_CYCLE-TWILIGHT))/TWILIGHT;
-    sky  = SKY_COLORS.day.clone().lerp(SKY_COLORS.dusk, f);
-    ambI = lerp(0.6, 0.15, f); sunI = lerp(1.2,0.1,f); fogD=lerp(0.018,0.06,f);
-    dn.isDay = f<0.5;
-  } else if(t < HALF_CYCLE+TWILIGHT){ // night-start
-    const f = (t-HALF_CYCLE)/TWILIGHT;
-    sky  = SKY_COLORS.dusk.clone().lerp(SKY_COLORS.night, f);
-    ambI = lerp(0.15,0.08,f); sunI=0.05; fogD=lerp(0.06,0.09,f);
-    dn.isDay = false;
-  } else { // deep night
-    sky  = SKY_COLORS.night.clone();
-    ambI = 0.08; sunI=0.05; fogD=0.09;
-    dn.isDay = false;
+  if(skyDome){ skyDome.mat.uniforms.uTop.value.copy(s.zen); skyDome.mat.uniforms.uBottom.value.copy(s.hor); }
+  scene.fog.color.copy(s.hor); scene.fog.density = s.fog;
+  renderer.setClearColor(s.hor, 1);
+
+  const amb = scene.userData.ambient, sun = scene.userData.sun;
+  if(amb){ amb.intensity = s.amb; amb.color.copy(s.hor).lerp(_CW, 0.55); }
+  if(sun){ sun.intensity = s.sun; sun.color.copy(s.hor).lerp(_CSUN, 0.6); }
+
+  if(grassSys){
+    grassSys.mat.uniforms.uLight.value = s.light;
+    grassSys.mat.uniforms.uFogColor.value.copy(s.hor);
+    grassSys.mat.uniforms.uFogDensity.value = s.fog;
   }
+  if(hillBand) hillBand.mat.color.copy(s.hor).multiplyScalar(0.82).lerp(_CHILL, 0.25);
+  if(dustSys){ dustSys.mat.opacity = 0.1 + s.light*0.32; dustSys.mat.color.copy(s.hor).lerp(_CW, 0.3); }
 
-  renderer.setClearColor(sky, 1);
-  scene.fog.density = fogD;
-  const amb = scene.userData.ambient;
-  const sun = scene.userData.sun;
-  if(amb){ amb.intensity = ambI; amb.color.set(sky); }
-  if(sun){ sun.intensity = sunI; }
-
+  dn.isDay = dn.time < HALF_CYCLE;
   if(dn.isDay && !wasDay) dn.day++;
 }
 
@@ -1431,6 +1904,7 @@ function animate(){
 
   elapsed += dt;
 
+  updateWind(dt);
   updateDayNight(dt);
   updatePlayer(dt);
   updateHealth(dt);
@@ -1439,6 +1913,8 @@ function animate(){
   updateThrownRocks(dt);
   updateCorpses(dt);
   updateTorch(dt);
+  updateGrass(dt);
+  updateDust(dt);
   updateHUD();
   drawMinimap();
 
@@ -1457,8 +1933,10 @@ function animate(){
 // =====================================================================
 initScene();
 createTerrain();
+createSavanna();          // sky dome, hills, grass, dust, tall-grass clumps
 createTrees();
 createRocks();
+createRockFormations();   // scenery boulders/standing stones/outcrops
 registerControls();
 
 // Renderer canvas (#game-canvas) position/z-index handled in CSS (z-index:1,
@@ -1484,7 +1962,7 @@ function startGame(){
     // Safety re-seed the renderer in case anything was off (canvas size,
     // clear color) — this kills the "blank/dark screen on restart" path.
     renderer.setSize(innerWidth, innerHeight);
-    renderer.setClearColor(SKY_COLORS.day, 1);
+    renderer.setClearColor(SKY.day.hor, 1);
     animate();
     // Request pointer lock — must happen inside user gesture
     renderer.domElement.requestPointerLock().catch(()=>{

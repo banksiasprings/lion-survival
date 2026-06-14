@@ -69,7 +69,8 @@ not flavour.
 
 ## Phase status
 - [x] Phase 0 — research baked into this doc + AI comments
-- [ ] Phase 1 — savanna graphics
+- [x] Phase 1 — savanna graphics (instanced grass + wind shader, gradient sky dome,
+      procedural ground texture, 6 tree types + 3 bushes w/ LOD, 5 rock types, hills, dust)
 - [ ] Phase 2 — realistic lion AI
 - [ ] Phase 3 — mutual stealth detection
 - [ ] Phase 4 — grappling hook to trees
