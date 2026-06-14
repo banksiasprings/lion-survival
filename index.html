@@ -1347,9 +1347,10 @@ function makeLion(x, z, sex){
     damage: isMale ? 32 : 22,                 // males hit harder
     hunger: rand(45, 75),                     // start moderately hungry
     burst: 1,                                 // sprint reserve 0..1 (tires quickly)
-    state: 'wander',   // wander|rest|converge|chase|fleeing_fire|stunned
+    state: 'wander',   // wander|rest|converge|chase|hunt_prey|scavenge|fleeing_fire|stunned
     flankAngle: 0, isLurer: false,
     stunTimer: 0,
+    fedTimer: 0, preyTarget: null,            // Phase 6 food chain
     wanderDir: new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
     wanderTimer: rand(2,4),
     restTarget: null,
@@ -1429,6 +1430,28 @@ function updateStealth(dt){
   window.__stealth = { vis:player._visR, aud:player._audR, hidden:wellHidden, detected };
 }
 
+// Pick the best prey for a hungry lion (Phase 6). Groups go for the big payoff
+// (kudu/zebra/wildebeest); a solo lion picks easy prey (gazelle/impala/warthog).
+// Weakest/slowest/nearest scores highest either way.
+function pickPreyTarget(L){
+  const hunters = lionMeshes.filter(x=>x.state==='hunt_prey'||x.state==='chase').length;
+  let best=null, bestScore=-Infinity;
+  preyMeshes.forEach(P=>{
+    const d=L.pos.distanceTo(P.pos); if(d>34) return;
+    const s=SPECIES[P.species];
+    let score = -d*0.5 - s.speed*0.35 + (P.maxHealth-P.health)*0.25;
+    const big = (P.species==='kudu'||P.species==='zebra'||P.species==='wildebeest');
+    score += (hunters>=2) ? (big? 8 : -2) : (big? -5 : 4);
+    if(score>bestScore){ bestScore=score; best=P; }
+  });
+  return best;
+}
+function nearestCarcass(pos, maxD){
+  let best=null, bd=maxD;
+  carcasses.forEach(c=>{ if(c.food<=0) return; const d=pos.distanceTo(c.pos); if(d<bd){ bd=d; best=c; } });
+  return best;
+}
+
 function updateLions(dt){
   if(gameState!=='playing') return;
   const activity = lionActivity();
@@ -1456,10 +1479,12 @@ function updateLions(dt){
 
     // Hunger rises over time → drives aggression & detection range.
     L.hunger = clamp(L.hunger + HUNGER_RISE*dt, 0, 100);
+    if(L.fedTimer > 0) L.fedTimer -= dt;          // recently fed → lazy/slow for a while
 
     const ppos = player.pos, lpos = L.pos;
     const dist = lpos.distanceTo(ppos);
     const hungerAggr = 0.7 + (L.hunger/100)*0.6;   // 0.7 (fed) .. 1.3 (starving)
+    const guardingKill = !!nearestCarcass(lpos, 6);   // defends a kill aggressively
 
     // ---- mutual stealth detection (Phase 3) ----
     // VISUAL: lion's sight (sex + activity + hunger) × the player's visibility
@@ -1473,7 +1498,9 @@ function updateLions(dt){
     const downwind = (wind.dirX*dx + wind.dirZ*dz)/dl;       // 1 = wind blows player→lion
     audio += clamp(downwind,0,1) * 7 * (0.6 + (L.hunger/100)*0.5);
     visual *= weather.detMul; audio *= weather.detMul;       // rain masks sight & scent
-    const detR = Math.max(visual, audio);
+    let detR = Math.max(visual, audio);
+    if(L.fedTimer > 0) detR *= 0.55;             // a fed lion is far less interested in you
+    if(guardingKill) detR += 6;                  // …unless you're near its kill — it defends it
     L._detR = detR; L._visR = visual; L._audR = audio;
     // Symmetric concealment: a lion lying up in tall grass (not yet committed to
     // the open chase) is hidden from the player's radar until very close.
@@ -1498,6 +1525,12 @@ function updateLions(dt){
         L.state = 'converge';
       } else if(L.state==='converge'){
         if(prideAlert.timer <= 0 || lpos.distanceTo(prideAlert.pos) < 3) L.state = 'wander';
+      } else if(L.fedTimer<=0 && L.hunger>40 && nearestCarcass(lpos,22)){
+        L.state = 'scavenge';                    // free meal nearby (incl. stealing a kill)
+      } else if(L.fedTimer<=0 && L.hunger>48 && preyMeshes.length){
+        L.state = 'hunt_prey';                   // hungry → go hunt the herds
+      } else if(L.state==='scavenge' || L.state==='hunt_prey'){
+        L.state = 'wander';                      // sated / nothing to chase
       } else if(activity < 0.3){
         L.state = 'rest';
       } else {
@@ -1520,6 +1553,28 @@ function updateLions(dt){
     } else if(L.state==='converge'){
       dir.copy(prideAlert.pos).sub(lpos); dir.y=0;
       if(dir.lengthSq()>0) dir.normalize();
+    } else if(L.state==='hunt_prey'){
+      // chase a target prey; on catch, maul it; on kill, feed & become 'fed'
+      if(!L.preyTarget || L.preyTarget.health<=0 || preyMeshes.indexOf(L.preyTarget)<0 || lpos.distanceTo(L.preyTarget.pos)>38){
+        L.preyTarget = pickPreyTarget(L);
+      }
+      if(L.preyTarget){
+        dir.copy(L.preyTarget.pos).sub(lpos); dir.y=0; if(dir.lengthSq()>0) dir.normalize();
+        if(lpos.distanceTo(L.preyTarget.pos) < 1.7){
+          const T=L.preyTarget; T.health -= 45*dt; T.flashTimer=0.2; T.state='flee'; T.alertTimer=2.5;
+          if(T.health<=0){ L.hunger=clamp(L.hunger-62,0,100); L.fedTimer=24; L.preyTarget=null;
+            showKillfeed('🦁 The pride brought down a '+T.label); }
+        }
+      } else { L.state='wander'; }
+    } else if(L.state==='scavenge'){
+      // move to the nearest kill and feed (this is how a male steals a lioness's kill)
+      const c=nearestCarcass(lpos, 24);
+      if(c){
+        const d=lpos.distanceTo(c.pos);
+        if(d>1.4){ dir.copy(c.pos).sub(lpos); dir.y=0; dir.normalize(); }
+        else { c.food=Math.max(0,c.food-28*dt); L.hunger=clamp(L.hunger-28*dt,0,100);
+               if(L.hunger<25 || c.food<=0) L.fedTimer=20; }
+      } else { L.state='wander'; }
     } else if(L.state==='rest'){
       // Settle for the midday lull — either nearest shade or the watering hole
       // (lions gather to drink/ambush there). Re-pick occasionally.
@@ -1556,9 +1611,14 @@ function updateLions(dt){
     if(L.state==='chase'){
       L.burst = clamp(L.burst - dt*0.26, 0, 1);          // tire during the rush
       speed = lerp(10.5, sprintMax, L.burst);
+    } else if(L.state==='hunt_prey'){
+      L.burst = clamp(L.burst - dt*0.2, 0, 1);           // committed sprint after prey
+      speed = lerp(9.5, sprintMax, L.burst);
     } else if(L.state==='converge'){
       L.burst = clamp(L.burst + dt*0.12, 0, 1);
       speed = L.isMale ? 9 : 11;
+    } else if(L.state==='scavenge'){
+      speed = L.isMale ? 7 : 8;
     } else if(L.state==='fleeing_fire'){
       speed = L.isMale ? 11 : 13;
     } else { // wander/rest — slow, slower still at the midday trough
@@ -1566,6 +1626,7 @@ function updateLions(dt){
       const restF = (L.state==='rest') ? 0.35 : 1;
       speed = (L.isMale?3.0:3.6) * (0.5 + activity*0.8) * restF;
     }
+    if(L.fedTimer > 0) speed *= 0.6;          // a full lion moves lazily
     L._lastSpeed = speed;
 
     // Feeding: pressed against the player, the lion is eating → hunger drops.
@@ -2469,10 +2530,11 @@ function updateSignals(){
     html += `👁 your visibility ${s.vis|0}m · 🔊 noise ${s.aud|0}m ${s.hidden?'<span class="sig-ok">HIDDEN</span>':'<span class="sig-hi">EXPOSED</span>'}<br>`;
   }
   if(near){
-    const st = near.state==='chase'?'<span class="sig-hi">CHASING</span>':
+    const st = near.state==='chase'?'<span class="sig-hi">CHASING YOU</span>':
                near.state==='converge'?'<span class="sig-w">converging</span>':
+               near.state==='hunt_prey'?'hunting prey':near.state==='scavenge'?'at a kill':
                near.state==='rest'?'resting':near.state==='fleeing_fire'?'fleeing fire':'wandering';
-    html += `🦁 nearest ${near.isMale?'♂ male':'♀ lioness'} ${nd.toFixed(0)}m · ${st}<br>`+
+    html += `🦁 nearest ${near.isMale?'♂ male':'♀ lioness'} ${nd.toFixed(0)}m · ${st}${near.fedTimer>0?' <span class="sig-ok">(fed)</span>':''}<br>`+
             `&nbsp;&nbsp;hunger ${near.hunger|0}% · sees ${near._detR.toFixed(0)}m`;
   }
   el.innerHTML = html;
