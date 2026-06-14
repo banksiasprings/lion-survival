@@ -71,7 +71,9 @@ not flavour.
 - [x] Phase 0 — research baked into this doc + AI comments
 - [x] Phase 1 — savanna graphics (instanced grass + wind shader, gradient sky dome,
       procedural ground texture, 6 tree types + 3 bushes w/ LOD, 5 rock types, hills, dust)
-- [ ] Phase 2 — realistic lion AI
+- [x] Phase 2 — realistic lion AI (crepuscular/nocturnal activity curve `lionActivity()`,
+      pride coordination via `prideAlert` broadcast + flank roles, lioness/male split,
+      hunger→aggression cycle w/ feeding, midday shade-resting, honest signals HUD)
 - [ ] Phase 3 — mutual stealth detection
 - [ ] Phase 4 — grappling hook to trees
 - [ ] Phase 5 — atmosphere picks (TBD 2–3)

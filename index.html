@@ -13,6 +13,11 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
 #crosshair::before{width:2px;height:100%;left:50%;transform:translateX(-50%)}
 #crosshair::after{width:100%;height:2px;top:50%;transform:translateY(-50%)}
 #topleft{position:fixed;top:14px;left:14px;font-size:14px;line-height:1.7}
+#signals{position:fixed;top:92px;left:14px;font-size:11px;line-height:1.55;
+  background:rgba(0,0,0,0.4);padding:7px 10px;border-radius:6px;max-width:230px;
+  border-left:3px solid rgba(241,196,15,0.6)}
+#signals .sig-h{font-size:10px;letter-spacing:1px;opacity:0.55;margin-bottom:3px}
+#signals .sig-hi{color:#ff6a4a}#signals .sig-ok{color:#7ce08a}#signals .sig-w{color:#f1c40f}
 #topright{position:fixed;top:14px;right:14px;font-size:14px;text-align:right;line-height:1.7}
 #prompt{position:fixed;bottom:200px;left:50%;transform:translateX(-50%);font-size:15px;
   background:rgba(0,0,0,0.55);padding:6px 14px;border-radius:6px;display:none}
@@ -52,6 +57,7 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
 <div id="hud">
   <div id="crosshair"></div>
   <div id="topleft"></div>
+  <div id="signals"></div>
   <div id="topright"></div>
   <div id="prompt"></div>
   <div id="killfeed"></div>
@@ -151,6 +157,9 @@ let audioCtx = null;
 
 // Game state
 let gameState  = 'menu';
+// Honour feedback_show_raw_signals: the HUD reports detection radius / hunger /
+// stamina / stealth honestly rather than hiding the numbers behind vibes.
+const FEEDBACK_SHOW_RAW_SIGNALS = true;
 let elapsed    = 0;
 let kills      = 0;
 let animId     = null;
@@ -1060,7 +1069,7 @@ function updateHealth(dt){
   lionMeshes.forEach(L=>{
     const d = L.pos.distanceTo(player.pos);
     if(d < 1.5){
-      player.health -= PLAYER.lionDamage * dt;
+      player.health -= (L.damage || PLAYER.lionDamage) * dt;
       nearLion = true;
     }
     if(d < 6) veryNear = true;
@@ -1088,40 +1097,66 @@ function updateHealth(dt){
 const FLASH_MAT = new THREE.MeshLambertMaterial({color:0xffffff});
 FLASH_MAT.userData.keep = true;
 
-function makeLion(x, z){
+// ---- Pride coordination (Phase 2) ------------------------------------------
+const UP = new THREE.Vector3(0,1,0);
+// "Spotted" broadcast: when any lion detects the player it stamps the player's
+// position here; nearby pride-mates converge on it (cooperative hunt). Decays.
+let prideAlert = { pos: new THREE.Vector3(), timer: 0 };
+const HUNGER_RISE = 0.55;   // hunger/sec while not feeding (full ≈ <3 min)
+
+// Crepuscular/nocturnal activity 0..1 by in-game hour. Twin peaks at dawn(~6)
+// and dusk(~18.5), elevated through the night, deep trough at midday — this is
+// the field-ethology pattern documented in CONTEXT.md (Phase 0).
+function lionActivity(){
+  const h = gameHour();
+  const dawn = Math.exp(-Math.pow((h-6.0)/1.6,2));
+  const dusk = Math.exp(-Math.pow((h-18.5)/1.9,2));
+  const night = (h < 5 || h >= 20) ? 0.72 : 0.0;
+  return clamp(Math.max(0.14, dawn, dusk, night), 0, 1);
+}
+
+function makeLion(x, z, sex){
+  sex = sex || (Math.random() < 0.66 ? 'lioness' : 'male');
+  const isMale = sex==='male';
+  const s = isMale ? 1.22 : 1.0;                       // males larger
+  const bodyCol = isMale ? 0xc89a34 : 0xd8b45c;        // males a touch darker/tawny
   const group = new THREE.Group();
-  const bodyMat = new THREE.MeshLambertMaterial({color:0xd4a520});
-  const darkMat = new THREE.MeshLambertMaterial({color:0x8b6914});
+  const bodyMat = new THREE.MeshLambertMaterial({color:bodyCol});
+  const darkMat = new THREE.MeshLambertMaterial({color:0x5e4410});
   // Body
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1,0.65,1.8), bodyMat);
-  body.position.y = 0.65;
-  group.add(body);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1*s,0.65*s,1.8*s), bodyMat);
+  body.position.y = 0.65*s; group.add(body);
   // Head
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.7,0.65,0.7), bodyMat);
-  head.position.set(0, 0.85, 0.85);
-  group.add(head);
-  // Mane
-  const mane = new THREE.Mesh(new THREE.SphereGeometry(0.45,8,6), darkMat);
-  mane.position.set(0, 0.88, 0.82);
-  group.add(mane);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.7*s,0.65*s,0.7*s), bodyMat);
+  head.position.set(0, 0.85*s, 0.85*s); group.add(head);
+  // Mane — males only, the clearest visual sex cue
+  if(isMale){
+    const mane = new THREE.Mesh(new THREE.SphereGeometry(0.52*s,8,6), darkMat);
+    mane.position.set(0, 0.9*s, 0.78*s); mane.scale.z=0.8; group.add(mane);
+  }
   // Legs (4)
-  const legG = new THREE.CylinderGeometry(0.1,0.1,0.6,6);
+  const legG = new THREE.CylinderGeometry(0.1*s,0.1*s,0.6*s,6);
   const legPos = [[-0.3,0.3,0.5],[0.3,0.3,0.5],[-0.3,0.3,-0.5],[0.3,0.3,-0.5]];
   const legs = [];
   legPos.forEach(([lx,ly,lz])=>{
     const leg = new THREE.Mesh(legG, bodyMat);
-    leg.position.set(lx, ly, lz);
-    group.add(leg);
-    legs.push(leg);
+    leg.position.set(lx*s, ly*s, lz*s);
+    group.add(leg); legs.push(leg);
   });
-  // Tail
-  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.08,0.8,6), bodyMat);
-  tail.position.set(0, 0.75, -0.95);
-  tail.rotation.x = 0.4;
-  group.add(tail);
+  // Snout
+  const snout = new THREE.Mesh(new THREE.BoxGeometry(0.4*s,0.34*s,0.34*s), bodyMat);
+  snout.position.set(0, 0.78*s, 1.18*s); group.add(snout);
+  // Ears (2 small cones)
+  [[-0.22,1.18,0.78],[0.22,1.18,0.78]].forEach(([ex,ey,ez])=>{
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.1*s,0.18*s,4), darkMat);
+    ear.position.set(ex*s, ey*s, ez*s); group.add(ear);
+  });
+  // Tail + dark tuft
+  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.05*s,0.08*s,0.8*s,6), bodyMat);
+  tail.position.set(0, 0.75*s, -0.95*s); tail.rotation.x = 0.4; group.add(tail);
+  const tuft = new THREE.Mesh(new THREE.SphereGeometry(0.1*s,6,5), darkMat);
+  tuft.position.set(0, 0.55*s, -1.25*s); group.add(tuft);
 
-  // Remember each part's real material so the hit-flash can restore it
-  // exactly (the mane uses darkMat, the rest bodyMat).
   group.children.forEach(c=>{ if(c.isMesh) c.userData.origMat = c.material; });
 
   const ty = terrainY(x,z);
@@ -1131,123 +1166,168 @@ function makeLion(x, z){
   scene.add(group);
 
   const L = {
-    mesh: group,
-    legs,
+    mesh: group, legs, sex, isMale,
     pos: new THREE.Vector3(x, ty, z),
     vel: new THREE.Vector3(),
-    health: 30,
-    state: 'wander',   // wander|chase|returning|fleeing_fire|stunned
+    health: isMale ? 46 : 30, maxHealth: isMale ? 46 : 30,
+    damage: isMale ? 32 : 22,                 // males hit harder
+    hunger: rand(45, 75),                     // start moderately hungry
+    burst: 1,                                 // sprint reserve 0..1 (tires quickly)
+    state: 'wander',   // wander|rest|converge|chase|fleeing_fire|stunned
+    flankAngle: 0, isLurer: false,
     stunTimer: 0,
     wanderDir: new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
     wanderTimer: rand(2,4),
-    wanderPos: new THREE.Vector3(x, ty, z),
+    restTarget: null,
     legPhase: Math.random()*Math.PI*2,
     flashTimer: 0,
-    originalMat: bodyMat,
+    _detR: 0,                                 // last detection radius (HUD/minimap)
   };
   lionMeshes.push(L);
+  return L;
 }
 
-function spawnLion(){
-  const angle = rand(0, Math.PI*2);
-  const r     = rand(35,48);
-  makeLion(Math.cos(angle)*r, Math.sin(angle)*r);
-  showKillfeed('🦁 A new lion appears!');
+// Spawn a wandering lioness recruit from off at the map edge.
+function spawnLion(sex){
+  const angle = rand(0, Math.PI*2), r = rand(36,48);
+  makeLion(Math.cos(angle)*r, Math.sin(angle)*r, sex || 'lioness');
+  showKillfeed('🦁 A lion joins the pride');
+}
+
+// Spawn the starting pride: a couple of lionesses (the hunters) + a male.
+function spawnPride(){
+  const cx = rand(-1,1)>0 ? rand(30,44) : rand(-44,-30);
+  const cz = rand(-44,44);
+  makeLion(cx+rand(-4,4), cz+rand(-4,4), 'lioness');
+  makeLion(cx+rand(-4,4), cz+rand(-4,4), 'lioness');
+  makeLion(cx+rand(-4,4), cz+rand(-4,4), 'male');
 }
 
 function updateLions(dt){
   if(gameState!=='playing') return;
-  const isNight = !dn.isDay;
-  const detectionBase = isNight ? 18 : 12;
+  const activity = lionActivity();
+  if(prideAlert.timer > 0) prideAlert.timer -= dt;
 
-  lionMeshes.forEach((L,li)=>{
-    L.legPhase += dt*6;
-    L.legs.forEach((leg,i)=>{
-      leg.position.y = 0.3 + Math.sin(L.legPhase + i*Math.PI/2)*0.12;
-    });
+  // Assign flank roles among the current chasers so they encircle the player
+  // (fan-out) rather than stacking on one point. Lurer #0 charges head-on;
+  // the rest swing wide to cut off escape.
+  const chasers = lionMeshes.filter(L=>L.state==='chase');
+  chasers.forEach((L,i)=>{ L.flankAngle = (i-(chasers.length-1)/2)*0.6; L.isLurer = (i===0); });
 
-    // Flash white on hit (reuse one shared material — do NOT allocate a new
-    // material every frame, which leaked dozens of materials per hit)
+  lionMeshes.forEach((L)=>{
+    // Gait animation — faster legs when moving faster
+    const gait = 2 + (L._lastSpeed||0)*0.7;
+    L.legPhase += dt*gait;
+    L.legs.forEach((leg,i)=>{ leg.position.y = 0.3 + Math.sin(L.legPhase + i*Math.PI/2)*0.12; });
+
     if(L.flashTimer > 0){
       L.flashTimer -= dt;
       const flashing = L.flashTimer > 0;
-      L.mesh.children.forEach(c=>{
-        if(c.isMesh) c.material = flashing ? FLASH_MAT : c.userData.origMat;
-      });
+      L.mesh.children.forEach(c=>{ if(c.isMesh) c.material = flashing ? FLASH_MAT : c.userData.origMat; });
     }
 
-    if(L.stunTimer > 0){
-      L.stunTimer -= dt;
-      L.state = 'stunned';
-      return;
-    }
+    if(L.stunTimer > 0){ L.stunTimer -= dt; L.state='stunned'; L._lastSpeed=0; return; }
 
-    const ppos = player.pos;
-    const lpos = L.pos;
-    const dist  = lpos.distanceTo(ppos);
-    const detR  = detectionBase * (player.crouching ? 0.5 : 1)
-                  + (torchState.on ? 2 : 0);
-    const speed = isNight ? PLAYER.sprintSpeed*1.1 : PLAYER.sprintSpeed; // as fast as you can sprint
+    // Hunger rises over time → drives aggression & detection range.
+    L.hunger = clamp(L.hunger + HUNGER_RISE*dt, 0, 100);
 
-    // Check fire repulsion
+    const ppos = player.pos, lpos = L.pos;
+    const dist = lpos.distanceTo(ppos);
+    const hungerAggr = 0.7 + (L.hunger/100)*0.6;   // 0.7 (fed) .. 1.3 (starving)
+    // Detection radius: bigger for hunters & at active times, slashed if the
+    // player crouches; torch gives you away. (Phase 3 extends this with grass
+    // + a separate audio radius.) Stored for the honest signals HUD.
+    const detR = (L.isMale?12:15) * (0.45 + activity*0.85) * hungerAggr
+                 * (player.crouching ? 0.6 : 1) + (torchState.on ? 3 : 0);
+    L._detR = detR;
+
+    // Fire repulsion (campfires scare lions off)
     let nearFire = false;
-    campfires.forEach(f=>{
-      if(L.pos.distanceTo(f.pos) < 9) nearFire = true;
-    });
-    if(nearFire){ L.state = 'fleeing_fire'; }
-    else if(L.state==='fleeing_fire'){ L.state='wander'; }
+    campfires.forEach(f=>{ if(L.pos.distanceTo(f.pos) < 9) nearFire = true; });
+    if(nearFire) L.state='fleeing_fire';
+    else if(L.state==='fleeing_fire') L.state='wander';
 
+    // ---- state transitions ----
+    if(L.state!=='fleeing_fire'){
+      if(dist < detR){
+        L.state = 'chase';
+        prideAlert.pos.copy(ppos); prideAlert.timer = 9;   // broadcast to the pride
+      } else if(L.state==='chase'){
+        // fed lions give up sooner; hungry ones commit further
+        const giveUp = dist > HALF || (L.hunger < 28 && dist > 26) || dist > 40;
+        if(giveUp) L.state = 'wander';
+      } else if(prideAlert.timer > 0 && lpos.distanceTo(prideAlert.pos) < 46 && activity > 0.22){
+        L.state = 'converge';
+      } else if(L.state==='converge'){
+        if(prideAlert.timer <= 0 || lpos.distanceTo(prideAlert.pos) < 3) L.state = 'wander';
+      } else if(activity < 0.3){
+        L.state = 'rest';
+      } else {
+        L.state = 'wander';
+      }
+    }
+
+    // ---- desired direction by state ----
     let dir = new THREE.Vector3();
-
     if(L.state==='fleeing_fire'){
-      // Flee away from nearest fire
-      let nearestFire = null, minFD = Infinity;
-      campfires.forEach(f=>{
-        const fd = L.pos.distanceTo(f.pos);
-        if(fd<minFD){ minFD=fd; nearestFire=f; }
-      });
-      if(nearestFire){
-        dir.copy(L.pos).sub(nearestFire.pos).normalize();
-      }
-    } else if(L.state==='stunned'){
-      dir.set(0,0,0);
-    } else if(dist < detR || L.state==='chase'){
-      L.state = 'chase';
-      // Pack hunting at night: spread angles
-      dir.copy(ppos).sub(lpos);
-      if(isNight && lionMeshes.length>1){
-        const idx = li;
-        const angle = (idx/(lionMeshes.length))*Math.PI*0.5 - Math.PI*0.25;
-        dir.applyAxisAngle(new THREE.Vector3(0,1,0), angle);
-      }
-      dir.y = 0;
+      let nf=null,m=Infinity;
+      campfires.forEach(f=>{ const d=L.pos.distanceTo(f.pos); if(d<m){m=d;nf=f;} });
+      if(nf) dir.copy(L.pos).sub(nf.pos).normalize();
+    } else if(L.state==='chase'){
+      dir.copy(ppos).sub(lpos); dir.y=0;
+      const d = dir.length();
+      // flank when far, straight lunge when close (final rush)
+      if(d > 6 && !L.isLurer) dir.applyAxisAngle(UP, L.flankAngle * clamp((d-6)/22,0,1));
+      dir.normalize();
+    } else if(L.state==='converge'){
+      dir.copy(prideAlert.pos).sub(lpos); dir.y=0;
       if(dir.lengthSq()>0) dir.normalize();
-      if(dist > HALF) L.state = 'wander';   // half a map away — give up the chase
-    } else {
-      // Wander
-      L.state = 'wander';
-      L.wanderTimer -= dt;
-      if(L.wanderTimer < 0){
-        L.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize();
-        L.wanderTimer = rand(2,5);
+    } else if(L.state==='rest'){
+      // drift to nearest shade (tree/rock) and settle there for the midday lull
+      if(!L.restTarget || Math.random()<0.002){
+        let best=null,bd=Infinity;
+        treeObjects.forEach(t=>{ if(!t.big) return; const d=t.pos.distanceTo(lpos); if(d<bd){bd=d;best=t;} });
+        L.restTarget = best ? best.pos : null;
       }
+      if(L.restTarget){
+        const d = L.restTarget.distanceTo(lpos);
+        if(d > 2.5){ dir.copy(L.restTarget).sub(lpos); dir.y=0; dir.normalize(); }
+      }
+    } else { // wander
+      L.wanderTimer -= dt;
+      if(L.wanderTimer < 0){ L.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); L.wanderTimer = rand(2,5); }
       dir.copy(L.wanderDir);
     }
 
     // Wall avoidance
     wallAABBs.forEach(aabb=>{
-      const cx = (aabb.min.x+aabb.max.x)/2;
-      const cz = (aabb.min.z+aabb.max.z)/2;
-      const awayX = lpos.x - cx;
-      const awayZ = lpos.z - cz;
-      const aDist = Math.sqrt(awayX*awayX+awayZ*awayZ);
-      if(aDist < 3){
-        dir.x += (awayX/aDist)*2;
-        dir.z += (awayZ/aDist)*2;
-      }
+      const cx=(aabb.min.x+aabb.max.x)/2, cz=(aabb.min.z+aabb.max.z)/2;
+      const ax=lpos.x-cx, az=lpos.z-cz, ad=Math.sqrt(ax*ax+az*az);
+      if(ad < 3){ dir.x += (ax/ad)*2; dir.z += (az/ad)*2; }
     });
-
     if(dir.lengthSq()>0) dir.normalize();
+
+    // ---- speed by state (burst sprint that tires) ----
+    let speed;
+    const sprintMax = L.isMale ? 13.5 : 16.5;   // lioness faster
+    if(L.state==='chase'){
+      L.burst = clamp(L.burst - dt*0.26, 0, 1);          // tire during the rush
+      speed = lerp(10.5, sprintMax, L.burst);
+    } else if(L.state==='converge'){
+      L.burst = clamp(L.burst + dt*0.12, 0, 1);
+      speed = L.isMale ? 9 : 11;
+    } else if(L.state==='fleeing_fire'){
+      speed = L.isMale ? 11 : 13;
+    } else { // wander/rest — slow, slower still at the midday trough
+      L.burst = clamp(L.burst + dt*0.25, 0, 1);
+      const restF = (L.state==='rest') ? 0.35 : 1;
+      speed = (L.isMale?3.0:3.6) * (0.5 + activity*0.8) * restF;
+    }
+    L._lastSpeed = speed;
+
+    // Feeding: pressed against the player, the lion is eating → hunger drops.
+    if(dist < 1.7) L.hunger = clamp(L.hunger - dt*30, 0, 100);
+
     L.pos.addScaledVector(dir, speed*dt);
     L.pos.x = clamp(L.pos.x, -HALF+0.3, HALF-0.3);
     L.pos.z = clamp(L.pos.z, -HALF+0.3, HALF-0.3);
@@ -1267,11 +1347,13 @@ function updateLions(dt){
     }
   }
 
-  // Spawn new lion every 2 min
+  // Replenish the pride over time (mostly lionesses — the hunters)
   dn.nextLionSpawn -= dt;
-  if(dn.nextLionSpawn <= 0){
-    spawnLion();
-    dn.nextLionSpawn = 120;
+  if(dn.nextLionSpawn <= 0 && lionMeshes.length < 7){
+    spawnLion(Math.random()<0.8 ? 'lioness' : 'male');
+    dn.nextLionSpawn = 130;
+  } else if(dn.nextLionSpawn <= 0){
+    dn.nextLionSpawn = 60;
   }
 }
 
@@ -1743,6 +1825,35 @@ function updateHUD(){
 
   // Wood count
   document.getElementById('wood-count').textContent = woodCount+' wood';
+
+  updateSignals();
+}
+
+// Honest raw-signals panel (Phase 2; extended by Phase 3 stealth).
+function updateSignals(){
+  const el = document.getElementById('signals');
+  if(!FEEDBACK_SHOW_RAW_SIGNALS){ el.style.display='none'; return; }
+  el.style.display='block';
+  const act = lionActivity();
+  const actLabel = act>0.7?'<span class="sig-hi">PEAK</span>':act>0.35?'<span class="sig-w">active</span>':'<span class="sig-ok">resting</span>';
+  // nearest lion
+  let near=null, nd=Infinity;
+  lionMeshes.forEach(L=>{ const d=L.pos.distanceTo(player.pos); if(d<nd){nd=d;near=L;} });
+  let html = `<div class="sig-h">RAW SIGNALS</div>`+
+    `🕑 ${String(Math.floor(gameHour())).padStart(2,'0')}:00 · pride ${actLabel} ${(act*100|0)}%<br>`+
+    `🏃 stamina ${player.stamina|0} · ${player.crouching?'crouched':(player.sprinting?'sprinting':'walking')}<br>`;
+  if(window.__stealth){   // populated by Phase 3
+    const s=window.__stealth;
+    html += `👁 your visibility ${s.vis|0}m · 🔊 noise ${s.aud|0}m ${s.hidden?'<span class="sig-ok">HIDDEN</span>':'<span class="sig-hi">EXPOSED</span>'}<br>`;
+  }
+  if(near){
+    const st = near.state==='chase'?'<span class="sig-hi">CHASING</span>':
+               near.state==='converge'?'<span class="sig-w">converging</span>':
+               near.state==='rest'?'resting':near.state==='fleeing_fire'?'fleeing fire':'wandering';
+    html += `🦁 nearest ${near.isMale?'♂ male':'♀ lioness'} ${nd.toFixed(0)}m · ${st}<br>`+
+            `&nbsp;&nbsp;hunger ${near.hunger|0}% · sees ${near._detR.toFixed(0)}m`;
+  }
+  el.innerHTML = html;
 }
 
 // =====================================================================
@@ -1786,11 +1897,16 @@ function drawMinimap(){
     mmCtx.beginPath(); mmCtx.arc(px,py,4,0,Math.PI*2); mmCtx.fill();
   });
 
-  // Lions
-  mmCtx.fillStyle='#ffcc00';
+  // Lions — colour by state, bigger dot for males. (Phase 3 hides lions that
+  // are crouched/hidden in grass beyond close range — symmetric stealth.)
   lionMeshes.forEach(L=>{
+    const d = L.pos.distanceTo(player.pos);
+    if(L._hiddenFromPlayer && d > 6) return;     // can't see hidden lions on radar
     const [px,py]=toMM(L.pos.x-player.pos.x, L.pos.z-player.pos.z);
-    mmCtx.beginPath(); mmCtx.arc(px,py,4,0,Math.PI*2); mmCtx.fill();
+    mmCtx.fillStyle = L.state==='chase' ? '#ff3b30'
+                    : L.state==='converge' ? '#ff9500'
+                    : L.state==='fleeing_fire' ? '#48a0ff' : '#ffcc00';
+    mmCtx.beginPath(); mmCtx.arc(px,py, L.isMale?5:4, 0,Math.PI*2); mmCtx.fill();
   });
 
   // Player dot
@@ -1887,8 +2003,9 @@ function resetGame(){
   setSlot(1);
   initPlayer();
 
-  // Spawn initial lions
-  for(let i=0;i<3;i++) spawnLion();
+  // Spawn the starting pride (2 lionesses + a male) and clear any stale alert
+  prideAlert.timer = 0;
+  spawnPride();
 
   gameState = 'playing';
   document.getElementById('overlay').style.display='none';
