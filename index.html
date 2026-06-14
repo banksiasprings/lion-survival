@@ -24,9 +24,10 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
 #killfeed{position:fixed;top:50%;right:16px;font-size:14px;display:flex;flex-direction:column;gap:4px}
 .kf-entry{background:rgba(0,0,0,0.5);padding:4px 10px;border-radius:4px;transition:opacity 0.5s}
 #bottombar{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:6px}
-#health-wrap,#stamina-wrap{width:240px;height:10px;background:rgba(0,0,0,0.45);border-radius:5px;overflow:hidden}
+#health-wrap,#stamina-wrap,#hunger-wrap{width:240px;height:10px;background:rgba(0,0,0,0.45);border-radius:5px;overflow:hidden}
 #health-bar{height:100%;width:100%;background:#e74c3c;border-radius:5px}
 #stamina-bar{height:100%;width:100%;background:#2ecc71;border-radius:5px}
+#hunger-bar{height:100%;width:100%;background:#e69020;border-radius:5px;transition:width 0.2s}
 #torch-wrap{width:240px;height:6px;background:rgba(0,0,0,0.45);border-radius:3px;overflow:hidden;display:none}
 #torch-bar{height:100%;width:100%;background:#f39c12;border-radius:3px}
 #inventory{display:flex;gap:8px}
@@ -63,6 +64,7 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
   <div id="killfeed"></div>
   <div id="bottombar">
     <div id="stamina-wrap"><div id="stamina-bar"></div></div>
+    <div id="hunger-wrap"><div id="hunger-bar"></div></div>
     <div id="health-wrap"><div id="health-bar"></div></div>
     <div id="torch-wrap"><div id="torch-bar"></div></div>
     <div id="inventory">
@@ -82,7 +84,8 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
   <div style="font-size:12px;opacity:0.65;line-height:1.9;text-align:center">
     WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hide in grass)<br>
     1/G Grapple → tree (LMB fire · RMB/Space drop · drop onto a lion = attack) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe<br>
-    E Collect Wood/Rocks &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; T Craft Torch &nbsp;|&nbsp; LMB+Axe Chop Wall
+    Q Pounce (hunt prey — ambush from grass for ×3) &nbsp;|&nbsp; E Eat kill / Collect &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; T Craft Torch &nbsp;|&nbsp; LMB+Axe Chop Wall<br>
+    <span style="opacity:0.8">Watch your 🍖 hunger — eat prey you hunt or scavenge lion kills (they'll fight you for it).</span>
   </div>
   <button id="start-btn">▶ START GAME</button>
   <div id="gameover-stats"></div>
@@ -113,7 +116,10 @@ const PLAYER = {
   staminaDrain: 30, staminaRegen: 18,
   healthRegen: 1.5, lionDamage: 25,
   climbSpeed: 14, perchDrain: 7,   // grapple reel-up speed; grip stamina/sec while perched
-  grappleRange: 36                 // max climb-grapple distance to a tree
+  grappleRange: 36,                // max climb-grapple distance to a tree
+  maxHunger: 100, hungerDrain: 0.5, hungerSprintMul: 2.4, // hunger/sec (×mul while sprinting)
+  starveDamage: 3,                 // HP/sec once hunger hits 0
+  pounceRange: 3.6, pounceDamage: 18  // melee hunt; ×3 from a hidden ambush
 };
 let player = {};
 
@@ -984,6 +990,7 @@ function initPlayer(){
     inDanger: false,
     inTree: false, climbing: false,   // Phase 4 grapple/perch state
     _dropCd: 0, _grappleCd: 0,         // drop-attack + re-grapple cooldowns
+    hunger: PLAYER.maxHunger, _pounceCd: 0,   // Phase 6 food chain
   };
   camera.position.copy(player.pos);
   camera.position.y += PLAYER.eyeHeight;
@@ -1009,7 +1016,8 @@ function registerControls(){
     }
     if(e.code==='Space' && player.inTree) dropFromTree();   // drop off the branch
     if(e.code==='KeyF') throwRock();
-    if(e.code==='KeyE') doCollect();
+    if(e.code==='KeyE'){ if(!eatNearbyCarcass()) doCollect(); }   // eat carcass, else collect
+    if(e.code==='KeyQ') pouncePrey();                            // hunt: pounce on prey
     if(e.code==='KeyT') craftTorch();
   });
   document.addEventListener('keyup', e=>{ keys[e.code]=false; });
@@ -1078,6 +1086,7 @@ function updatePlayer(dt){
     (keys['KeyW']||keys['KeyA']||keys['KeyS']||keys['KeyD']);
   if(player._dropCd>0)    player._dropCd    -= dt;
   if(player._grappleCd>0) player._grappleCd -= dt;
+  if(player._pounceCd>0)  player._pounceCd  -= dt;
 
   if(wantSprint){
     player.stamina = Math.max(0, player.stamina - PLAYER.staminaDrain*dt);
@@ -1226,7 +1235,7 @@ function updateHealth(dt){
     });
   }
   player.inDanger = veryNear;
-  if(!nearLion){
+  if(!nearLion && player.hunger > 0){   // no regen on an empty stomach
     player.health = Math.min(PLAYER.maxHealth, player.health + PLAYER.healthRegen*dt);
   }
   if(player.health <= 0){
@@ -1237,6 +1246,20 @@ function updateHealth(dt){
   if(veryNear){
     shakeTime = 0.15;
     shakeAmt  = 0.003;
+  }
+}
+
+// Player hunger (Phase 6): drains over time (faster while exerting); at zero it
+// starts eating into health. Refilled by eating prey carcasses (E).
+function updateHunger(dt){
+  if(gameState!=='playing' || player.inTree===undefined) return;
+  let drain = PLAYER.hungerDrain;
+  if(player.sprinting) drain *= PLAYER.hungerSprintMul;
+  else if((player._moveSpeed||0) > 1.5) drain *= 1.3;
+  player.hunger = Math.max(0, player.hunger - drain*dt);
+  if(player.hunger <= 0){
+    player.health -= PLAYER.starveDamage*dt;
+    if(player.health <= 0){ player.health = 0; triggerGameOver(); }
   }
 }
 
@@ -1823,6 +1846,50 @@ function updateVultures(dt){
   }
 }
 
+// ---- player hunting (Phase 6) ----
+// Pounce: a melee lunge at the prey you're facing. A hidden grass ambush hits
+// 3× (stealth kill on small prey); a standing pounce is weak. Warthogs gore back.
+function pouncePrey(){
+  if(player.inTree || player._pounceCd>0) return;
+  player._pounceCd = 0.8;
+  const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+  fwd.y=0; if(fwd.lengthSq()<0.001){ fwd.set(0,0,-1); } fwd.normalize();
+  let best=null, bd=Infinity;
+  preyMeshes.forEach(P=>{
+    const to=new THREE.Vector3(P.pos.x-player.pos.x,0,P.pos.z-player.pos.z);
+    const d=to.length(); if(d>PLAYER.pounceRange) return;
+    if(to.normalize().dot(fwd) > 0.25 && d<bd){ bd=d; best=P; }
+  });
+  // lunge impulse for feel (knockback isn't clobbered by movement input)
+  player.knockback.x += fwd.x*7; player.knockback.z += fwd.z*7;
+  playSound('throw');
+  if(!best){ return; }
+  const mult = player._hidden ? 3.0 : player.crouching ? 1.8 : 1.0;
+  best.health -= PLAYER.pounceDamage * mult;
+  best.flashTimer = 0.25; best.state='flee'; best.alertTimer = 3;
+  if(best.health > 0 && best.counter > 0){    // cornered warthog gores back
+    player.health -= best.counter;
+    showKillfeed('🐗 The warthog gored you! (-'+best.counter+')');
+    shakeTime=0.22; shakeAmt=0.005;
+  } else {
+    showKillfeed(best.health<=0 ? '🩸 Pounce kill — '+best.label+'!' : '🐾 Pounced the '+best.label+' (flee!)');
+  }
+}
+
+// Eat from the nearest carcass (E). Cannot eat lions. Refills hunger in chunks.
+function eatNearbyCarcass(){
+  let c=null, cd=Infinity;
+  carcasses.forEach(k=>{ const d=k.pos.distanceTo(player.pos); if(d<2.6 && d<cd){ cd=d; c=k; } });
+  if(!c) return false;
+  if(player.hunger >= PLAYER.maxHunger-1){ showKillfeed('🍖 Already full'); return true; }
+  const bite = Math.min(35, c.food, PLAYER.maxHunger - player.hunger);
+  player.hunger = Math.min(PLAYER.maxHunger, player.hunger + bite);
+  c.food -= bite; c.timer = Math.min(c.timer, 60);   // an eaten carcass rots faster
+  playSound('collect');
+  showKillfeed('🍖 Ate '+(c.species)+' (+'+Math.round(bite)+' hunger)'+(c.food<=0?' — picked clean':''));
+  return true;
+}
+
 // =====================================================================
 //  GRAPPLE
 // =====================================================================
@@ -2097,6 +2164,14 @@ function updateThrownRocks(dt){
         if(L.health<=0){ showKillfeed('🪨 Rock kill!'); }
       }
     });
+    // Rocks also wound prey (ranged hunting) — and scatter the herd (Phase 6).
+    if(!hit) preyMeshes.forEach(P=>{
+      if(r.mesh.position.distanceTo(P.pos) < 1.2){
+        P.health -= 9; P.flashTimer = 0.25; P.state='flee'; P.alertTimer = 3;
+        hit = true;
+        showKillfeed(P.health<=0 ? '🪨 Rock kill — '+P.label+'!' : '🪨 Hit the '+P.label);
+      }
+    });
 
     if(hit || r.dist > 30){
       killObj(r.mesh);
@@ -2309,9 +2384,12 @@ function showKillfeed(msg){
 
 function updateHUD(){
   if(gameState!=='playing') return;
-  // Health / stamina
+  // Health / stamina / hunger
   document.getElementById('health-bar').style.width  = (player.health/PLAYER.maxHealth*100)+'%';
   document.getElementById('stamina-bar').style.width = (player.stamina/PLAYER.maxStamina*100)+'%';
+  const hb=document.getElementById('hunger-bar');
+  hb.style.width = (player.hunger/PLAYER.maxHunger*100)+'%';
+  hb.style.background = player.hunger<20 ? '#e74c3c' : player.hunger<45 ? '#e6b020' : '#e69020';
 
   // Top left
   document.getElementById('topleft').innerHTML =
@@ -2353,8 +2431,13 @@ function updateHUD(){
   let promptText = '';
   if(player.inTree) promptText = '[Space] Drop  ·  drop onto a lion to attack';
   else if(player.climbing) promptText = '…climbing…';
+  else {
+    let nearPrey=false; for(const P of preyMeshes){ if(P.pos.distanceTo(player.pos)<PLAYER.pounceRange){ nearPrey=true; break; } }
+    if(nearPrey) promptText = player._hidden ? '[Q] Pounce (ambush ×3!)' : '[Q] Pounce';
+  }
   treeObjects.forEach(t=>{ if(t.pos.distanceTo(player.pos)<3.5 && t.cooldown<=0) promptText='[E] Collect Wood'; });
   rockSpawns.forEach(r=>{ if(r.available && r.pos.distanceTo(player.pos)<3) promptText='[E] Pick up Rock'; });
+  carcasses.forEach(c=>{ if(c.pos.distanceTo(player.pos)<2.6) promptText='[E] Eat '+c.species+' (hunger)'; });
   promptEl.textContent = promptText;
   promptEl.style.display = promptText?'block':'none';
 
@@ -2379,7 +2462,8 @@ function updateSignals(){
   let html = `<div class="sig-h">RAW SIGNALS</div>`+
     `🕑 ${String(Math.floor(gameHour())).padStart(2,'0')}:00 · pride ${actLabel} ${(act*100|0)}%<br>`+
     `🌬 wind ${warr} (scent carries downwind)<br>`+
-    `🏃 stamina ${player.stamina|0} · ${player.crouching?'crouched':(player.sprinting?'sprinting':'walking')}<br>`;
+    `🏃 stamina ${player.stamina|0} · ${player.crouching?'crouched':(player.sprinting?'sprinting':'walking')}<br>`+
+    `🍖 hunger ${player.hunger|0}%${player.hunger<=0?' <span class="sig-hi">STARVING</span>':''}<br>`;
   if(window.__stealth){   // populated by Phase 3
     const s=window.__stealth;
     html += `👁 your visibility ${s.vis|0}m · 🔊 noise ${s.aud|0}m ${s.hidden?'<span class="sig-ok">HIDDEN</span>':'<span class="sig-hi">EXPOSED</span>'}<br>`;
@@ -2595,6 +2679,7 @@ function animate(){
   updatePlayer(dt);
   updateStealth(dt);
   updateHealth(dt);
+  updateHunger(dt);           // player hunger / starvation (Phase 6)
   updateLions(dt);
   updatePrey(dt);             // herbivores: graze / herd / flee (Phase 6)
   updateCarcasses(dt);
