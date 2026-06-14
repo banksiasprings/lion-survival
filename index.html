@@ -1,0 +1,1507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Lion Survival</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-select:none}
+#game-canvas{display:block;position:fixed;inset:0;z-index:1}
+#hud{position:fixed;inset:0;pointer-events:none;color:#fff;text-shadow:0 1px 3px #000;z-index:10}
+#crosshair{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:20px;height:20px;pointer-events:none}
+#crosshair::before,#crosshair::after{content:'';position:absolute;background:rgba(255,255,255,0.85)}
+#crosshair::before{width:2px;height:100%;left:50%;transform:translateX(-50%)}
+#crosshair::after{width:100%;height:2px;top:50%;transform:translateY(-50%)}
+#topleft{position:fixed;top:14px;left:14px;font-size:14px;line-height:1.7}
+#topright{position:fixed;top:14px;right:14px;font-size:14px;text-align:right;line-height:1.7}
+#prompt{position:fixed;bottom:200px;left:50%;transform:translateX(-50%);font-size:15px;
+  background:rgba(0,0,0,0.55);padding:6px 14px;border-radius:6px;display:none}
+#killfeed{position:fixed;top:50%;right:16px;font-size:14px;display:flex;flex-direction:column;gap:4px}
+.kf-entry{background:rgba(0,0,0,0.5);padding:4px 10px;border-radius:4px;transition:opacity 0.5s}
+#bottombar{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:6px}
+#health-wrap,#stamina-wrap{width:240px;height:10px;background:rgba(0,0,0,0.45);border-radius:5px;overflow:hidden}
+#health-bar{height:100%;width:100%;background:#e74c3c;border-radius:5px}
+#stamina-bar{height:100%;width:100%;background:#2ecc71;border-radius:5px}
+#torch-wrap{width:240px;height:6px;background:rgba(0,0,0,0.45);border-radius:3px;overflow:hidden;display:none}
+#torch-bar{height:100%;width:100%;background:#f39c12;border-radius:3px}
+#inventory{display:flex;gap:8px}
+.inv-slot{width:56px;height:56px;border:2px solid rgba(255,255,255,0.3);border-radius:8px;
+  background:rgba(0,0,0,0.5);display:flex;flex-direction:column;align-items:center;
+  justify-content:center;font-size:11px;gap:2px;position:relative}
+.inv-slot.active{border-color:#f1c40f;background:rgba(255,200,0,0.15)}
+.inv-slot .icon{font-size:22px;line-height:1}
+.inv-slot .count{font-size:10px;opacity:0.8}
+.inv-slot .hotkey{position:absolute;top:2px;left:4px;font-size:9px;opacity:0.5}
+#minimap{position:fixed;bottom:18px;right:18px;width:150px;height:150px;
+  border-radius:50%;border:2px solid rgba(255,255,255,0.3);overflow:hidden;background:#1a3a1a}
+#minimap canvas{position:static;inset:auto;z-index:auto;display:block;width:150px;height:150px}
+#vignette{position:fixed;inset:0;pointer-events:none;z-index:5}
+#overlay{position:fixed;inset:0;background:rgba(0,0,0,0.88);display:flex;
+  flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:100}
+#overlay h1{font-size:42px;color:#f1c40f;text-shadow:0 0 20px #f1c40f88;margin-bottom:4px}
+#overlay p{font-size:15px;line-height:1.6;text-align:center;opacity:0.85;max-width:480px}
+#overlay button{padding:12px 36px;font-size:18px;background:#e74c3c;color:#fff;
+  border:none;border-radius:8px;cursor:pointer;pointer-events:all;font-family:inherit;margin-top:8px}
+#overlay button:hover{background:#c0392b}
+#leaderboard{font-size:13px;text-align:center;opacity:0.8;line-height:1.8}
+#gameover-stats{font-size:15px;text-align:center;line-height:1.9;color:#eee}
+</style>
+</head>
+<body>
+<div id="vignette"></div>
+<div id="hud">
+  <div id="crosshair"></div>
+  <div id="topleft"></div>
+  <div id="topright"></div>
+  <div id="prompt"></div>
+  <div id="killfeed"></div>
+  <div id="bottombar">
+    <div id="stamina-wrap"><div id="stamina-bar"></div></div>
+    <div id="health-wrap"><div id="health-bar"></div></div>
+    <div id="torch-wrap"><div id="torch-bar"></div></div>
+    <div id="inventory">
+      <div class="inv-slot active" id="slot1"><span class="hotkey">1</span><span class="icon">🪝</span><span>Grapple</span></div>
+      <div class="inv-slot" id="slot2"><span class="hotkey">2</span><span class="icon">🧱</span><span class="count" id="wood-count">0 wood</span></div>
+      <div class="inv-slot" id="slot3"><span class="hotkey">3</span><span class="icon">🔥</span><span>Campfire</span></div>
+      <div class="inv-slot" id="slot4"><span class="hotkey">4</span><span class="icon">🔦</span><span>Torch</span></div>
+      <div class="inv-slot" id="slot5"><span class="hotkey">5</span><span class="icon">🪓</span><span>Axe</span></div>
+    </div>
+  </div>
+  <div id="minimap"><canvas id="mm" width="150" height="150"></canvas></div>
+</div>
+<div id="overlay">
+  <h1>🦁 LION SURVIVAL</h1>
+  <p>Survive as long as possible against hunting lions.<br>Collect wood, build walls, light campfires, use your grapple hook.</p>
+  <div style="font-size:12px;opacity:0.65;line-height:1.9;text-align:center">
+    WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch<br>
+    1/G Grapple (LMB fire · RMB release) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe<br>
+    E Collect Wood/Rocks &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; T Craft Torch &nbsp;|&nbsp; LMB+Axe Chop Wall
+  </div>
+  <button id="start-btn">▶ START GAME</button>
+  <div id="gameover-stats"></div>
+  <div id="leaderboard"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+'use strict';
+// =====================================================================
+//  GLOBALS
+// =====================================================================
+let scene, camera, renderer, clock;
+const WORLD = 100, HALF = 50;
+
+// Input
+let keys = {};
+let mouseDX = 0, mouseDY = 0;
+let yaw = 0, pitch = 0;
+let isPointerLocked = false;
+
+// Player
+const PLAYER = {
+  speed: 10, sprintSpeed: 16,
+  jumpForce: 12, gravity: -22,
+  eyeHeight: 1.7, crouchHeight: 1.0,
+  maxHealth: 100, maxStamina: 100,
+  staminaDrain: 30, staminaRegen: 18,
+  healthRegen: 1.5, lionDamage: 25
+};
+let player = {};
+
+// World objects
+let treeObjects = [];   // {mesh, trunk, pos, cooldown}
+let rockSpawns  = [];   // {mesh, pos, available, cooldown}
+let wallMeshes  = [];
+let wallAABBs   = [];
+let campfires   = [];
+let lionMeshes  = [];
+let corpses     = [];
+
+// Grapple
+let grapple = { active: false, point: null, line: null, targetLion: null };
+
+// Torch
+let torchState = { crafted: false, on: false, fuel: 90, light: null };
+
+// Day/Night
+let dn = {
+  time: 0, // 0..240 seconds full cycle, 0=dawn
+  day: 1,
+  isDay: true,
+  nextLionSpawn: 120
+};
+
+// Items
+let woodCount  = 0;
+let rockCount  = 0;  // held rocks
+let activeSlot = 1;
+
+// Audio
+let audioCtx = null;
+
+// Game state
+let gameState  = 'menu';
+let elapsed    = 0;
+let kills      = 0;
+let animId     = null;
+let shakeTime  = 0;
+let shakeAmt   = 0;
+
+// Minimap
+let mmCtx;
+
+// Raycaster
+let raycaster;
+
+// Terrain heights (simple noise)
+let heightmap = [];
+
+// =====================================================================
+//  UTILITIES
+// =====================================================================
+function v3(x,y,z){ return new THREE.Vector3(x,y,z); }
+function rand(a,b){ return a + Math.random()*(b-a); }
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function fmtTime(s){
+  const m=Math.floor(s/60), ss=Math.floor(s%60);
+  return `${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+}
+
+// Free a mesh/group's GPU resources. scene.remove() alone does NOT release
+// VRAM — geometries/materials linger until disposed. Without this, every
+// restart and every dead lion / spent rock / expired campfire leaks memory
+// until the WebGL context is lost and the screen goes black.
+function disposeObject3D(obj){
+  if(!obj) return;
+  obj.traverse(o=>{
+    if(o.geometry) o.geometry.dispose();
+    if(o.material){
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach(m=>{
+        if(m.userData && m.userData.keep) return;   // shared material — keep alive
+        for(const k in m){ const v=m[k]; if(v && v.isTexture) v.dispose(); }
+        m.dispose();
+      });
+    }
+  });
+}
+// Remove from scene AND free its GPU resources.
+function killObj(obj){ if(!obj) return; scene.remove(obj); disposeObject3D(obj); }
+
+// Simple pseudo-noise for terrain
+function noise2d(x,z){
+  const s=(Math.sin(x*0.3+z*0.17)*43758.5453)%1;
+  const s2=(Math.sin(x*0.11-z*0.29)*12345.678)%1;
+  return (Math.abs(s)+Math.abs(s2))*0.5;
+}
+
+function terrainY(x,z){
+  // gentle rolling, flat-ish
+  return Math.sin(x*0.18)*0.6 + Math.cos(z*0.14)*0.5
+       + Math.sin(x*0.4+z*0.3)*0.25 - 0.4;
+}
+
+// =====================================================================
+//  SCENE SETUP
+// =====================================================================
+function initScene(){
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x87ceeb, 0.018);
+  camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.05, 300);
+  renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.domElement.id = 'game-canvas';   // scope CSS to THIS canvas (not #mm)
+  document.body.appendChild(renderer.domElement);
+  clock = new THREE.Clock();
+
+  // WebGL context-loss safety net. If VRAM is exhausted (or the GPU resets)
+  // the context is lost and the canvas turns transparent — revealing the
+  // black page background — while the DOM HUD keeps working. Without
+  // preventDefault() the browser will NEVER fire 'restored', so it stays
+  // black forever. With it, we pause the loop and resume once restored.
+  renderer.domElement.addEventListener('webglcontextlost', e=>{
+    e.preventDefault();
+    if(animId){ cancelAnimationFrame(animId); animId = null; }
+    console.warn('WebGL context lost — waiting for restore');
+  }, false);
+  renderer.domElement.addEventListener('webglcontextrestored', ()=>{
+    console.warn('WebGL context restored');
+    clock.getDelta();              // drop the long gap
+    if(!animId) animate();         // resume rendering
+  }, false);
+  raycaster = new THREE.Raycaster();
+  raycaster.near = 0.05;
+  raycaster.far  = 60;
+  mmCtx = document.getElementById('mm').getContext('2d');
+
+  // Ambient
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+
+  // Directional (sun)
+  const sun = new THREE.DirectionalLight(0xfff4e0, 1.2);
+  sun.position.set(40, 80, 30);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024,1024);
+  sun.shadow.camera.near = 0.5;
+  sun.shadow.camera.far = 200;
+  sun.shadow.camera.left = sun.shadow.camera.bottom = -60;
+  sun.shadow.camera.right = sun.shadow.camera.top = 60;
+  scene.add(sun);
+  scene.userData.sun = sun;
+  scene.userData.ambient = scene.children.find(c=>c.isAmbientLight);
+
+  window.addEventListener('resize', ()=>{
+    camera.aspect = innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+}
+
+// =====================================================================
+//  TERRAIN
+// =====================================================================
+function createTerrain(){
+  const geo = new THREE.PlaneGeometry(WORLD, WORLD, 40, 40);
+  geo.rotateX(-Math.PI/2);
+  const pos = geo.attributes.position;
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), z=pos.getZ(i);
+    pos.setY(i, terrainY(x,z));
+  }
+  geo.computeVertexNormals();
+  const mat = new THREE.MeshLambertMaterial({color:0x4a7c3f});
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.receiveShadow = true;
+  mesh.name = 'terrain';
+  scene.add(mesh);
+
+  // Invisible boundary walls
+  const wmat = new THREE.MeshBasicMaterial({visible:false});
+  const boundaries = [
+    {pos:[0,5,-HALF], rot:[0,0,0], w:WORLD, h:10},
+    {pos:[0,5, HALF], rot:[0,Math.PI,0], w:WORLD, h:10},
+    {pos:[-HALF,5,0], rot:[0,Math.PI/2,0], w:WORLD, h:10},
+    {pos:[ HALF,5,0], rot:[0,-Math.PI/2,0], w:WORLD, h:10},
+  ];
+  boundaries.forEach(b=>{
+    const g = new THREE.PlaneGeometry(b.w, b.h);
+    const m = new THREE.Mesh(g, wmat);
+    m.position.set(...b.pos);
+    m.rotation.set(...b.rot);
+    m.name = 'boundary';
+    scene.add(m);
+  });
+}
+
+// =====================================================================
+//  TREES
+// =====================================================================
+function createTrees(){
+  const trunkMat = new THREE.MeshLambertMaterial({color:0x6b4226});
+  const leafMat  = new THREE.MeshLambertMaterial({color:0x2d6a2d});
+  const positions = [];
+  let attempts = 0;
+  while(positions.length < 15 && attempts < 200){
+    attempts++;
+    const x = rand(-42,42), z = rand(-42,42);
+    if(positions.some(p=>Math.hypot(p[0]-x,p[1]-z)<6)) continue;
+    positions.push([x,z]);
+  }
+  positions.forEach(([x,z])=>{
+    const y = terrainY(x,z);
+    const group = new THREE.Group();
+    group.position.set(x,y,z);
+    // Trunk
+    const tG = new THREE.CylinderGeometry(0.22,0.32,2.5,8);
+    const trunk = new THREE.Mesh(tG, trunkMat);
+    trunk.position.y = 1.25;
+    trunk.castShadow = true;
+    group.add(trunk);
+    // Leaves (stacked cones)
+    [[1.8,2.4,0],[2.6,2.0,0.4],[3.2,1.5,0.7]].forEach(([cy,h,off])=>{
+      const cG = new THREE.ConeGeometry(1.4-off*0.6, h, 8);
+      const cone = new THREE.Mesh(cG, leafMat);
+      cone.position.y = cy+1;
+      cone.castShadow = true;
+      group.add(cone);
+    });
+    group.name = 'tree';
+    group.userData.isTree = true;
+    scene.add(group);
+    treeObjects.push({ mesh:group, pos:new THREE.Vector3(x,y,z), cooldown:0 });
+  });
+}
+
+// =====================================================================
+//  ROCKS
+// =====================================================================
+function createRocks(){
+  const mat = new THREE.MeshLambertMaterial({color:0x888888});
+  for(let i=0;i<10;i++){
+    let x,z,attempts=0;
+    do{ x=rand(-44,44); z=rand(-44,44); attempts++; }
+    while(attempts<30 && treeObjects.some(t=>t.pos.distanceTo(v3(x,0,z))<4));
+    const y = terrainY(x,z);
+    const sx=rand(0.4,0.8), sy=rand(0.3,0.6), sz=rand(0.4,0.8);
+    const geo = new THREE.BoxGeometry(sx,sy,sz);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y+sy/2, z);
+    mesh.rotation.y = rand(0,Math.PI);
+    mesh.castShadow = true;
+    mesh.name = 'rock';
+    scene.add(mesh);
+    rockSpawns.push({ mesh, pos:new THREE.Vector3(x,y+sy/2,z), available:true, cooldown:0 });
+  }
+}
+
+// =====================================================================
+//  PLAYER INIT
+// =====================================================================
+function initPlayer(){
+  yaw = 0; pitch = 0;
+  player = {
+    pos: new THREE.Vector3(0, 2, 0),
+    vel: new THREE.Vector3(),
+    knockback: new THREE.Vector3(),   // edge-bounce impulse (input can't cancel it)
+    health: PLAYER.maxHealth,
+    stamina: PLAYER.maxStamina,
+    onGround: false,
+    crouching: false,
+    sprinting: false,
+    inDanger: false,
+  };
+  camera.position.copy(player.pos);
+  camera.position.y += PLAYER.eyeHeight;
+  camera.rotation.order = 'YXZ';
+}
+
+// =====================================================================
+//  CONTROLS (registered ONCE at boot)
+// =====================================================================
+function registerControls(){
+  document.addEventListener('keydown', e=>{
+    if(gameState!=='playing') return;
+    keys[e.code] = true;
+    if(e.code==='Digit1') setSlot(1);
+    if(e.code==='Digit2') setSlot(2);
+    if(e.code==='Digit3') setSlot(3);
+    if(e.code==='Digit4') setSlot(4);
+    if(e.code==='Digit5') setSlot(5);
+    if(e.code==='KeyG'){
+      setSlot(1);
+      if(grapple.active) releaseGrapple();
+      else fireGrapple();
+    }
+    if(e.code==='KeyF') throwRock();
+    if(e.code==='KeyE') doCollect();
+    if(e.code==='KeyT') craftTorch();
+  });
+  document.addEventListener('keyup', e=>{ keys[e.code]=false; });
+
+  document.addEventListener('mousemove', e=>{
+    if(!isPointerLocked) return;
+    mouseDX += e.movementX;
+    mouseDY += e.movementY;
+  });
+
+  document.addEventListener('mousedown', e=>{
+    if(gameState!=='playing') return;
+    if(!isPointerLocked){ renderer.domElement.requestPointerLock(); return; }
+    if(e.button===0) onLeftClick();
+    if(e.button===2) onRightClick();
+  });
+  document.addEventListener('contextmenu', e=>e.preventDefault());
+
+  document.addEventListener('pointerlockchange', ()=>{
+    isPointerLocked = !!document.pointerLockElement;
+  });
+}
+
+function setSlot(n){
+  activeSlot = n;
+  [1,2,3,4,5].forEach(i=>{
+    const el = document.getElementById('slot'+i);
+    el.classList.toggle('active', i===n);
+  });
+}
+
+function onLeftClick(){
+  if(activeSlot===1) fireGrapple();
+  else if(activeSlot===2) placeWall();
+  else if(activeSlot===3) placeCampfire();
+  else if(activeSlot===4) toggleTorch();
+  else if(activeSlot===5) chopWall();
+}
+
+function onRightClick(){
+  if(activeSlot===1) releaseGrapple();
+}
+
+// =====================================================================
+//  PLAYER MOVEMENT
+// =====================================================================
+function updatePlayer(dt){
+  if(gameState!=='playing') return;
+
+  // Mouse look
+  const sens = 0.002;
+  yaw   -= mouseDX * sens;
+  pitch -= mouseDY * sens;
+  pitch  = clamp(pitch, -1.2, 1.2);
+  mouseDX = 0; mouseDY = 0;
+  camera.rotation.y = yaw;
+  camera.rotation.x = pitch;
+
+  // Crouch
+  player.crouching = !!keys['KeyC'];
+  const eyeH = player.crouching ? PLAYER.crouchHeight : PLAYER.eyeHeight;
+
+  // Sprinting + stamina (can't sprint while crouched)
+  const wantSprint = !!keys['ShiftLeft'] && player.stamina > 0 && !player.crouching &&
+    (keys['KeyW']||keys['KeyA']||keys['KeyS']||keys['KeyD']);
+  if(wantSprint){
+    player.stamina = Math.max(0, player.stamina - PLAYER.staminaDrain*dt);
+    player.sprinting = true;
+  } else {
+    player.stamina = Math.min(PLAYER.maxStamina, player.stamina + PLAYER.staminaRegen*dt);
+    player.sprinting = false;
+  }
+
+  let speed = (player.sprinting && player.stamina>0) ? PLAYER.sprintSpeed : PLAYER.speed;
+  if(player.crouching) speed *= 0.5;   // crouch-walk: 5 u/s ≈ ⅓ of top speed, stealthy
+
+  // Direction
+  const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+  const right   = new THREE.Vector3( Math.cos(yaw), 0, -Math.sin(yaw));
+  const move    = new THREE.Vector3();
+
+  if(keys['KeyW']) move.addScaledVector(forward, 1);
+  if(keys['KeyS']) move.addScaledVector(forward,-1);
+  if(keys['KeyA']) move.addScaledVector(right,  -1);
+  if(keys['KeyD']) move.addScaledVector(right,   1);
+  if(move.lengthSq()>0) move.normalize().multiplyScalar(speed);
+
+  // Grapple pull
+  if(grapple.active && grapple.point){
+    const toHook = grapple.point.clone().sub(player.pos);
+    const dist = toHook.length();
+    if(dist > 0.5){
+      const pull = toHook.normalize().multiplyScalar(14);
+      player.vel.copy(pull);
+    } else {
+      releaseGrapple();
+    }
+  } else {
+    player.vel.x = move.x;
+    player.vel.z = move.z;
+    // Gravity
+    if(!player.onGround){
+      player.vel.y += PLAYER.gravity * dt;
+    }
+    // Jump
+    if(keys['Space'] && player.onGround){
+      player.vel.y = PLAYER.jumpForce;
+      player.onGround = false;
+    }
+  }
+
+  // Integrate position
+  player.pos.addScaledVector(player.vel, dt);
+
+  // Terrain collision
+  const ty = terrainY(player.pos.x, player.pos.z);
+  if(player.pos.y < ty + 0.1){
+    player.pos.y = ty + 0.1;
+    player.vel.y = 0;
+    player.onGround = true;
+  } else {
+    player.onGround = false;
+  }
+
+  // Boundary bounce. Reversing player.vel here never worked: vel.x/vel.z is
+  // rewritten from movement input at the top of every frame, so the reversal
+  // was instantly clobbered and you just stuck sliding against the wall.
+  // Instead, clamp to the edge and set a separate knockback impulse that is
+  // applied to position and decayed below — input can't cancel it, so you
+  // visibly bounce back inward.
+  const EDGE = HALF - 1;
+  const KB = 16;
+  if(player.pos.x < -EDGE){ player.pos.x = -EDGE; player.knockback.x =  KB; }
+  else if(player.pos.x > EDGE){ player.pos.x = EDGE; player.knockback.x = -KB; }
+  if(player.pos.z < -EDGE){ player.pos.z = -EDGE; player.knockback.z =  KB; }
+  else if(player.pos.z > EDGE){ player.pos.z = EDGE; player.knockback.z = -KB; }
+
+  // Apply + decay the knockback impulse (independent of movement input)
+  if(player.knockback.lengthSq() > 0.0025){
+    player.pos.addScaledVector(player.knockback, dt);
+    player.knockback.multiplyScalar(Math.max(0, 1 - dt*3.5));
+  } else {
+    player.knockback.set(0,0,0);
+  }
+
+  // Wall collision (sphere-AABB in XZ). Skip it once the player's feet have
+  // cleared the top of the wall — otherwise the wall behaves like an invisible
+  // barrier extending infinitely into the sky and you can never jump over it.
+  wallAABBs.forEach(aabb=>{
+    if(player.pos.y > aabb.max.y - 0.15) return;   // above the wall — vault over
+    const px = clamp(player.pos.x, aabb.min.x, aabb.max.x);
+    const pz = clamp(player.pos.z, aabb.min.z, aabb.max.z);
+    const dx = player.pos.x - px;
+    const dz = player.pos.z - pz;
+    const dist = Math.sqrt(dx*dx+dz*dz);
+    if(dist < 0.5 && dist > 0.001){
+      player.pos.x += (dx/dist)*(0.5-dist);
+      player.pos.z += (dz/dist)*(0.5-dist);
+    }
+  });
+
+  // Camera
+  camera.position.copy(player.pos);
+  camera.position.y += eyeH;
+  camera.rotation.y = yaw;
+  camera.rotation.x = pitch;
+
+  // Update grapple line (mutate the existing 2-vertex buffer in place —
+  // setFromPoints allocates a fresh GPU buffer every frame, a leak)
+  if(grapple.active && grapple.line){
+    const arr = grapple.line.geometry.attributes.position.array;
+    arr[0]=camera.position.x; arr[1]=camera.position.y; arr[2]=camera.position.z;
+    arr[3]=grapple.point.x;   arr[4]=grapple.point.y;   arr[5]=grapple.point.z;
+    grapple.line.geometry.attributes.position.needsUpdate = true;
+  }
+
+  // Update torch light
+  if(torchState.on && torchState.light){
+    torchState.light.position.copy(camera.position);
+  }
+}
+
+// =====================================================================
+//  HEALTH & DAMAGE
+// =====================================================================
+function updateHealth(dt){
+  if(gameState!=='playing') return;
+  let nearLion = false;
+  let veryNear = false;
+  lionMeshes.forEach(L=>{
+    const d = L.pos.distanceTo(player.pos);
+    if(d < 1.5){
+      player.health -= PLAYER.lionDamage * dt;
+      nearLion = true;
+    }
+    if(d < 6) veryNear = true;
+  });
+  player.inDanger = veryNear;
+  if(!nearLion){
+    player.health = Math.min(PLAYER.maxHealth, player.health + PLAYER.healthRegen*dt);
+  }
+  if(player.health <= 0){
+    player.health = 0;
+    triggerGameOver();
+  }
+  // Screen shake when very near
+  if(veryNear){
+    shakeTime = 0.15;
+    shakeAmt  = 0.003;
+  }
+}
+
+// =====================================================================
+//  LIONS
+// =====================================================================
+// One shared white material reused for every lion's hit-flash. Flagged
+// `keep` so disposeObject3D never frees it (it lives for the whole session).
+const FLASH_MAT = new THREE.MeshLambertMaterial({color:0xffffff});
+FLASH_MAT.userData.keep = true;
+
+function makeLion(x, z){
+  const group = new THREE.Group();
+  const bodyMat = new THREE.MeshLambertMaterial({color:0xd4a520});
+  const darkMat = new THREE.MeshLambertMaterial({color:0x8b6914});
+  // Body
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1,0.65,1.8), bodyMat);
+  body.position.y = 0.65;
+  group.add(body);
+  // Head
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.7,0.65,0.7), bodyMat);
+  head.position.set(0, 0.85, 0.85);
+  group.add(head);
+  // Mane
+  const mane = new THREE.Mesh(new THREE.SphereGeometry(0.45,8,6), darkMat);
+  mane.position.set(0, 0.88, 0.82);
+  group.add(mane);
+  // Legs (4)
+  const legG = new THREE.CylinderGeometry(0.1,0.1,0.6,6);
+  const legPos = [[-0.3,0.3,0.5],[0.3,0.3,0.5],[-0.3,0.3,-0.5],[0.3,0.3,-0.5]];
+  const legs = [];
+  legPos.forEach(([lx,ly,lz])=>{
+    const leg = new THREE.Mesh(legG, bodyMat);
+    leg.position.set(lx, ly, lz);
+    group.add(leg);
+    legs.push(leg);
+  });
+  // Tail
+  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.08,0.8,6), bodyMat);
+  tail.position.set(0, 0.75, -0.95);
+  tail.rotation.x = 0.4;
+  group.add(tail);
+
+  // Remember each part's real material so the hit-flash can restore it
+  // exactly (the mane uses darkMat, the rest bodyMat).
+  group.children.forEach(c=>{ if(c.isMesh) c.userData.origMat = c.material; });
+
+  const ty = terrainY(x,z);
+  group.position.set(x, ty, z);
+  group.castShadow = true;
+  group.name = 'lion';
+  scene.add(group);
+
+  const L = {
+    mesh: group,
+    legs,
+    pos: new THREE.Vector3(x, ty, z),
+    vel: new THREE.Vector3(),
+    health: 30,
+    state: 'wander',   // wander|chase|returning|fleeing_fire|stunned
+    stunTimer: 0,
+    wanderDir: new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
+    wanderTimer: rand(2,4),
+    wanderPos: new THREE.Vector3(x, ty, z),
+    legPhase: Math.random()*Math.PI*2,
+    flashTimer: 0,
+    originalMat: bodyMat,
+  };
+  lionMeshes.push(L);
+}
+
+function spawnLion(){
+  const angle = rand(0, Math.PI*2);
+  const r     = rand(35,48);
+  makeLion(Math.cos(angle)*r, Math.sin(angle)*r);
+  showKillfeed('🦁 A new lion appears!');
+}
+
+function updateLions(dt){
+  if(gameState!=='playing') return;
+  const isNight = !dn.isDay;
+  const detectionBase = isNight ? 18 : 12;
+
+  lionMeshes.forEach((L,li)=>{
+    L.legPhase += dt*6;
+    L.legs.forEach((leg,i)=>{
+      leg.position.y = 0.3 + Math.sin(L.legPhase + i*Math.PI/2)*0.12;
+    });
+
+    // Flash white on hit (reuse one shared material — do NOT allocate a new
+    // material every frame, which leaked dozens of materials per hit)
+    if(L.flashTimer > 0){
+      L.flashTimer -= dt;
+      const flashing = L.flashTimer > 0;
+      L.mesh.children.forEach(c=>{
+        if(c.isMesh) c.material = flashing ? FLASH_MAT : c.userData.origMat;
+      });
+    }
+
+    if(L.stunTimer > 0){
+      L.stunTimer -= dt;
+      L.state = 'stunned';
+      return;
+    }
+
+    const ppos = player.pos;
+    const lpos = L.pos;
+    const dist  = lpos.distanceTo(ppos);
+    const detR  = detectionBase * (player.crouching ? 0.5 : 1)
+                  + (torchState.on ? 2 : 0);
+    const speed = isNight ? PLAYER.sprintSpeed*1.1 : PLAYER.sprintSpeed; // as fast as you can sprint
+
+    // Check fire repulsion
+    let nearFire = false;
+    campfires.forEach(f=>{
+      if(L.pos.distanceTo(f.pos) < 9) nearFire = true;
+    });
+    if(nearFire){ L.state = 'fleeing_fire'; }
+    else if(L.state==='fleeing_fire'){ L.state='wander'; }
+
+    let dir = new THREE.Vector3();
+
+    if(L.state==='fleeing_fire'){
+      // Flee away from nearest fire
+      let nearestFire = null, minFD = Infinity;
+      campfires.forEach(f=>{
+        const fd = L.pos.distanceTo(f.pos);
+        if(fd<minFD){ minFD=fd; nearestFire=f; }
+      });
+      if(nearestFire){
+        dir.copy(L.pos).sub(nearestFire.pos).normalize();
+      }
+    } else if(L.state==='stunned'){
+      dir.set(0,0,0);
+    } else if(dist < detR || L.state==='chase'){
+      L.state = 'chase';
+      // Pack hunting at night: spread angles
+      dir.copy(ppos).sub(lpos);
+      if(isNight && lionMeshes.length>1){
+        const idx = li;
+        const angle = (idx/(lionMeshes.length))*Math.PI*0.5 - Math.PI*0.25;
+        dir.applyAxisAngle(new THREE.Vector3(0,1,0), angle);
+      }
+      dir.y = 0;
+      if(dir.lengthSq()>0) dir.normalize();
+      if(dist > HALF) L.state = 'wander';   // half a map away — give up the chase
+    } else {
+      // Wander
+      L.state = 'wander';
+      L.wanderTimer -= dt;
+      if(L.wanderTimer < 0){
+        L.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize();
+        L.wanderTimer = rand(2,5);
+      }
+      dir.copy(L.wanderDir);
+    }
+
+    // Wall avoidance
+    wallAABBs.forEach(aabb=>{
+      const cx = (aabb.min.x+aabb.max.x)/2;
+      const cz = (aabb.min.z+aabb.max.z)/2;
+      const awayX = lpos.x - cx;
+      const awayZ = lpos.z - cz;
+      const aDist = Math.sqrt(awayX*awayX+awayZ*awayZ);
+      if(aDist < 3){
+        dir.x += (awayX/aDist)*2;
+        dir.z += (awayZ/aDist)*2;
+      }
+    });
+
+    if(dir.lengthSq()>0) dir.normalize();
+    L.pos.addScaledVector(dir, speed*dt);
+    L.pos.x = clamp(L.pos.x, -HALF+0.3, HALF-0.3);
+    L.pos.z = clamp(L.pos.z, -HALF+0.3, HALF-0.3);
+    L.pos.y = terrainY(L.pos.x, L.pos.z);
+    L.mesh.position.copy(L.pos);
+    if(dir.lengthSq()>0) L.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+  });
+
+  // Remove dead lions
+  for(let i=lionMeshes.length-1;i>=0;i--){
+    if(lionMeshes[i].health<=0){
+      spawnCorpse(lionMeshes[i].pos.clone());
+      killObj(lionMeshes[i].mesh);
+      lionMeshes.splice(i,1);
+      kills++;
+      showKillfeed('🦁 Lion down!');
+    }
+  }
+
+  // Spawn new lion every 2 min
+  dn.nextLionSpawn -= dt;
+  if(dn.nextLionSpawn <= 0){
+    spawnLion();
+    dn.nextLionSpawn = 120;
+  }
+}
+
+// =====================================================================
+//  CORPSES
+// =====================================================================
+function spawnCorpse(pos){
+  const geo = new THREE.EllipseCurve(0,0,0.8,0.5).getPoints(16);
+  const shape = new THREE.Shape(geo);
+  const shGeo = new THREE.ShapeGeometry(shape);
+  const mat = new THREE.MeshBasicMaterial({color:0x3d2b1f, transparent:true, opacity:1});
+  const mesh = new THREE.Mesh(shGeo, mat);
+  mesh.rotation.x = -Math.PI/2;
+  mesh.position.set(pos.x, pos.y+0.05, pos.z);
+  scene.add(mesh);
+  corpses.push({mesh, mat, timer:30});
+}
+
+function updateCorpses(dt){
+  for(let i=corpses.length-1;i>=0;i--){
+    const c = corpses[i];
+    c.timer -= dt;
+    if(c.timer < 5) c.mat.opacity = c.timer/5;
+    if(c.timer <= 0){
+      killObj(c.mesh);
+      corpses.splice(i,1);
+    }
+  }
+}
+
+// =====================================================================
+//  GRAPPLE
+// =====================================================================
+function fireGrapple(){
+  if(grapple.active) return;
+  const center = new THREE.Vector2(0,0);
+  raycaster.setFromCamera(center, camera);
+
+  // Grapple ignores lions — it can no longer kill them. The ray only attaches
+  // to world geometry (trees, walls, boundary, terrain), passing over any lion.
+
+  // Check scene objects (trees, walls, boundary, terrain)
+  const targets = scene.children.filter(c=>c.name==='tree'||c.name==='wall'||c.name==='boundary'||c.name==='terrain');
+  const hits = raycaster.intersectObjects(targets, true);
+  if(!hits.length) return;
+  const hit = hits[0];
+  if(hit.distance > 40) return;
+
+  grapple.active = true;
+  grapple.point  = hit.point.clone();
+
+  // Draw line
+  const mat = new THREE.LineBasicMaterial({color:0xffee00});
+  const geo = new THREE.BufferGeometry().setFromPoints([camera.position.clone(), grapple.point]);
+  grapple.line = new THREE.Line(geo, mat);
+  scene.add(grapple.line);
+  playSound('grapple');
+}
+
+function releaseGrapple(){
+  if(!grapple.active) return;
+  grapple.active = false;
+  grapple.point  = null;
+  if(grapple.line){ killObj(grapple.line); grapple.line=null; }
+  player.vel.set(0,0,0);
+}
+
+// =====================================================================
+//  WALLS
+// =====================================================================
+function placeWall(){
+  if(woodCount < 1) return;
+  if(wallMeshes.length >= 30) return;
+  woodCount--;
+  updateWoodHUD();
+
+  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  const pos = player.pos.clone().addScaledVector(fwd, 2.5);
+  pos.y = terrainY(pos.x, pos.z);
+
+  const geo = new THREE.BoxGeometry(2.5, 2.2, 0.3);
+  const mat = new THREE.MeshLambertMaterial({color:0x8b5e3c});
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(pos.x, pos.y+1.1, pos.z);
+  mesh.rotation.y = yaw;
+  mesh.castShadow = true;
+  mesh.name = 'wall';
+  scene.add(mesh);
+  wallMeshes.push(mesh);
+
+  // AABB (approximate, axis-aligned)
+  const box = new THREE.Box3().setFromObject(mesh);
+  wallAABBs.push(box);
+  playSound('place');
+}
+
+// =====================================================================
+//  AXE — CHOP WALLS
+// =====================================================================
+// Destroy the wall you're looking at (the ones you built) and reclaim its
+// wood. wallMeshes[i] and wallAABBs[i] are kept in lockstep, so splice both
+// at the same index.
+function chopWall(){
+  if(!wallMeshes.length) return;
+  raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+  const hits = raycaster.intersectObjects(wallMeshes, false);
+  if(!hits.length || hits[0].distance > 6) return;
+  const idx = wallMeshes.indexOf(hits[0].object);
+  if(idx === -1) return;
+  killObj(wallMeshes[idx]);
+  wallMeshes.splice(idx, 1);
+  wallAABBs.splice(idx, 1);
+  woodCount++;                 // reclaim the wood you spent building it
+  updateWoodHUD();
+  showKillfeed('🪓 Wall chopped! (+1 wood)');
+  playSound('place');
+}
+
+// =====================================================================
+//  CAMPFIRE
+// =====================================================================
+function placeCampfire(){
+  if(woodCount < 3) return;
+  woodCount -= 3;
+  updateWoodHUD();
+
+  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  const pos = player.pos.clone().addScaledVector(fwd, 2);
+  pos.y = terrainY(pos.x, pos.z);
+
+  const group = new THREE.Group();
+  group.position.copy(pos);
+
+  // Base logs (crossed boxes)
+  const logMat = new THREE.MeshLambertMaterial({color:0x5d3a1a});
+  [-0.3,0.3].forEach(ox=>{
+    const l = new THREE.Mesh(new THREE.BoxGeometry(0.15,0.15,0.8), logMat);
+    l.position.set(ox, 0.1, 0);
+    l.rotation.y = ox*2;
+    group.add(l);
+  });
+
+  // Flame cone
+  const flameMat = new THREE.MeshBasicMaterial({color:0xff6600, transparent:true, opacity:0.9});
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.25,0.8,8), flameMat);
+  flame.position.y = 0.55;
+  group.add(flame);
+
+  // Light
+  const light = new THREE.PointLight(0xff7700, 2.5, 12);
+  light.position.y = 0.6;
+  group.add(light);
+
+  group.name = 'campfire';
+  scene.add(group);
+
+  const cf = { mesh:group, pos:pos.clone(), timer:60, flame, light, phase:0 };
+  campfires.push(cf);
+  playSound('fire');
+}
+
+function updateCampfires(dt){
+  for(let i=campfires.length-1;i>=0;i--){
+    const cf = campfires[i];
+    cf.timer -= dt;
+    cf.phase  += dt*8;
+    // Flicker
+    cf.flame.scale.y = 0.8 + Math.sin(cf.phase)*0.3;
+    cf.flame.position.y = 0.45 + Math.sin(cf.phase*1.3)*0.1;
+    cf.light.intensity = 2.0 + Math.sin(cf.phase*2.1)*0.5;
+    if(cf.timer <= 0){
+      killObj(cf.mesh);
+      campfires.splice(i,1);
+    }
+  }
+}
+
+// =====================================================================
+//  ROCK THROWING
+// =====================================================================
+let thrownRocks = [];
+
+function doCollect(){
+  // Collect wood from nearby trees
+  let collectedWood = false;
+  treeObjects.forEach(t=>{
+    if(t.pos.distanceTo(player.pos) < 3.5 && t.cooldown<=0){
+      woodCount++;
+      t.cooldown = 30;
+      updateWoodHUD();
+      showKillfeed('🪵 Collected wood! ('+woodCount+')');
+      collectedWood = true;
+      playSound('collect');
+    }
+  });
+  // Collect rocks
+  rockSpawns.forEach(r=>{
+    if(r.available && r.pos.distanceTo(player.pos) < 3 && rockCount<5){
+      rockCount++;
+      r.available = false;
+      r.cooldown  = 30;
+      r.mesh.visible = false;
+      updateRockHUD();
+      playSound('collect');
+    }
+  });
+}
+
+function throwRock(){
+  if(rockCount<=0) return;
+  rockCount--;
+  updateRockHUD();
+
+  const dir = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation);
+  const pos  = camera.position.clone();
+  const geo  = new THREE.SphereGeometry(0.12,6,6);
+  const mat  = new THREE.MeshLambertMaterial({color:0x888888});
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(pos);
+  scene.add(mesh);
+  thrownRocks.push({ mesh, vel:dir.multiplyScalar(25), dist:0 });
+  playSound('throw');
+}
+
+function updateThrownRocks(dt){
+  for(let i=thrownRocks.length-1;i>=0;i--){
+    const r = thrownRocks[i];
+    r.mesh.position.addScaledVector(r.vel, dt);
+    r.dist += r.vel.length()*dt;
+    r.vel.y -= 9.8*dt; // gravity on rock
+
+    let hit = false;
+    lionMeshes.forEach(L=>{
+      if(r.mesh.position.distanceTo(L.pos) < 1.2){
+        L.health--;
+        L.stunTimer = 5;
+        L.state = 'stunned';
+        L.flashTimer = 0.25;
+        hit = true;
+        if(L.health<=0){ showKillfeed('🪨 Rock kill!'); }
+      }
+    });
+
+    if(hit || r.dist > 30){
+      killObj(r.mesh);
+      thrownRocks.splice(i,1);
+    }
+  }
+  // Cooldown rock respawns
+  rockSpawns.forEach(r=>{
+    if(!r.available){
+      r.cooldown -= dt;
+      if(r.cooldown<=0){ r.available=true; r.mesh.visible=true; }
+    }
+  });
+  // Tree cooldown
+  treeObjects.forEach(t=>{ if(t.cooldown>0) t.cooldown-=dt; });
+}
+
+// =====================================================================
+//  TORCH
+// =====================================================================
+function craftTorch(){
+  if(torchState.crafted) return;
+  if(woodCount < 1) return;
+  woodCount--;
+  updateWoodHUD();
+  torchState.crafted = true;
+  torchState.fuel    = 90;
+  torchState.on      = false;
+  document.getElementById('torch-wrap').style.display='block';
+  showKillfeed('🔦 Torch crafted!');
+}
+
+function toggleTorch(){
+  if(!torchState.crafted) return;
+  if(!torchState.on){
+    torchState.on = true;
+    if(!torchState.light){
+      torchState.light = new THREE.PointLight(0xffaa44, 3, 15);
+      scene.add(torchState.light);
+    }
+    torchState.light.visible = true;
+  } else {
+    torchState.on = false;
+    if(torchState.light) torchState.light.visible = false;
+  }
+}
+
+function updateTorch(dt){
+  if(torchState.on){
+    torchState.fuel -= dt;
+    if(torchState.fuel<=0){
+      // Battery dead — torch burns out. Mark it uncrafted so the player can
+      // craft a fresh one with wood; otherwise craftTorch's "already crafted"
+      // guard locked you out of light for the rest of the run.
+      torchState.fuel    = 0;
+      torchState.on      = false;
+      torchState.crafted = false;
+      if(torchState.light) torchState.light.visible=false;
+      document.getElementById('torch-wrap').style.display='none';
+      showKillfeed('🔦 Torch burned out — craft another with wood [T]');
+    }
+    document.getElementById('torch-bar').style.width=(torchState.fuel/90*100)+'%';
+  }
+}
+
+// =====================================================================
+//  DAY / NIGHT CYCLE
+// =====================================================================
+const CYCLE = 240; // full cycle seconds (4 min)
+const HALF_CYCLE = CYCLE/2; // 120 = 2 min day, 120 = 2 min night
+const TWILIGHT = 10;
+
+const SKY_COLORS = {
+  dawn:  new THREE.Color(0xff8c44),
+  day:   new THREE.Color(0x87ceeb),
+  dusk:  new THREE.Color(0xff5533),
+  night: new THREE.Color(0x0a0a2e),
+};
+
+function updateDayNight(dt){
+  dn.time = (dn.time + dt) % CYCLE;
+  const t = dn.time;
+  const wasDay = dn.isDay;
+
+  let sky, ambI, sunI, fogD;
+  if(t < TWILIGHT){ // dawn
+    const f = t/TWILIGHT;
+    sky  = SKY_COLORS.night.clone().lerp(SKY_COLORS.dawn, f);
+    ambI = lerp(0.15, 0.4, f); sunI = lerp(0.1, 0.8, f); fogD=lerp(0.06,0.018,f);
+    dn.isDay = f>0.5;
+  } else if(t < HALF_CYCLE-TWILIGHT){ // full day
+    sky  = SKY_COLORS.day.clone();
+    ambI = 0.6; sunI = 1.2; fogD=0.018;
+    dn.isDay = true;
+  } else if(t < HALF_CYCLE){ // dusk
+    const f = (t-(HALF_CYCLE-TWILIGHT))/TWILIGHT;
+    sky  = SKY_COLORS.day.clone().lerp(SKY_COLORS.dusk, f);
+    ambI = lerp(0.6, 0.15, f); sunI = lerp(1.2,0.1,f); fogD=lerp(0.018,0.06,f);
+    dn.isDay = f<0.5;
+  } else if(t < HALF_CYCLE+TWILIGHT){ // night-start
+    const f = (t-HALF_CYCLE)/TWILIGHT;
+    sky  = SKY_COLORS.dusk.clone().lerp(SKY_COLORS.night, f);
+    ambI = lerp(0.15,0.08,f); sunI=0.05; fogD=lerp(0.06,0.09,f);
+    dn.isDay = false;
+  } else { // deep night
+    sky  = SKY_COLORS.night.clone();
+    ambI = 0.08; sunI=0.05; fogD=0.09;
+    dn.isDay = false;
+  }
+
+  renderer.setClearColor(sky, 1);
+  scene.fog.density = fogD;
+  const amb = scene.userData.ambient;
+  const sun = scene.userData.sun;
+  if(amb){ amb.intensity = ambI; amb.color.set(sky); }
+  if(sun){ sun.intensity = sunI; }
+
+  if(dn.isDay && !wasDay) dn.day++;
+}
+
+// =====================================================================
+//  AUDIO
+// =====================================================================
+function initAudio(){
+  if(audioCtx) return;
+  audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+}
+
+function playSound(type){
+  if(!audioCtx) return;
+  try{
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    const t = audioCtx.currentTime;
+    if(type==='grapple'){
+      osc.type='square'; osc.frequency.setValueAtTime(400,t);
+      osc.frequency.exponentialRampToValueAtTime(800,t+0.08);
+      gain.gain.setValueAtTime(0.15,t); gain.gain.exponentialRampToValueAtTime(0.001,t+0.12);
+      osc.start(t); osc.stop(t+0.12);
+    } else if(type==='place'){
+      osc.type='sawtooth'; osc.frequency.setValueAtTime(150,t);
+      gain.gain.setValueAtTime(0.2,t); gain.gain.exponentialRampToValueAtTime(0.001,t+0.15);
+      osc.start(t); osc.stop(t+0.15);
+    } else if(type==='fire'){
+      osc.type='sine'; osc.frequency.setValueAtTime(80,t);
+      osc.frequency.linearRampToValueAtTime(40,t+0.5);
+      gain.gain.setValueAtTime(0.3,t); gain.gain.exponentialRampToValueAtTime(0.001,t+0.5);
+      osc.start(t); osc.stop(t+0.5);
+    } else if(type==='collect'){
+      osc.type='triangle'; osc.frequency.setValueAtTime(600,t);
+      osc.frequency.linearRampToValueAtTime(900,t+0.1);
+      gain.gain.setValueAtTime(0.12,t); gain.gain.exponentialRampToValueAtTime(0.001,t+0.15);
+      osc.start(t); osc.stop(t+0.15);
+    } else if(type==='throw'){
+      osc.type='sine'; osc.frequency.setValueAtTime(300,t);
+      osc.frequency.exponentialRampToValueAtTime(100,t+0.2);
+      gain.gain.setValueAtTime(0.18,t); gain.gain.exponentialRampToValueAtTime(0.001,t+0.25);
+      osc.start(t); osc.stop(t+0.25);
+    }
+  } catch(e){}
+}
+
+// =====================================================================
+//  HUD UPDATE
+// =====================================================================
+function updateWoodHUD(){
+  document.getElementById('wood-count').textContent = woodCount+' wood';
+}
+function updateRockHUD(){
+  document.getElementById('topright'); // no-op, updated in updateHUD
+}
+
+function showKillfeed(msg){
+  const kf = document.getElementById('killfeed');
+  const div = document.createElement('div');
+  div.className = 'kf-entry';
+  div.textContent = msg;
+  kf.appendChild(div);
+  setTimeout(()=>{ div.style.opacity='0'; setTimeout(()=>div.remove(),500); }, 2500);
+}
+
+function updateHUD(){
+  if(gameState!=='playing') return;
+  // Health / stamina
+  document.getElementById('health-bar').style.width  = (player.health/PLAYER.maxHealth*100)+'%';
+  document.getElementById('stamina-bar').style.width = (player.stamina/PLAYER.maxStamina*100)+'%';
+
+  // Top left
+  document.getElementById('topleft').innerHTML =
+    `⏱ ${fmtTime(elapsed)}<br>📅 Day ${dn.day}`+
+    (player.crouching?'<br>🧎 CROUCHING':'');
+
+  // Top right
+  const timeLeft = dn.isDay
+    ? HALF_CYCLE - dn.time
+    : CYCLE - dn.time;
+  document.getElementById('topright').innerHTML =
+    `${dn.isDay?'☀️ DAY':'🌙 NIGHT'} ${fmtTime(Math.max(0,timeLeft))}<br>`+
+    `🦁 Lions: ${lionMeshes.length}<br>`+
+    `🪨 Rocks: ${rockCount}`;
+
+  // Vignette
+  const vig = document.getElementById('vignette');
+  let shadow = 'none';
+  if(player.health < PLAYER.maxHealth*0.5){
+    const alpha = 1-(player.health/(PLAYER.maxHealth*0.5));
+    shadow = `inset 0 0 80px rgba(200,0,0,${alpha*0.55})`;
+  }
+  if(player.inDanger){
+    const pulse = (Math.sin(Date.now()*0.006)+1)*0.5;
+    shadow = `inset 0 0 100px rgba(200,0,0,${0.25+pulse*0.35})`;
+  }
+  vig.style.boxShadow = shadow;
+
+  // Prompt
+  const promptEl = document.getElementById('prompt');
+  let promptText = '';
+  treeObjects.forEach(t=>{ if(t.pos.distanceTo(player.pos)<3.5 && t.cooldown<=0) promptText='[E] Collect Wood'; });
+  rockSpawns.forEach(r=>{ if(r.available && r.pos.distanceTo(player.pos)<3) promptText='[E] Pick up Rock'; });
+  promptEl.textContent = promptText;
+  promptEl.style.display = promptText?'block':'none';
+
+  // Wood count
+  document.getElementById('wood-count').textContent = woodCount+' wood';
+}
+
+// =====================================================================
+//  MINIMAP
+// =====================================================================
+function drawMinimap(){
+  if(!mmCtx) return;
+  const C = 75; // centre
+  const S = 150;
+  const scale = S / (WORLD * 0.7);
+
+  mmCtx.clearRect(0,0,S,S);
+  // Background
+  mmCtx.fillStyle='#0d2a0d';
+  mmCtx.beginPath(); mmCtx.arc(C,C,C,0,Math.PI*2); mmCtx.fill();
+
+  function toMM(x,z){
+    const px = C + x*scale;
+    const py = C + z*scale;
+    return [px,py];
+  }
+
+  // Trees
+  mmCtx.fillStyle='#2d5a1a';
+  treeObjects.forEach(t=>{
+    const [px,py]=toMM(t.pos.x-player.pos.x, t.pos.z-player.pos.z);
+    mmCtx.beginPath(); mmCtx.arc(px,py,3,0,Math.PI*2); mmCtx.fill();
+  });
+
+  // Walls
+  mmCtx.fillStyle='#8b5e3c';
+  wallMeshes.forEach(w=>{
+    const [px,py]=toMM(w.position.x-player.pos.x, w.position.z-player.pos.z);
+    mmCtx.fillRect(px-2,py-2,4,4);
+  });
+
+  // Campfires
+  mmCtx.fillStyle='#ff7700';
+  campfires.forEach(f=>{
+    const [px,py]=toMM(f.pos.x-player.pos.x, f.pos.z-player.pos.z);
+    mmCtx.beginPath(); mmCtx.arc(px,py,4,0,Math.PI*2); mmCtx.fill();
+  });
+
+  // Lions
+  mmCtx.fillStyle='#ffcc00';
+  lionMeshes.forEach(L=>{
+    const [px,py]=toMM(L.pos.x-player.pos.x, L.pos.z-player.pos.z);
+    mmCtx.beginPath(); mmCtx.arc(px,py,4,0,Math.PI*2); mmCtx.fill();
+  });
+
+  // Player dot
+  mmCtx.fillStyle='#00ff88';
+  mmCtx.beginPath(); mmCtx.arc(C,C,5,0,Math.PI*2); mmCtx.fill();
+
+  // Clip to circle
+  mmCtx.globalCompositeOperation='destination-in';
+  mmCtx.beginPath(); mmCtx.arc(C,C,C,0,Math.PI*2); mmCtx.fill();
+  mmCtx.globalCompositeOperation='source-over';
+}
+
+// =====================================================================
+//  GAME OVER / LEADERBOARD
+// =====================================================================
+function triggerGameOver(){
+  gameState = 'over';
+  document.exitPointerLock();
+  isPointerLocked = false;
+
+  // Save to leaderboard
+  const entry = { time: Math.floor(elapsed), days: dn.day, kills };
+  const board = JSON.parse(localStorage.getItem('lionSurvivalLB')||'[]');
+  board.push(entry);
+  board.sort((a,b)=>b.time-a.time);
+  board.splice(5);
+  localStorage.setItem('lionSurvivalLB', JSON.stringify(board));
+
+  // Show overlay
+  document.getElementById('gameover-stats').innerHTML =
+    `<b style="color:#e74c3c;font-size:20px">☠ YOU DIED</b><br>`+
+    `Survived: ${fmtTime(elapsed)}<br>`+
+    `Days: ${dn.day} &nbsp;|&nbsp; Kills: ${kills}`;
+
+  renderLeaderboard(board);
+  document.getElementById('start-btn').textContent = '↺ TRY AGAIN';
+  document.getElementById('overlay').style.display='flex';
+}
+
+function renderLeaderboard(board){
+  const lb = document.getElementById('leaderboard');
+  if(!board.length){ lb.innerHTML=''; return; }
+  let html = '<br><b>TOP 5 SURVIVORS</b><br>';
+  board.slice(0,5).forEach((e,i)=>{
+    html+=`${i+1}. ${fmtTime(e.time)} — Day ${e.days}, ${e.kills} kills<br>`;
+  });
+  lb.innerHTML = html;
+}
+
+// =====================================================================
+//  RESET / RESTART
+// =====================================================================
+function resetGame(){
+  // Remove old Three.js objects AND free their VRAM (scene.remove alone
+  // leaks — that accumulation is what eventually blacks out the screen).
+  [...lionMeshes].forEach(L=>killObj(L.mesh));
+  [...wallMeshes].forEach(w=>killObj(w));
+  [...campfires].forEach(f=>killObj(f.mesh));
+  [...corpses].forEach(c=>killObj(c.mesh));
+  [...thrownRocks].forEach(r=>killObj(r.mesh));
+  if(grapple.line){ killObj(grapple.line); }
+  if(torchState.light){ scene.remove(torchState.light); }   // light: nothing to dispose
+
+  lionMeshes.length = 0;
+  wallMeshes.length = 0;
+  wallAABBs.length  = 0;
+  campfires.length  = 0;
+  corpses.length    = 0;
+  thrownRocks.length= 0;
+
+  grapple   = { active:false, point:null, line:null };
+  torchState= { crafted:false, on:false, fuel:90, light:null };
+
+  woodCount  = 0;
+  rockCount  = 0;
+  kills      = 0;
+  elapsed    = 0;
+  shakeTime  = 0;
+  shakeAmt   = 0;
+  activeSlot = 1;
+
+  // Start in full daylight (skip dawn) so the restart doesn't render the
+  // world at midnight + heavy fog. Place us 15 s past dawn = full day.
+  dn = { time: TWILIGHT + 5, day: 1, isDay: true, nextLionSpawn: 120 };
+  keys = {};
+  yaw=0; pitch=0; mouseDX=0; mouseDY=0;
+
+  // Reset rock spawns
+  rockSpawns.forEach(r=>{ r.available=true; r.cooldown=0; r.mesh.visible=true; });
+  treeObjects.forEach(t=>{ t.cooldown=0; });
+
+  updateWoodHUD();
+  document.getElementById('torch-wrap').style.display='none';
+  setSlot(1);
+  initPlayer();
+
+  // Spawn initial lions
+  for(let i=0;i<3;i++) spawnLion();
+
+  gameState = 'playing';
+  document.getElementById('overlay').style.display='none';
+}
+
+// =====================================================================
+//  ANIMATION LOOP
+// =====================================================================
+function animate(){
+  animId = requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if(gameState!=='playing'){ renderer.render(scene,camera); return; }
+
+  elapsed += dt;
+
+  updateDayNight(dt);
+  updatePlayer(dt);
+  updateHealth(dt);
+  updateLions(dt);
+  updateCampfires(dt);
+  updateThrownRocks(dt);
+  updateCorpses(dt);
+  updateTorch(dt);
+  updateHUD();
+  drawMinimap();
+
+  // Screen shake
+  if(shakeTime>0){
+    shakeTime -= dt;
+    camera.position.x += (Math.random()-0.5)*shakeAmt*60;
+    camera.position.y += (Math.random()-0.5)*shakeAmt*60;
+  }
+
+  renderer.render(scene, camera);
+}
+
+// =====================================================================
+//  BOOTSTRAP
+// =====================================================================
+initScene();
+createTerrain();
+createTrees();
+createRocks();
+registerControls();
+
+// Renderer canvas (#game-canvas) position/z-index handled in CSS (z-index:1,
+// below #vignette 5, #hud 10, #overlay 100). The #mm minimap canvas is scoped
+// separately so it stays inside its bottom-right container. Don't override here.
+
+// Initial camera placement so menu background looks nice
+camera.position.set(0, 3, 15);
+camera.lookAt(0, 1, 0);
+renderer.setClearColor(0x87ceeb, 1);
+renderer.render(scene, camera);
+
+// Load leaderboard on menu
+const savedBoard = JSON.parse(localStorage.getItem('lionSurvivalLB')||'[]');
+renderLeaderboard(savedBoard);
+
+function startGame(){
+  initAudio();
+  if(gameState==='menu' || gameState==='over'){
+    if(animId){ cancelAnimationFrame(animId); animId=null; }
+    clock.getDelta();
+    resetGame();
+    // Safety re-seed the renderer in case anything was off (canvas size,
+    // clear color) — this kills the "blank/dark screen on restart" path.
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setClearColor(SKY_COLORS.day, 1);
+    animate();
+    // Request pointer lock — must happen inside user gesture
+    renderer.domElement.requestPointerLock().catch(()=>{
+      // Pointer lock rejected — game still runs, click canvas to re-try
+    });
+  }
+}
+
+document.getElementById('start-btn').addEventListener('click', startGame);
+
+// Also let clicking the canvas restart pointer lock if lost mid-game
+renderer.domElement.addEventListener('click', ()=>{
+  if(gameState==='playing' && !isPointerLocked){
+    renderer.domElement.requestPointerLock().catch(()=>{});
+  }
+});
+
+</script>
+</body>
+</html>
