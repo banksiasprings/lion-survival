@@ -350,11 +350,49 @@ function initScene(){
   scene.userData.sun = sun;
   scene.userData.ambient = scene.children.find(c=>c.isAmbientLight);
 
+  // GPU shadow probe (run BEFORE any world material compiles). Some drivers —
+  // notably older Macs (AMD via ANGLE's Metal backend) — reject the WebGL2
+  // shadow-map depth-texture pass with a silent GL_INVALID_OPERATION that drops
+  // the whole frame (white/red screen, HUD still fine). Render a tiny throwaway
+  // shadow scene; if it errors, switch shadows OFF up-front so every real
+  // material compiles shadow-free. Capable GPUs pass the probe and keep shadows.
+  if(!probeShadowSupport()){
+    renderer.shadowMap.enabled = false;
+    sun.castShadow = false;
+    scene.userData.noShadows = true;
+    console.warn('Lion Survival: shadows disabled — this GPU/driver failed the shadow-map probe.');
+  }
+
   window.addEventListener('resize', ()=>{
     camera.aspect = innerWidth/innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
   });
+}
+
+// Render a minimal shadow-casting scene and report whether the GL context stays
+// error-free. Returns true if shadows are safe on this GPU/driver.
+function probeShadowSupport(){
+  try{
+    const gl = renderer.getContext();
+    let g=0; while(gl.getError()!==0 && g++<32){}            // clear sticky errors
+    const ps = new THREE.Scene();
+    const pc = new THREE.PerspectiveCamera(60,1,0.1,50); pc.position.set(0,3,5); pc.lookAt(0,0,0);
+    const dl = new THREE.DirectionalLight(0xffffff,1); dl.position.set(2,5,2);
+    dl.castShadow = true; dl.shadow.mapSize.set(1024,1024);   // match the game's real config
+    dl.shadow.camera.near=0.5; dl.shadow.camera.far=200;
+    dl.shadow.camera.left=dl.shadow.camera.bottom=-60; dl.shadow.camera.right=dl.shadow.camera.top=60;
+    ps.add(dl);
+    ps.add(new THREE.AmbientLight(0xffffff,0.6));
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(8,8), new THREE.MeshLambertMaterial({color:0x888888}));
+    ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; ps.add(ground);
+    const cube = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshLambertMaterial({color:0xaaaaaa}));
+    cube.position.y = 0.6; cube.castShadow = true; ps.add(cube);
+    renderer.render(ps, pc);
+    const err = gl.getError();
+    ps.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); });
+    return err === 0;
+  }catch(e){ return false; }   // any trouble → play it safe, no shadows
 }
 
 // =====================================================================
@@ -2788,32 +2826,8 @@ camera.position.set(0, 3, 15);
 camera.lookAt(0, 1, 0);
 renderer.setClearColor(0x87ceeb, 1);
 renderer.render(scene, camera);
-
-// GPU health check. Some drivers (notably older Macs — AMD via ANGLE's Metal
-// backend) reject the WebGL2 shadow-map depth-texture pass with a silent
-// GL_INVALID_OPERATION, which drops the ENTIRE frame → the canvas shows only
-// the cleared background (a "white/cream" screen) while the DOM HUD still works.
-// Detect that here and gracefully drop shadows + recompile, so capable GPUs keep
-// shadows and incapable ones still render the world.
-function ensureRenderHealth(){
-  try{
-    const gl = renderer.getContext();
-    let guard=0; while(gl.getError()!==0 && guard++<32){}     // clear sticky errors
-    renderer.render(scene, camera);
-    if(gl.getError()!==0 && renderer.shadowMap.enabled){
-      renderer.shadowMap.enabled = false;
-      scene.traverse(o=>{
-        if(o.isMesh && o.material){
-          (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{ m.needsUpdate=true; });
-        }
-      });
-      guard=0; while(gl.getError()!==0 && guard++<32){}
-      renderer.render(scene, camera);
-      console.warn('Lion Survival: shadows disabled — this GPU/driver rejected the shadow pass.');
-    }
-  }catch(e){ /* never let the health check itself break boot */ }
-}
-ensureRenderHealth();
+// (Shadow support is decided up-front by probeShadowSupport() in initScene,
+//  before any world material compiles — no mid-boot recompile needed.)
 
 // Load leaderboard on menu
 const savedBoard = JSON.parse(localStorage.getItem('lionSurvivalLB')||'[]');

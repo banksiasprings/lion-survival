@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Lion Survival — GPU diagnostic</title>
+<style>
+  body{background:#111;color:#eee;font-family:monospace;font-size:15px;margin:0;padding:16px}
+  h1{font-size:18px;color:#f1c40f}
+  table{border-collapse:collapse;margin-top:10px;width:100%;max-width:820px}
+  td,th{border:1px solid #444;padding:6px 10px;text-align:left}
+  .pass{color:#7ce08a;font-weight:bold}.fail{color:#ff5a4a;font-weight:bold}
+  .sw{display:inline-block;width:16px;height:16px;border:1px solid #888;vertical-align:middle;margin-right:6px}
+  #info{white-space:pre-wrap;color:#9fb;margin:8px 0}
+  canvas{display:none}
+</style>
+</head>
+<body>
+<h1>🦁 Lion Survival — GPU diagnostic</h1>
+<div id="info">running…</div>
+<table id="results"><thead><tr><th>test</th><th>GL error</th><th>centre pixel</th><th>result</th></tr></thead><tbody></tbody></table>
+<p style="opacity:.7;max-width:820px">Screenshot this whole page and send it back. The first row that says <span class="fail">FAIL</span> (a non-zero GL error) is the feature this GPU can't render — that's what's breaking the game.</p>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+'use strict';
+const info = document.getElementById('info');
+const tbody = document.querySelector('#results tbody');
+function row(name, err, px, pass){
+  const tr=document.createElement('tr');
+  const sw = px ? `<span class="sw" style="background:rgb(${px[0]},${px[1]},${px[2]})"></span>` : '';
+  tr.innerHTML = `<td>${name}</td><td>${err===0?'0 (ok)':'<b style="color:#ff5a4a">'+err+'</b>'}</td>`+
+                 `<td>${px?sw+px.join(','):'—'}</td>`+
+                 `<td class="${pass?'pass':'fail'}">${pass?'PASS':'FAIL'}</td>`;
+  tbody.appendChild(tr);
+}
+
+if(typeof THREE==='undefined'){
+  info.innerHTML = '❌ three.js did NOT load (no internet / blocked CDN). That alone would break the game.';
+} else {
+  const renderer = new THREE.WebGLRenderer({antialias:true, preserveDrawingBuffer:true});
+  renderer.setSize(300,300);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  document.body.appendChild(renderer.domElement);
+  const gl = renderer.getContext();
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  info.textContent =
+    'WebGL: '+gl.getParameter(gl.VERSION)+
+    '\nGPU: '+(dbg?gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL):'?')+
+    '\nVendor: '+(dbg?gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL):'?');
+
+  const cam = new THREE.PerspectiveCamera(60,1,0.1,50); cam.position.set(0,3,6); cam.lookAt(0,0.4,0);
+  function clr(){ let n=0; while(gl.getError()!==0 && n++<40){} }
+  function px(){ const p=new Uint8Array(4); gl.readPixels(150,150,1,1,gl.RGBA,gl.UNSIGNED_BYTE,p); return [p[0],p[1],p[2],p[3]]; }
+  function run(name, shadows, build){
+    renderer.shadowMap.enabled = shadows;
+    const sc=new THREE.Scene(); sc.background=new THREE.Color(0x202830); build(sc);
+    clr(); renderer.render(sc,cam); const err=gl.getError(); const p=px();
+    sc.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material){const m=[].concat(o.material);m.forEach(x=>{if(x.map)x.map.dispose();x.dispose&&x.dispose();});} });
+    row(name, err, p, err===0);
+  }
+
+  // 1 basic
+  run('1. basic cube (control)', false, s=>{ s.add(new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshBasicMaterial({color:0xff3030}))); });
+  // 2 lambert + light (no shadow)
+  run('2. lambert + light', false, s=>{ s.add(new THREE.AmbientLight(0xffffff,.5)); const d=new THREE.DirectionalLight(0xffffff,1); d.position.set(3,5,4); s.add(d); s.add(new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshLambertMaterial({color:0x30c040}))); });
+  // 3 lambert + light + SHADOW  (the prime suspect)
+  run('3. lambert + SHADOWS', true, s=>{ s.add(new THREE.AmbientLight(0xffffff,.5)); const d=new THREE.DirectionalLight(0xffffff,1); d.position.set(3,6,4); d.castShadow=true; d.shadow.mapSize.set(512,512); s.add(d);
+    const g=new THREE.Mesh(new THREE.PlaneGeometry(12,12), new THREE.MeshLambertMaterial({color:0x888888})); g.rotation.x=-Math.PI/2; g.position.y=-1; g.receiveShadow=true; s.add(g);
+    const c=new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshLambertMaterial({color:0xc08030})); c.castShadow=true; s.add(c); });
+  // 4 custom ShaderMaterial (sky-like)
+  run('4. custom ShaderMaterial', false, s=>{ const m=new THREE.ShaderMaterial({ uniforms:{uC:{value:new THREE.Color(0x3070ff)}},
+    vertexShader:'void main(){gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+    fragmentShader:'precision mediump float; uniform vec3 uC; void main(){ gl_FragColor=vec4(uC,1.0);}' });
+    s.add(new THREE.Mesh(new THREE.BoxGeometry(2,2,2), m)); });
+  // 5 instanced buffer geometry (grass-like)
+  run('5. InstancedBufferGeometry', false, s=>{ const base=new THREE.InstancedBufferGeometry();
+    base.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1,-1,0, 1,-1,0, 0,1,0]),3));
+    const off=new Float32Array(30); for(let i=0;i<10;i++){off[i*3]=(i-5)*0.3;}
+    base.setAttribute('iOff', new THREE.InstancedBufferAttribute(off,3)); base.instanceCount=10;
+    const m=new THREE.ShaderMaterial({ vertexShader:'attribute vec3 iOff; void main(){ gl_Position=projectionMatrix*modelViewMatrix*vec4(position+iOff,1.0);}',
+      fragmentShader:'precision mediump float; void main(){ gl_FragColor=vec4(0.4,0.8,0.3,1.0);}' });
+    s.add(new THREE.Mesh(base,m)); });
+  // 6 CanvasTexture + anisotropy + repeat (ground-like)
+  run('6. CanvasTexture+aniso+repeat', false, s=>{ const cv=document.createElement('canvas'); cv.width=cv.height=128; const g=cv.getContext('2d'); g.fillStyle='#b59a5e'; g.fillRect(0,0,128,128); g.fillStyle='#6b7d3a'; g.fillRect(0,0,64,64);
+    const t=new THREE.CanvasTexture(cv); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(9,9); t.anisotropy=4;
+    s.add(new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshBasicMaterial({map:t}))); });
+
+  info.textContent += '\n\nDone — see table below.';
+}
+</script>
+</body>
+</html>
