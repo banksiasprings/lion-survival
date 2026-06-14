@@ -81,6 +81,11 @@ not flavour.
       reel up to a branch perch; safe from lions + foliage concealment; grip-stamina drains to
       force a drop; Space/G/RMB drop; drop-attack deals damage+stun. Note: target via aim cone,
       NOT geometry raycast — LOD trees don't recurse in raycast.)
-- [ ] Phase 5 — atmosphere picks (TBD 2–3)
+- [x] Phase 5 — atmosphere picks (3): **watering hole** (focal landmark, grass-cleared, lions
+      gravitate there to drink/ambush, shown on minimap); **distant night roars** (atmospheric +
+      directional pride-bearing warning); **storm system** (rain Points + sky darkening + thunder
+      flash/boom; `weather.detMul` cuts everyone's detection — a shared stealth window).
+      Sound-based audio detection (suggested in Phase 5) already shipped in Phase 3; day counter
+      pre-existed.
 
 Each phase is an independent commit so it can be iterated in isolation.
