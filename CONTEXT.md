@@ -87,5 +87,19 @@ not flavour.
       flash/boom; `weather.detMul` cuts everyone's detection — a shared stealth window).
       Sound-based audio detection (suggested in Phase 5) already shipped in Phase 3; day counter
       pre-existed.
+- [x] Phase 6 — prey + food chain (scope addition). **6a** six procedural species
+      (zebra/wildebeest/gazelle/impala/warthog/kudu) w/ herds, flee-from-predator, jukes/hops/
+      stampede-dust, edible carcasses + circling vultures. **6b** player hunger meter (drains,
+      starves at 0); hunting via pounce `[Q]` (×3 from a hidden grass ambush) + rocks wound prey;
+      eat carcasses `[E]`. **6c** lions hunt prey when hungry (group→big payoff, solo→easy prey),
+      feed → 'fed' lull, scavenge/steal kills, guard kills (approach a fresh kill → pride turns
+      on you). Closes predator↔prey↔player loop; watering hole is the convergence point.
+
+## Food chain (Phase 6) — quick reference
+prey graze in herds → flee any predator within species flee-dist → lions hunt the weak/slow
+(fast gazelle/impala usually escape — realistic) → kill spawns a carcass + 3 vultures → player
+can **hunt ahead of the pride** (sneak+pounce, the stealthy play) or **scavenge lion kills**
+(faster but the guarding pride attacks). Player hunger must be topped up by eating; lions
+**cannot** be eaten. Per-species params live in the `SPECIES` table.
 
 Each phase is an independent commit so it can be iterated in isolation.
