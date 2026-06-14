@@ -74,7 +74,9 @@ not flavour.
 - [x] Phase 2 — realistic lion AI (crepuscular/nocturnal activity curve `lionActivity()`,
       pride coordination via `prideAlert` broadcast + flank roles, lioness/male split,
       hunger→aggression cycle w/ feeding, midday shade-resting, honest signals HUD)
-- [ ] Phase 3 — mutual stealth detection
+- [x] Phase 3 — mutual stealth detection (`updateStealth` visual×audio model: grass+crouch+
+      stillness slash visibility, running is loud; lions hidden in grass sink + drop off radar;
+      wind scent extends downwind detection; HIDDEN/EXPOSED + spotted-growl + rustle cues)
 - [ ] Phase 4 — grappling hook to trees
 - [ ] Phase 5 — atmosphere picks (TBD 2–3)
 
