@@ -1,0 +1,78 @@
+# Lion Survival — Project Context
+
+Single self-contained `index.html`. Three.js **r128** from CDN. **Zero image assets** — all
+geometry and textures are procedural (CanvasTexture / shaders). No build step, no npm.
+
+Run locally: `python3 -m http.server 8911` (see `.claude/launch.json`) → open `index.html`.
+
+## Architecture (preserve these invariants)
+- **Memory discipline:** every Three object added to the scene must be freed with `killObj()` /
+  `disposeObject3D()` when removed. `scene.remove()` alone leaks VRAM and eventually blacks out the
+  canvas. Shared materials carry `userData.keep = true` so they're never disposed.
+- **WebGL context-loss safety net** in `initScene()` — don't remove it.
+- **Day/night hooks:** `scene.userData.sun` (DirectionalLight) and `scene.userData.ambient`
+  (AmbientLight) are lerped each frame in `updateDayNight()`. New sky/lighting must hook here.
+- **Game loop:** `animate()` calls the `update*(dt)` functions in order, then renders. `dt` is
+  clamped to 0.05.
+- **World:** `WORLD = 100`, `HALF = 50`. Ground height = `terrainY(x,z)`. Place everything on it.
+
+## Day/night clock
+`CYCLE = 240s` (4 min). `dn.time` 0..240, 0 = dawn. In-game hour = `gameHour()` maps the cycle to a
+24h clock with t=0 ≈ 05:00. Used by lion activity (Phase 2) and sky gradient.
+
+---
+
+# Phase 0 — Lion behaviour research (baked into the AI)
+
+Concrete, sourced-from-field-ethology facts that drive the design. These are *design constraints*,
+not flavour.
+
+### Activity pattern (drives Phase 2 §1 + Phase 3 detection)
+- Lions are **crepuscular/nocturnal**. They rest/sleep **18–20 h per day**, mostly through the heat
+  of midday in shade.
+- **Peak activity dawn (~05:00–07:00) and dusk (~17:00–20:00)**; **hunting peaks at night**. Low-light
+  hunting exploits their reflective *tapetum lucidum* (excellent night vision) against prey that see
+  poorly in the dark.
+- **Midday (10:00–16:00):** near-inert, low alertness, seek shade. → in-game: lions move slowly,
+  short detection range, drift toward shade/trees/watering hole.
+
+### Hunting (drives Phase 2 §2)
+- **Lionesses do the majority of hunting** (commonly cited ~85–90% of pride hunts), usually in
+  **coordinated groups of 2–6**. Males hunt more rarely and solo, relying on ambush of larger prey.
+- **Cooperative tactics:** *fan out / encircle*, *flanking ("wing" lionesses drive prey)* toward
+  *"centre" ambushers* lying in wait. They use cover and stalk to within ~30 m before the final rush.
+- **Final sprint** is fast but short: ~50–60 km/h for only a few seconds — they must get close first
+  (stalk) because they tire quickly. Overall hunt **success rate is low, ~25–30%**, higher at night
+  and in groups.
+- → in-game: one lion stays *visible/luring*, others flank *unseen*; a "spotted" broadcast makes
+  nearby pride converge; chase is a fast but committed burst.
+
+### Senses (drives Phase 3 stealth — mutual detection)
+- **Long range = smell + sound.** Lions detect prey scent on the wind and sound at distance; their
+  hearing and smell carry far. **Wind direction matters** — downwind prey is detected far sooner.
+- **Close range = sight-dominant**, especially excellent in low light.
+- → in-game: a lion has a *visual* detection radius (slashed by grass/crouch/stillness, boosted at
+  night) **and** a separate, larger *audio* radius (driven by how loud the player is — running is
+  loud). Wind blowing player→lion extends detection (scent).
+
+### Pride dynamics (drives Phase 2 §3)
+- Prides typically **3–15** (occasionally up to ~30). **Lionesses are related & cooperative; 1–4
+  resident males** hold the territory.
+- **Males are larger/heavier and slower** in sustained movement; they **defend territory** more than
+  they hunt. **Lionesses are lighter, faster, the primary hunters.**
+- **Cubs play-hunt** (stalking practice). Hunger drives aggression: a fed pride is lazy; a hungry
+  pride ranges wider and commits harder.
+- → in-game: lioness vs male split (lioness = faster, hunts; male = larger, slower, more HP, territorial).
+  A **hunger value** scales aggression and detection range.
+
+---
+
+## Phase status
+- [x] Phase 0 — research baked into this doc + AI comments
+- [ ] Phase 1 — savanna graphics
+- [ ] Phase 2 — realistic lion AI
+- [ ] Phase 3 — mutual stealth detection
+- [ ] Phase 4 — grappling hook to trees
+- [ ] Phase 5 — atmosphere picks (TBD 2–3)
+
+Each phase is an independent commit so it can be iterated in isolation.
