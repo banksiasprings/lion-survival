@@ -125,6 +125,9 @@ let wallAABBs   = [];
 let campfires   = [];
 let lionMeshes  = [];
 let corpses     = [];
+let preyMeshes  = [];   // Phase 6: herbivores
+let carcasses   = [];   // Phase 6: edible kills (prey) — food for player & lions
+let vultures    = [];   // Phase 6: circling birds over fresh kills
 
 // Savanna environment (Phase 1) — also feeds stealth (Phase 3) & grapple (Phase 4)
 let wind = { angle: rand(0, Math.PI*2), dirX: 0, dirZ: 0, speed: 0.55, time: 0 };
@@ -1604,6 +1607,223 @@ function updateCorpses(dt){
 }
 
 // =====================================================================
+//  PREY ANIMALS & FOOD CHAIN  (Phase 6)
+// =====================================================================
+// Six procedural savanna species — distinct silhouettes, palettes, horns,
+// speeds, herd sizes and flee behaviour. food = hunger restored when eaten.
+const SPECIES = {
+  zebra:     { label:'zebra',      size:1.0,  color:0xe8e2d2, herd:[4,6], speed:13.5, flee:16, hp:42, juke:0,   hop:0, neck:0.55, horns:null,      stripe:true,  mane:0x2a2a2a, food:55, dust:0 },
+  wildebeest:{ label:'wildebeest', size:1.05, color:0x4d473f, herd:[5,8], speed:13,   flee:15, hp:48, juke:0,   hop:0, neck:0.6,  horns:'cow',     beard:true,                   food:60, dust:1 },
+  gazelle:   { label:"Thomson's gazelle", size:0.6, color:0xcf9e5c, color2:0x241b13, herd:[3,5], speed:18.5, flee:21, hp:16, juke:0.7, hop:0, neck:0.42, horns:'straight', side:true, food:30, dust:0 },
+  impala:    { label:'impala',     size:0.82, color:0xb87b40, herd:[4,6], speed:17,   flee:19, hp:24, juke:0,   hop:1, neck:0.5,  horns:'lyre',                    food:38, dust:0 },
+  warthog:   { label:'warthog',    size:0.58, color:0x53493f, herd:[1,3], speed:15,   flee:11, hp:30, juke:0,   hop:0, neck:0.22, horns:null,      tusks:true, low:true, counter:14, food:34, dust:0 },
+  kudu:      { label:'kudu',       size:1.18, color:0x8c7c66, herd:[1,2], speed:11,   flee:14, hp:72, juke:0,   hop:0, neck:0.9,  horns:'spiral',  stripeThin:true, food:70, dust:0 },
+};
+const SPECIES_KEYS = Object.keys(SPECIES);
+
+// Procedural zebra stripes (no asset files).
+let _zebraTex=null;
+function zebraTex(){
+  if(_zebraTex) return _zebraTex;
+  const S=128, cv=document.createElement('canvas'); cv.width=cv.height=S;
+  const g=cv.getContext('2d');
+  g.fillStyle='#e8e2d2'; g.fillRect(0,0,S,S);
+  g.fillStyle='#23211e';
+  for(let i=-8;i<S;i+=13){ const w=4+Math.random()*4; g.save(); g.translate(i,0); g.rotate(0.14); g.fillRect(0,-10,w,S+20); g.restore(); }
+  const t=new THREE.CanvasTexture(cv); t.wrapS=t.wrapT=THREE.RepeatWrapping; return _zebraTex=t;
+}
+
+function addHorns(g, type, sc, hy, hz, col){
+  const m=lmat(col);
+  [-1,1].forEach(side=>{
+    if(type==='straight'){ const h=new THREE.Mesh(new THREE.ConeGeometry(0.03*sc,0.42*sc,4),m); h.position.set(side*0.07*sc,hy+0.22*sc,hz-0.02*sc); h.rotation.x=0.45; g.add(h); }
+    else if(type==='lyre'){ const h=new THREE.Mesh(new THREE.ConeGeometry(0.035*sc,0.62*sc,4),m); h.position.set(side*0.1*sc,hy+0.3*sc,hz-0.04*sc); h.rotation.z=-side*0.45; h.rotation.x=0.25; g.add(h); }
+    else if(type==='cow'){ const h=new THREE.Mesh(new THREE.ConeGeometry(0.05*sc,0.3*sc,4),m); h.position.set(side*0.15*sc,hy+0.12*sc,hz); h.rotation.z=side*1.15; g.add(h);
+      const h2=new THREE.Mesh(new THREE.ConeGeometry(0.03*sc,0.2*sc,4),m); h2.position.set(side*0.26*sc,hy+0.22*sc,hz); h2.rotation.z=side*0.25; g.add(h2); }
+    else if(type==='spiral'){ for(let k=0;k<4;k++){ const seg=new THREE.Mesh(new THREE.ConeGeometry((0.06-k*0.011)*sc,0.3*sc,4),m); seg.position.set(side*(0.07+k*0.028)*sc, hy+0.2*sc+k*0.25*sc, hz-0.03*sc); seg.rotation.z=side*0.22; seg.rotation.y=k*0.6*side; g.add(seg); } }
+  });
+}
+
+function makeHerbivore(key){
+  const s=SPECIES[key], sc=s.size;
+  const g=new THREE.Group();
+  const baseCol=jcol(s.color,0.05);
+  const skinMat = s.stripe ? new THREE.MeshLambertMaterial({map:zebraTex()}) : lmat(baseCol);
+  const limbMat = lmat(s.stripe ? jcol(0xd9d2c2,0.04) : baseCol);
+  const legLen=0.52*sc, bh=0.46*sc, bw=0.4*sc, bl=1.05*sc, bodyY=legLen+bh/2;
+  const body=new THREE.Mesh(new THREE.BoxGeometry(bw,bh,bl), skinMat); body.position.y=bodyY; body.castShadow=true; g.add(body);
+  const neckLen=s.neck*sc, neckBaseZ=bl/2-0.05*sc;
+  const neck=new THREE.Mesh(new THREE.BoxGeometry(bw*0.55,neckLen,bw*0.55), limbMat);
+  neck.position.set(0, bodyY+(s.low?0.0:neckLen*0.35), neckBaseZ+neckLen*0.18);
+  neck.rotation.x = s.low? -1.0 : -0.55; g.add(neck);
+  const hy = bodyY + (s.low? -0.05*sc : neckLen*0.72);
+  const hz = neckBaseZ + (s.low? 0.4*sc : neckLen*0.5);
+  const head=new THREE.Mesh(new THREE.BoxGeometry(bw*0.6, bh*0.55, bl*0.5), s.stripe?limbMat:skinMat);
+  head.position.set(0, hy, hz); head.castShadow=true; g.add(head);
+  const snout=new THREE.Mesh(new THREE.BoxGeometry(bw*0.4,bh*0.3,bl*0.28), limbMat);
+  snout.position.set(0, hy-0.05*sc, hz+bl*0.32); g.add(snout);
+  [-1,1].forEach(d=>{ const e=new THREE.Mesh(new THREE.ConeGeometry(0.05*sc,0.14*sc,4),limbMat); e.position.set(d*0.11*sc, hy+0.15*sc, hz-0.04*sc); e.rotation.z=d*0.3; g.add(e); });
+  const legs=[]; const lg=new THREE.CylinderGeometry(0.06*sc,0.05*sc,legLen,5);
+  [[-bw*0.42,0.62],[bw*0.42,0.62],[-bw*0.42,-0.62],[bw*0.42,-0.62]].forEach(([lx,lzf])=>{
+    const leg=new THREE.Mesh(lg, limbMat); leg.position.set(lx, legLen/2, lzf*bl*0.5); leg.castShadow=true; g.add(leg); legs.push(leg);
+  });
+  const tail=new THREE.Mesh(new THREE.CylinderGeometry(0.02*sc,0.03*sc,0.5*sc,4), limbMat);
+  tail.position.set(0, bodyY-0.02*sc, -bl/2-0.04*sc); tail.rotation.x = s.tusks? -1.3 : 0.5; g.add(tail);  // warthog tail up
+  if(s.mane){ const mane=new THREE.Mesh(new THREE.BoxGeometry(0.04*sc, neckLen*0.9, bw*0.5), lmat(s.mane)); mane.position.copy(neck.position); mane.position.y+=0.03*sc; mane.rotation.x=neck.rotation.x; g.add(mane); }
+  if(s.beard){ const b=new THREE.Mesh(new THREE.ConeGeometry(0.05*sc,0.24*sc,4), lmat(0x2a2620)); b.position.set(0, hy-0.13*sc, hz+0.08*sc); b.rotation.x=Math.PI; g.add(b); }
+  if(s.stripeThin){ for(let k=0;k<4;k++){ const st=new THREE.Mesh(new THREE.BoxGeometry(bw*1.02,0.02*sc,0.04*sc), lmat(0xece5d6)); st.position.set(0,bodyY+0.06*sc,-bl*0.3+k*bl*0.2); g.add(st); } }
+  if(s.side){ const st=new THREE.Mesh(new THREE.BoxGeometry(bw*1.04,0.08*sc,bl*0.75), lmat(s.color2)); st.position.set(0,bodyY-0.12*sc,0); g.add(st); }
+  if(s.tusks){ [-1,1].forEach(d=>{ const tu=new THREE.Mesh(new THREE.ConeGeometry(0.025*sc,0.16*sc,4), lmat(0xe8e0cf)); tu.position.set(d*0.09*sc, hy-0.04*sc, hz+bl*0.26); tu.rotation.z=d*0.5; tu.rotation.x=-0.6; g.add(tu); }); }
+  if(s.horns) addHorns(g, s.horns, sc, hy, hz, jcol(0x3a3128,0.1));
+  g.children.forEach(c=>{ if(c.isMesh) c.userData.origMat=c.material; });
+  return { group:g, legs, bodyY, legLen };
+}
+
+function makePrey(key,x,z,herdId){
+  const s=SPECIES[key], built=makeHerbivore(key), ty=terrainY(x,z);
+  built.group.position.set(x,ty,z); built.group.rotation.y=rand(0,6.28); built.group.name='prey';
+  scene.add(built.group);
+  const P={ mesh:built.group, legs:built.legs, legLen:built.legLen, species:key, label:s.label,
+    pos:new THREE.Vector3(x,ty,z), vel:new THREE.Vector3(),
+    health:s.hp, maxHealth:s.hp, speed:s.speed, fleeDist:s.flee, food:s.food, counter:s.counter||0,
+    herdId, state:'graze', alertTimer:0, grazeTimer:rand(1,4),
+    wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
+    legPhase:Math.random()*6.28, jukeTimer:0, jukeDir:0, hopPhase:0, flashTimer:0, _lastSpeed:0 };
+  preyMeshes.push(P);
+  return P;
+}
+
+function spawnHerds(){
+  const plan = ['zebra','wildebeest','gazelle','impala','warthog','kudu','impala','gazelle'];
+  plan.forEach((key,hi)=>{
+    const s=SPECIES[key];
+    let cx,cz;
+    if(hi%3===0 && wateringHole){ const a=rand(0,6.28), r=rand(11,22); cx=clamp(wateringHole.x+Math.cos(a)*r,-44,44); cz=clamp(wateringHole.z+Math.sin(a)*r,-44,44); }
+    else { cx=rand(-42,42); cz=rand(-42,42); }
+    const n=s.herd[0] + (Math.random()*(s.herd[1]-s.herd[0]+1)|0);
+    for(let i=0;i<n;i++) makePrey(key, clamp(cx+rand(-5,5),-46,46), clamp(cz+rand(-5,5),-46,46), 'h'+hi);
+  });
+}
+
+let _dustPuffs=[];
+function spawnDustPuff(pos){
+  if(_dustPuffs.length>40) return;
+  const m=new THREE.Mesh(new THREE.IcosahedronGeometry(0.4,0),
+    new THREE.MeshBasicMaterial({color:0xcaba92, transparent:true, opacity:0.5, depthWrite:false}));
+  m.position.set(pos.x, terrainY(pos.x,pos.z)+0.2, pos.z); m.name='puff'; scene.add(m);
+  _dustPuffs.push({mesh:m, mat:m.material, life:0.7});
+}
+function updateDustPuffs(dt){
+  for(let i=_dustPuffs.length-1;i>=0;i--){ const d=_dustPuffs[i]; d.life-=dt;
+    d.mesh.scale.multiplyScalar(1+dt*2.5); d.mat.opacity=Math.max(0,d.life*0.6); d.mesh.position.y+=dt*0.4;
+    if(d.life<=0){ killObj(d.mesh); _dustPuffs.splice(i,1); }
+  }
+}
+
+function updatePrey(dt){
+  if(gameState!=='playing') return;
+  // herd centroids for cohesion
+  const cen={};
+  preyMeshes.forEach(P=>{ const c=cen[P.herdId]||(cen[P.herdId]={x:0,z:0,n:0}); c.x+=P.pos.x; c.z+=P.pos.z; c.n++; });
+  for(const k in cen){ cen[k].x/=cen[k].n; cen[k].z/=cen[k].n; }
+
+  preyMeshes.forEach(P=>{
+    const s=SPECIES[P.species];
+    P.legPhase += dt*(3+(P._lastSpeed||0)*0.9);
+    const legBase=P.legLen/2;
+    P.legs.forEach((leg,i)=>{ leg.position.y = legBase + Math.sin(P.legPhase+i*Math.PI/2)*0.09*s.size*(P.state==='flee'?1.5:0.5); });
+    if(P.flashTimer>0){ P.flashTimer-=dt; const fl=P.flashTimer>0; P.mesh.children.forEach(c=>{ if(c.isMesh) c.material=fl?FLASH_MAT:c.userData.origMat; }); }
+
+    // nearest predator (lion or player) — prey flee both
+    let threat=null, td=Infinity;
+    lionMeshes.forEach(L=>{ const d=L.pos.distanceTo(P.pos); if(d<td){td=d;threat=L.pos;} });
+    const pd=player.pos.distanceTo(P.pos);
+    if(pd<td && !player.inTree){ td=pd; threat=player.pos; }   // treed player isn't a ground threat
+
+    let dir=new THREE.Vector3();
+    if(threat && td < P.fleeDist){ P.state='flee'; P.alertTimer=2.5; }
+    else if(P.alertTimer>0){ P.alertTimer-=dt; P.state='alert'; }
+    else P.state='graze';
+
+    if(P.state==='flee'){
+      dir.set(P.pos.x-threat.x,0,P.pos.z-threat.z);
+      if(dir.lengthSq()<0.01) dir.set(rand(-1,1),0,rand(-1,1));
+      dir.normalize();
+      if(s.juke){ P.jukeTimer-=dt; if(P.jukeTimer<=0){ P.jukeDir=rand(-1,1)*s.juke; P.jukeTimer=rand(0.3,0.7); } dir.applyAxisAngle(UP,P.jukeDir); }
+    } else if(P.state==='alert'){
+      dir.set(0,0,0);
+    } else { // graze: gentle wander + herd cohesion
+      P.grazeTimer-=dt; if(P.grazeTimer<0){ P.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); P.grazeTimer=rand(2,5); }
+      dir.copy(P.wanderDir).multiplyScalar(0.4);
+      const c=cen[P.herdId];
+      if(c){ const tx=c.x-P.pos.x, tz=c.z-P.pos.z, cd=Math.hypot(tx,tz); if(cd>6){ dir.x+=tx/cd*0.6; dir.z+=tz/cd*0.6; } }
+      if(dir.lengthSq()>0) dir.normalize();
+    }
+
+    let speed = P.state==='flee' ? s.speed : P.state==='alert' ? 0 : s.speed*0.16;
+    P._lastSpeed=speed;
+    let hopY=0;
+    if(s.hop && P.state==='flee'){ P.hopPhase+=dt*6.5; hopY=Math.max(0,Math.sin(P.hopPhase))*0.55*s.size; }
+    if(s.dust && P.state==='flee' && Math.random()<dt*3.5) spawnDustPuff(P.pos);
+
+    P.pos.addScaledVector(dir, speed*dt);
+    P.pos.x=clamp(P.pos.x,-47,47); P.pos.z=clamp(P.pos.z,-47,47); P.pos.y=terrainY(P.pos.x,P.pos.z);
+    P.mesh.position.set(P.pos.x, P.pos.y+hopY, P.pos.z);
+    if(dir.lengthSq()>0.001) P.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+  });
+
+  // dead prey → edible carcass
+  for(let i=preyMeshes.length-1;i>=0;i--){ if(preyMeshes[i].health<=0){
+    const P=preyMeshes[i]; spawnCarcass(P.pos.clone(), P.food, P.species); killObj(P.mesh); preyMeshes.splice(i,1);
+  }}
+
+  // keep the ecosystem stocked
+  if(preyMeshes.length < 9){
+    const key=SPECIES_KEYS[(Math.random()*SPECIES_KEYS.length)|0];
+    const a=rand(0,6.28), x=clamp(player.pos.x+Math.cos(a)*46,-46,46), z=clamp(player.pos.z+Math.sin(a)*46,-46,46);
+    const n=SPECIES[key].herd[0];
+    for(let i=0;i<n;i++) makePrey(key, clamp(x+rand(-4,4),-46,46), clamp(z+rand(-4,4),-46,46), 'r'+(elapsed|0));
+  }
+}
+
+// ---- carcasses + circling vultures ----
+function spawnCarcass(pos, food, species){
+  const grp=new THREE.Group(); const y=terrainY(pos.x,pos.z); grp.position.set(pos.x,y,pos.z);
+  const lump=new THREE.Mesh(new THREE.IcosahedronGeometry(0.55,0), lmat(0x6e3b2a)); lump.position.y=0.18; lump.scale.set(1.2,0.45,0.9); lump.castShadow=true; grp.add(lump);
+  for(let k=0;k<4;k++){ const rib=new THREE.Mesh(new THREE.TorusGeometry(0.16,0.02,4,6,Math.PI), lmat(0xc9b89a)); rib.position.set(-0.2+k*0.13,0.22,0); rib.rotation.x=Math.PI/2; grp.add(rib); }
+  grp.name='carcass'; scene.add(grp);
+  const c={ mesh:grp, pos:grp.position.clone(), food:food||40, timer:90, species, vultures:null };
+  carcasses.push(c); spawnVultures(c);
+  return c;
+}
+function updateCarcasses(dt){
+  for(let i=carcasses.length-1;i>=0;i--){ const c=carcasses[i]; c.timer-=dt;
+    if(c.food<=0 || c.timer<=0){ removeVultures(c); killObj(c.mesh); carcasses.splice(i,1); }
+  }
+}
+function makeVulture(){
+  const g=new THREE.Group(); const m=lmat(0x2b2622);
+  const wing=new THREE.Mesh(new THREE.BoxGeometry(1.3,0.04,0.34), m); g.add(wing);
+  const bodyB=new THREE.Mesh(new THREE.BoxGeometry(0.14,0.12,0.5), m); g.add(bodyB);
+  g.userData.wing=wing; return g;
+}
+function spawnVultures(c){
+  c.vultures=[];
+  for(let k=0;k<3;k++){ const v=makeVulture(); v.userData.ang=k*2.1; v.userData.r=2.6+k*0.9; v.userData.h=6.5+k*0.7; scene.add(v);
+    vultures.push({mesh:v, carcass:c}); c.vultures.push(v); }
+}
+function removeVultures(c){ if(!c.vultures) return; c.vultures.forEach(v=>{ const idx=vultures.findIndex(x=>x.mesh===v); if(idx>=0) vultures.splice(idx,1); killObj(v); }); c.vultures=null; }
+function updateVultures(dt){
+  for(let i=vultures.length-1;i>=0;i--){ const V=vultures[i], c=V.carcass;
+    if(!c || c.timer<=0){ vultures.splice(i,1); continue; }
+    const u=V.mesh.userData; u.ang += dt*0.55;
+    V.mesh.position.set(c.pos.x+Math.cos(u.ang)*u.r, c.pos.y+u.h+Math.sin(u.ang*2)*0.4, c.pos.z+Math.sin(u.ang)*u.r);
+    V.mesh.rotation.y = -u.ang + Math.PI/2;
+    if(u.wing) u.wing.rotation.x = Math.sin(u.ang*8)*0.35;   // flap
+  }
+}
+
+// =====================================================================
 //  GRAPPLE
 // =====================================================================
 function drawGrappleLine(pt){
@@ -2208,6 +2428,18 @@ function drawMinimap(){
     mmCtx.beginPath(); mmCtx.arc(px,py,3,0,Math.PI*2); mmCtx.fill();
   });
 
+  // Prey (Phase 6) — pale dots; carcasses dark red
+  mmCtx.fillStyle='#d8d0b0';
+  preyMeshes.forEach(P=>{
+    const [px,py]=toMM(P.pos.x-player.pos.x, P.pos.z-player.pos.z);
+    mmCtx.beginPath(); mmCtx.arc(px,py,2.5,0,Math.PI*2); mmCtx.fill();
+  });
+  mmCtx.fillStyle='#7a2018';
+  carcasses.forEach(c=>{
+    const [px,py]=toMM(c.pos.x-player.pos.x, c.pos.z-player.pos.z);
+    mmCtx.beginPath(); mmCtx.arc(px,py,3,0,Math.PI*2); mmCtx.fill();
+  });
+
   // Walls
   mmCtx.fillStyle='#8b5e3c';
   wallMeshes.forEach(w=>{
@@ -2292,6 +2524,9 @@ function resetGame(){
   [...campfires].forEach(f=>killObj(f.mesh));
   [...corpses].forEach(c=>killObj(c.mesh));
   [...thrownRocks].forEach(r=>killObj(r.mesh));
+  [...preyMeshes].forEach(P=>killObj(P.mesh));
+  [...carcasses].forEach(c=>{ removeVultures(c); killObj(c.mesh); });
+  [..._dustPuffs].forEach(d=>killObj(d.mesh));
   if(grapple.line){ killObj(grapple.line); }
   if(torchState.light){ scene.remove(torchState.light); }   // light: nothing to dispose
 
@@ -2301,6 +2536,10 @@ function resetGame(){
   campfires.length  = 0;
   corpses.length    = 0;
   thrownRocks.length= 0;
+  preyMeshes.length = 0;
+  carcasses.length  = 0;
+  vultures.length   = 0;
+  _dustPuffs.length = 0;
 
   grapple   = { active:false, point:null, line:null, mode:null, perch:null, tree:null };
   torchState= { crafted:false, on:false, fuel:90, light:null };
@@ -2334,6 +2573,7 @@ function resetGame(){
   // Spawn the starting pride (2 lionesses + a male) and clear any stale alert
   prideAlert.timer = 0;
   spawnPride();
+  spawnHerds();              // populate the savanna with prey (Phase 6)
 
   gameState = 'playing';
   document.getElementById('overlay').style.display='none';
@@ -2356,6 +2596,10 @@ function animate(){
   updateStealth(dt);
   updateHealth(dt);
   updateLions(dt);
+  updatePrey(dt);             // herbivores: graze / herd / flee (Phase 6)
+  updateCarcasses(dt);
+  updateVultures(dt);
+  updateDustPuffs(dt);
   updateCampfires(dt);
   updateThrownRocks(dt);
   updateCorpses(dt);
