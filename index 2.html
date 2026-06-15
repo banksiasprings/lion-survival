@@ -24,10 +24,9 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
 #killfeed{position:fixed;top:50%;right:16px;font-size:14px;display:flex;flex-direction:column;gap:4px}
 .kf-entry{background:rgba(0,0,0,0.5);padding:4px 10px;border-radius:4px;transition:opacity 0.5s}
 #bottombar{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:6px}
-#health-wrap,#stamina-wrap,#hunger-wrap{width:240px;height:10px;background:rgba(0,0,0,0.45);border-radius:5px;overflow:hidden}
+#health-wrap,#stamina-wrap{width:240px;height:10px;background:rgba(0,0,0,0.45);border-radius:5px;overflow:hidden}
 #health-bar{height:100%;width:100%;background:#e74c3c;border-radius:5px}
 #stamina-bar{height:100%;width:100%;background:#2ecc71;border-radius:5px}
-#hunger-bar{height:100%;width:100%;background:#e69020;border-radius:5px;transition:width 0.2s}
 #torch-wrap{width:240px;height:6px;background:rgba(0,0,0,0.45);border-radius:3px;overflow:hidden;display:none}
 #torch-bar{height:100%;width:100%;background:#f39c12;border-radius:3px}
 #inventory{display:flex;gap:8px}
@@ -64,7 +63,6 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
   <div id="killfeed"></div>
   <div id="bottombar">
     <div id="stamina-wrap"><div id="stamina-bar"></div></div>
-    <div id="hunger-wrap"><div id="hunger-bar"></div></div>
     <div id="health-wrap"><div id="health-bar"></div></div>
     <div id="torch-wrap"><div id="torch-bar"></div></div>
     <div id="inventory">
@@ -79,13 +77,11 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
 </div>
 <div id="overlay">
   <h1>🦁 LION SURVIVAL</h1>
-  <p>Survive the savanna. Lions hunt hardest at dawn, dusk and through the night — rest in shade by day.<br>
-     Hide in tall grass, stay low and quiet, mind the wind, and grapple into a tree when the pride closes in.</p>
+  <p>Survive as long as possible against hunting lions.<br>Collect wood, build walls, light campfires, use your grapple hook.</p>
   <div style="font-size:12px;opacity:0.65;line-height:1.9;text-align:center">
-    WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hide in grass)<br>
-    1/G Grapple → tree (LMB fire · RMB/Space drop · safe from lions while perched) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe<br>
-    Q Pounce (hunt prey — ambush from grass for ×3) &nbsp;|&nbsp; E Eat kill / Collect &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; T Craft Torch &nbsp;|&nbsp; LMB+Axe Chop Wall<br>
-    <span style="opacity:0.8">Watch your 🍖 hunger — eat prey you hunt or scavenge lion kills (they'll fight you for it).</span>
+    WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch<br>
+    1/G Grapple (LMB fire · RMB release) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe<br>
+    E Collect Wood/Rocks &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; T Craft Torch &nbsp;|&nbsp; LMB+Axe Chop Wall
   </div>
   <button id="start-btn">▶ START GAME</button>
   <div id="gameover-stats"></div>
@@ -114,12 +110,7 @@ const PLAYER = {
   eyeHeight: 1.7, crouchHeight: 1.0,
   maxHealth: 100, maxStamina: 100,
   staminaDrain: 30, staminaRegen: 18,
-  healthRegen: 1.5, lionDamage: 25,
-  climbSpeed: 14, perchDrain: 7,   // grapple reel-up speed; grip stamina/sec while perched
-  grappleRange: 36,                // max climb-grapple distance to a tree
-  maxHunger: 100, hungerDrain: 0.5, hungerSprintMul: 2.4, // hunger/sec (×mul while sprinting)
-  starveDamage: 3,                 // HP/sec once hunger hits 0
-  pounceRange: 3.6, pounceDamage: 18  // melee hunt; ×3 from a hidden ambush
+  healthRegen: 1.5, lionDamage: 25
 };
 let player = {};
 
@@ -131,11 +122,6 @@ let wallAABBs   = [];
 let campfires   = [];
 let lionMeshes  = [];
 let corpses     = [];
-let preyMeshes  = [];   // Phase 6: herbivores
-let carcasses   = [];   // Phase 6: edible kills (prey) — food for player & lions
-let vultures    = [];   // Phase 6: circling birds over fresh kills
-let gorillas    = [];   // Phase 7: territorial gorilla(s) — attack everything that moves
-let gorillaSpawnTimer = 0;
 
 // Savanna environment (Phase 1) — also feeds stealth (Phase 3) & grapple (Phase 4)
 let wind = { angle: rand(0, Math.PI*2), dirX: 0, dirZ: 0, speed: 0.55, time: 0 };
@@ -146,11 +132,6 @@ let dustSys   = null;       // THREE.Points
 let skyDome   = null;       // gradient dome {mesh, mat}
 let hillBand  = null;       // distant rolling hills (fog-immune silhouette)
 let wateringHole = null;    // {x,z,r,mesh} — Phase 5 focal point
-// Weather (Phase 5): occasional storms — rain darkens the sky + cuts everyone's
-// detection (a shared stealth window). detMul is read by the detection model.
-let weather = { state:'clear', timer: rand(60,110), intensity:0, flash:0, detMul:1 };
-let rainSys = null;         // THREE.Points (vertical streaks), shown only in storms
-let roarTimer = rand(8,20); // distant night-roar cadence
 
 // Grapple
 let grapple = { active: false, point: null, line: null, targetLion: null };
@@ -254,19 +235,6 @@ function tallGrassAt(x, z){
   return null;
 }
 
-// Push an XZ position out of any player-built wall (sphere vs AABB). Used by
-// lions and prey so animals can't walk through walls.
-function collideWalls(pos, radius){
-  for(let i=0;i<wallAABBs.length;i++){
-    const a = wallAABBs[i];
-    if(pos.y > a.max.y - 0.1) continue;                 // cleared the top — let it pass over
-    const cx = clamp(pos.x, a.min.x, a.max.x), cz = clamp(pos.z, a.min.z, a.max.z);
-    const dx = pos.x-cx, dz = pos.z-cz, d = Math.sqrt(dx*dx+dz*dz);
-    if(d > 0.0001){ if(d < radius){ pos.x += (dx/d)*(radius-d); pos.z += (dz/d)*(radius-d); } }
-    else { pos.x += radius; }                            // dead-centre — shove out
-  }
-}
-
 // Procedural dry-savanna ground texture — mottled gold/brown with scattered
 // darker patches and faded green tufts. One CanvasTexture, tiled across the map.
 function makeGroundTexture(){
@@ -365,49 +333,11 @@ function initScene(){
   scene.userData.sun = sun;
   scene.userData.ambient = scene.children.find(c=>c.isAmbientLight);
 
-  // GPU shadow probe (run BEFORE any world material compiles). Some drivers —
-  // notably older Macs (AMD via ANGLE's Metal backend) — reject the WebGL2
-  // shadow-map depth-texture pass with a silent GL_INVALID_OPERATION that drops
-  // the whole frame (white/red screen, HUD still fine). Render a tiny throwaway
-  // shadow scene; if it errors, switch shadows OFF up-front so every real
-  // material compiles shadow-free. Capable GPUs pass the probe and keep shadows.
-  if(!probeShadowSupport()){
-    renderer.shadowMap.enabled = false;
-    sun.castShadow = false;
-    scene.userData.noShadows = true;
-    console.warn('Lion Survival: shadows disabled — this GPU/driver failed the shadow-map probe.');
-  }
-
   window.addEventListener('resize', ()=>{
     camera.aspect = innerWidth/innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
   });
-}
-
-// Render a minimal shadow-casting scene and report whether the GL context stays
-// error-free. Returns true if shadows are safe on this GPU/driver.
-function probeShadowSupport(){
-  try{
-    const gl = renderer.getContext();
-    let g=0; while(gl.getError()!==0 && g++<32){}            // clear sticky errors
-    const ps = new THREE.Scene();
-    const pc = new THREE.PerspectiveCamera(60,1,0.1,50); pc.position.set(0,3,5); pc.lookAt(0,0,0);
-    const dl = new THREE.DirectionalLight(0xffffff,1); dl.position.set(2,5,2);
-    dl.castShadow = true; dl.shadow.mapSize.set(1024,1024);   // match the game's real config
-    dl.shadow.camera.near=0.5; dl.shadow.camera.far=200;
-    dl.shadow.camera.left=dl.shadow.camera.bottom=-60; dl.shadow.camera.right=dl.shadow.camera.top=60;
-    ps.add(dl);
-    ps.add(new THREE.AmbientLight(0xffffff,0.6));
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(8,8), new THREE.MeshLambertMaterial({color:0x888888}));
-    ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; ps.add(ground);
-    const cube = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshLambertMaterial({color:0xaaaaaa}));
-    cube.position.y = 0.6; cube.castShadow = true; ps.add(cube);
-    renderer.render(ps, pc);
-    const err = gl.getError();
-    ps.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); });
-    return err === 0;
-  }catch(e){ return false; }   // any trouble → play it safe, no shadows
 }
 
 // =====================================================================
@@ -451,31 +381,10 @@ function createTerrain(){
 // =====================================================================
 function createSavanna(){
   generateTallGrassClumps();
-  createWateringHole();      // before grass so blades skip the water (Phase 5)
   createSkyDome();
   createDistantHills();
   createGrass();
   createDustMotes();
-  createRain();              // hidden until a storm rolls in (Phase 5)
-}
-
-// A watering hole — the savanna's focal point. Animals (and the player) are
-// drawn here; lions drift in to drink and lie in ambush, especially at dusk.
-function createWateringHole(){
-  const x = rand(-30,30), z = rand(-30,30), r = rand(6,8);
-  const y = terrainY(x,z);
-  const grp = new THREE.Group(); grp.position.set(x, y, z);
-  // muddy/sandy shore ring (just above the ground plane so it's not occluded)
-  const shore = new THREE.Mesh(new THREE.CircleGeometry(r+1.4, 28),
-                  new THREE.MeshLambertMaterial({color:0x8a7448}));
-  shore.rotation.x = -Math.PI/2; shore.position.y = 0.04; grp.add(shore);
-  // water surface — sits a touch higher still so it reads as a pool
-  const water = new THREE.Mesh(new THREE.CircleGeometry(r, 28),
-                  new THREE.MeshLambertMaterial({color:0x2f74a0, transparent:true, opacity:0.9}));
-  water.rotation.x = -Math.PI/2; water.position.y = 0.09; water.renderOrder = 1; grp.add(water);
-  grp.name = 'waterhole';
-  scene.add(grp);
-  wateringHole = { x, z, r, y, mesh:grp, water };
 }
 
 // Scatter tall-grass hide spots. These are the tactical heart of stealth
@@ -562,12 +471,7 @@ function createGrass(){
     const a = Math.random()*Math.PI*2, rr = Math.sqrt(Math.random())*cl.r;
     place(cl.x+Math.cos(a)*rr, cl.z+Math.sin(a)*rr, true);
   }
-  let guard=0;
-  while(n<COUNT && guard++<COUNT*4){
-    const gx=rand(-HALF+2,HALF-2), gz=rand(-HALF+2,HALF-2);
-    if(wateringHole && Math.hypot(gx-wateringHole.x, gz-wateringHole.z) < wateringHole.r+1) continue;
-    place(gx, gz, false);
-  }
+  while(n<COUNT) place(rand(-HALF+2,HALF-2), rand(-HALF+2,HALF-2), false);
 
   base.setAttribute('iOffset', new THREE.InstancedBufferAttribute(offs,3));
   base.setAttribute('iParams', new THREE.InstancedBufferAttribute(params,4));
@@ -598,8 +502,7 @@ function createSkyDome(){
     side: THREE.BackSide, depthWrite:false, fog:false,
     uniforms:{ uTop:{value:new THREE.Color(0x2e6fc4)}, uBottom:{value:new THREE.Color(0xd8c9a8)} },
     vertexShader:`varying vec3 vW; void main(){ vW=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
-    fragmentShader:`precision mediump float;
-      varying vec3 vW; uniform vec3 uTop; uniform vec3 uBottom;
+    fragmentShader:`varying vec3 vW; uniform vec3 uTop; uniform vec3 uBottom;
       void main(){ float h=normalize(vW).y; float t=pow(clamp(h,0.0,1.0),0.85);
         vec3 c=mix(uBottom,uTop,t);
         if(h<0.0) c=mix(uBottom, uBottom*0.75, clamp(-h*2.0,0.0,1.0));
@@ -673,99 +576,6 @@ function updateDust(dt){
     if(a[i+1] > 7) a[i+1] = 0.3;
   }
   dustSys.geo.attributes.position.needsUpdate = true;
-}
-
-// Rain streaks (Phase 5) — a column of falling Points kept around the player,
-// hidden until a storm. We reuse the soft-dot sprite but small & elongated.
-function createRain(){
-  const N=700, p=new Float32Array(N*3);
-  for(let i=0;i<N;i++){ p[i*3]=rand(-40,40); p[i*3+1]=rand(0,26); p[i*3+2]=rand(-40,40); }
-  const geo=new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(p,3));
-  const mat=new THREE.PointsMaterial({ color:0xc2d4e4, size:0.2, transparent:true,
-    opacity:0.6, depthWrite:false, fog:true });
-  mat.userData.keep = true;
-  const pts=new THREE.Points(geo,mat);
-  pts.frustumCulled=false; pts.visible=false; pts.name='rain';
-  scene.add(pts);
-  rainSys={pts,geo,mat};
-}
-
-// Storm state machine + rain fall. Storms darken the sky and cut detection for
-// everyone (weather.detMul), opening a tense shared stealth window.
-function updateWeather(dt){
-  weather.timer -= dt;
-  if(weather.state==='clear'){
-    weather.intensity = Math.max(0, weather.intensity - dt*0.3);
-    if(weather.timer<=0){ weather.state='storm'; weather.timer=rand(28,55); }
-  } else { // storm
-    weather.intensity = Math.min(1, weather.intensity + dt*0.25);
-    if(weather.timer<=0){ weather.state='clear'; weather.timer=rand(70,140); }
-    // thunder: rare flash + boom
-    if(weather.intensity>0.5 && Math.random()<dt*0.25){
-      weather.flash = 1; playSound('thunder');
-    }
-  }
-  if(weather.flash>0) weather.flash = Math.max(0, weather.flash - dt*2.5);
-  // rain masks sight & scent → detection shrinks with storm intensity
-  weather.detMul = 1 - weather.intensity*0.45;
-
-  // Darken the world during a storm (runs after updateDayNight, which re-sets
-  // these from the sky state each frame, so we just scale the fresh values).
-  if(weather.intensity > 0.01){
-    const I = weather.intensity;
-    const amb = scene.userData.ambient, sun = scene.userData.sun;
-    if(amb) amb.intensity *= (1 - 0.5*I);
-    if(sun) sun.intensity *= (1 - 0.7*I);
-    scene.fog.density *= (1 + 1.6*I);
-    scene.fog.color.lerp(_CSTORM, 0.4*I);
-    if(grassSys) grassSys.mat.uniforms.uLight.value *= (1 - 0.45*I);
-    if(skyDome){
-      skyDome.mat.uniforms.uTop.value.lerp(_CSTORM, 0.6*I);
-      skyDome.mat.uniforms.uBottom.value.lerp(_CSTORM, 0.5*I);
-    }
-  }
-  // Thunder flash briefly blows out the ambient.
-  if(weather.flash>0 && scene.userData.ambient) scene.userData.ambient.intensity += weather.flash*1.3;
-
-  if(rainSys){
-    const on = weather.intensity>0.02;
-    rainSys.pts.visible = on;
-    rainSys.mat.opacity = 0.55*weather.intensity;
-    if(on){
-      const a=rainSys.geo.attributes.position.array;
-      const px=player.pos?player.pos.x:0, pz=player.pos?player.pos.z:0;
-      const fall = 32*dt;
-      for(let i=0;i<a.length;i+=3){
-        a[i+1]-=fall; a[i]+=wind.dirX*4*dt; a[i+2]+=wind.dirZ*4*dt;
-        if(a[i+1]<0){ a[i+1]=24; a[i]=px+rand(-40,40); a[i+2]=pz+rand(-40,40); }
-        // keep the column centred on the player
-        if(a[i]>px+42)a[i]-=84; else if(a[i]<px-42)a[i]+=84;
-        if(a[i+2]>pz+42)a[i+2]-=84; else if(a[i+2]<pz-42)a[i+2]+=84;
-      }
-      rainSys.geo.attributes.position.needsUpdate=true;
-    }
-  }
-}
-
-// Atmospheric distant roars at night — also a directional warning. Returns the
-// rough bearing of the pride so the killfeed can hint where they are.
-function updateAmbience(dt){
-  if(dn.isDay){ roarTimer = rand(10,22); return; }
-  roarTimer -= dt;
-  if(roarTimer<=0){
-    roarTimer = rand(16,34);
-    playSound('roar');
-    // bearing toward the pride centroid (or a random compass point if none)
-    let bearing='somewhere in the dark';
-    if(lionMeshes.length){
-      let cx=0,cz=0; lionMeshes.forEach(L=>{cx+=L.pos.x;cz+=L.pos.z;});
-      cx=cx/lionMeshes.length-player.pos.x; cz=cz/lionMeshes.length-player.pos.z;
-      const dirs=['east','south-east','south','south-west','west','north-west','north','north-east'];
-      bearing='the '+dirs[(Math.round(Math.atan2(cz,cx)/(Math.PI/4))%8+8)%8];
-    }
-    showKillfeed('🦁 A roar rolls in from '+bearing);
-  }
 }
 
 // =====================================================================
@@ -1042,9 +852,6 @@ function initPlayer(){
     crouching: false,
     sprinting: false,
     inDanger: false,
-    inTree: false, climbing: false,   // Phase 4 grapple/perch state
-    _grappleCd: 0,                     // re-grapple cooldown after dropping
-    hunger: PLAYER.maxHunger, _pounceCd: 0,   // Phase 6 food chain
   };
   camera.position.copy(player.pos);
   camera.position.y += PLAYER.eyeHeight;
@@ -1065,13 +872,11 @@ function registerControls(){
     if(e.code==='Digit5') setSlot(5);
     if(e.code==='KeyG'){
       setSlot(1);
-      if(grapple.active || player.inTree || player.climbing) releaseGrapple();
+      if(grapple.active) releaseGrapple();
       else fireGrapple();
     }
-    if(e.code==='Space' && player.inTree) dropFromTree();   // drop off the branch
     if(e.code==='KeyF') throwRock();
-    if(e.code==='KeyE'){ if(!eatNearbyCarcass()) doCollect(); }   // eat carcass, else collect
-    if(e.code==='KeyQ') pouncePrey();                            // hunt: pounce on prey
+    if(e.code==='KeyE') doCollect();
     if(e.code==='KeyT') craftTorch();
   });
   document.addEventListener('keyup', e=>{ keys[e.code]=false; });
@@ -1112,8 +917,7 @@ function onLeftClick(){
 }
 
 function onRightClick(){
-  // RMB always releases the grapple / drops from a tree, whatever slot is held.
-  if(player.inTree || grapple.active || player.climbing) releaseGrapple();
+  if(activeSlot===1) releaseGrapple();
 }
 
 // =====================================================================
@@ -1138,15 +942,11 @@ function updatePlayer(dt){
   // Sprinting + stamina (can't sprint while crouched)
   const wantSprint = !!keys['ShiftLeft'] && player.stamina > 0 && !player.crouching &&
     (keys['KeyW']||keys['KeyA']||keys['KeyS']||keys['KeyD']);
-  if(player._grappleCd>0) player._grappleCd -= dt;
-  if(player._pounceCd>0)  player._pounceCd  -= dt;
-
   if(wantSprint){
     player.stamina = Math.max(0, player.stamina - PLAYER.staminaDrain*dt);
     player.sprinting = true;
   } else {
-    // No passive regen while perched — grip stamina only drains up there (anti-camp).
-    if(!player.inTree) player.stamina = Math.min(PLAYER.maxStamina, player.stamina + PLAYER.staminaRegen*dt);
+    player.stamina = Math.min(PLAYER.maxStamina, player.stamina + PLAYER.staminaRegen*dt);
     player.sprinting = false;
   }
 
@@ -1164,33 +964,28 @@ function updatePlayer(dt){
   if(keys['KeyD']) move.addScaledVector(right,   1);
   if(move.lengthSq()>0) move.normalize().multiplyScalar(speed);
 
-  // ---- Grapple / climbing / perched (Phase 4) ----
-  if(player.inTree){
-    // Perched on a branch: anchored, no gravity, safe from lions. Grip tires —
-    // when stamina hits zero you slip and fall (no infinite tree-camping).
-    player.vel.set(0,0,0);
-    player.pos.copy(grapple.perch);
-    player.stamina = Math.max(0, player.stamina - PLAYER.perchDrain*dt);
-    if(player.stamina <= 0){ showKillfeed('💪 Grip gave out!'); dropFromTree(); }
-  } else if(grapple.active && grapple.mode==='climb'){
-    // Reeling up to the perch point.
-    const to = grapple.perch.clone().sub(player.pos);
-    const d = to.length();
-    if(d > 0.4){ player.pos.addScaledVector(to.normalize(), Math.min(d, PLAYER.climbSpeed*dt)); player.vel.set(0,0,0); }
-    else arriveInTree();
-  } else if(grapple.active && grapple.point){
-    // Generic pull toward a non-tree surface (mobility — original behaviour).
+  // Grapple pull
+  if(grapple.active && grapple.point){
     const toHook = grapple.point.clone().sub(player.pos);
     const dist = toHook.length();
-    if(dist > 0.5) player.vel.copy(toHook.normalize().multiplyScalar(14));
-    else releaseGrapple();
+    if(dist > 0.5){
+      const pull = toHook.normalize().multiplyScalar(14);
+      player.vel.copy(pull);
+    } else {
+      releaseGrapple();
+    }
   } else {
     player.vel.x = move.x;
     player.vel.z = move.z;
     // Gravity
-    if(!player.onGround) player.vel.y += PLAYER.gravity * dt;
+    if(!player.onGround){
+      player.vel.y += PLAYER.gravity * dt;
+    }
     // Jump
-    if(keys['Space'] && player.onGround){ player.vel.y = PLAYER.jumpForce; player.onGround = false; }
+    if(keys['Space'] && player.onGround){
+      player.vel.y = PLAYER.jumpForce;
+      player.onGround = false;
+    }
   }
 
   // Integrate position
@@ -1274,19 +1069,16 @@ function updateHealth(dt){
   if(gameState!=='playing') return;
   let nearLion = false;
   let veryNear = false;
-  // Up a tree you're out of reach — lions can't climb, so no damage or danger.
-  if(!player.inTree){
-    lionMeshes.forEach(L=>{
-      const d = L.pos.distanceTo(player.pos);
-      if(d < 1.5){
-        player.health -= (L.damage || PLAYER.lionDamage) * dt;
-        nearLion = true;
-      }
-      if(d < 6) veryNear = true;
-    });
-  }
+  lionMeshes.forEach(L=>{
+    const d = L.pos.distanceTo(player.pos);
+    if(d < 1.5){
+      player.health -= (L.damage || PLAYER.lionDamage) * dt;
+      nearLion = true;
+    }
+    if(d < 6) veryNear = true;
+  });
   player.inDanger = veryNear;
-  if(!nearLion && player.hunger > 0){   // no regen on an empty stomach
+  if(!nearLion){
     player.health = Math.min(PLAYER.maxHealth, player.health + PLAYER.healthRegen*dt);
   }
   if(player.health <= 0){
@@ -1297,20 +1089,6 @@ function updateHealth(dt){
   if(veryNear){
     shakeTime = 0.15;
     shakeAmt  = 0.003;
-  }
-}
-
-// Player hunger (Phase 6): drains over time (faster while exerting); at zero it
-// starts eating into health. Refilled by eating prey carcasses (E).
-function updateHunger(dt){
-  if(gameState!=='playing' || player.inTree===undefined) return;
-  let drain = PLAYER.hungerDrain;
-  if(player.sprinting) drain *= PLAYER.hungerSprintMul;
-  else if((player._moveSpeed||0) > 1.5) drain *= 1.3;
-  player.hunger = Math.max(0, player.hunger - drain*dt);
-  if(player.hunger <= 0){
-    player.health -= PLAYER.starveDamage*dt;
-    if(player.health <= 0){ player.health = 0; triggerGameOver(); }
   }
 }
 
@@ -1398,10 +1176,9 @@ function makeLion(x, z, sex){
     damage: isMale ? 32 : 22,                 // males hit harder
     hunger: rand(45, 75),                     // start moderately hungry
     burst: 1,                                 // sprint reserve 0..1 (tires quickly)
-    state: 'wander',   // wander|rest|converge|chase|hunt_prey|scavenge|fleeing_fire|stunned
+    state: 'wander',   // wander|rest|converge|chase|fleeing_fire|stunned
     flankAngle: 0, isLurer: false,
     stunTimer: 0,
-    fedTimer: 0, preyTarget: null,            // Phase 6 food chain
     wanderDir: new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
     wanderTimer: rand(2,4),
     restTarget: null,
@@ -1454,15 +1231,12 @@ function updateStealth(dt){
   let aud = !moving ? 2 : crouch ? 4 : sprint ? 22 : 12;
   if(inGrass && moving) aud += crouch ? 1 : sprint ? 8 : 4;
 
-  // Up in the canopy the foliage hides you — lions quickly lose your scent/sight.
-  if(player.inTree){ visMul *= 0.15; aud = Math.min(aud, 2); }
-
   stealth.inGrass=inGrass; stealth.moving=moving; stealth.sprint=sprint;
   stealth.crouch=crouch; stealth.visMul=visMul; stealth.aud=aud;
 
   const detected = lionMeshes.some(L=>L.state==='chase');
   stealth.detected = detected;
-  const wellHidden = (inGrass && visMul < 0.45 && !detected) || (player.inTree && !detected);
+  const wellHidden = inGrass && visMul < 0.45 && !detected;
   stealth.hidden = wellHidden;
 
   // Cues: a sharp growl + jolt the instant the pride first locks onto you.
@@ -1472,35 +1246,12 @@ function updateStealth(dt){
   if(inGrass && moving){ _rustleT-=dt; if(_rustleT<=0){ playSound('rustle'); _rustleT = crouch?0.55:0.32; } }
 
   // Honest readouts: representative lioness sight at the current activity.
-  // Rain (weather.detMul) cuts everyone's range — reflected here too.
   const act = lionActivity();
   const nominalSight = 16 * (0.4 + act*0.9);
-  player._visR = (nominalSight*visMul + (torchState.on ? 8 : 0)) * weather.detMul;
-  player._audR = aud * weather.detMul;
+  player._visR = nominalSight*visMul + (torchState.on ? 8 : 0);
+  player._audR = aud;
   player._hidden = wellHidden;
   window.__stealth = { vis:player._visR, aud:player._audR, hidden:wellHidden, detected };
-}
-
-// Pick the best prey for a hungry lion (Phase 6). Groups go for the big payoff
-// (kudu/zebra/wildebeest); a solo lion picks easy prey (gazelle/impala/warthog).
-// Weakest/slowest/nearest scores highest either way.
-function pickPreyTarget(L){
-  const hunters = lionMeshes.filter(x=>x.state==='hunt_prey'||x.state==='chase').length;
-  let best=null, bestScore=-Infinity;
-  preyMeshes.forEach(P=>{
-    const d=L.pos.distanceTo(P.pos); if(d>34) return;
-    const s=SPECIES[P.species];
-    let score = -d*0.5 - s.speed*0.35 + (P.maxHealth-P.health)*0.25;
-    const big = (P.species==='kudu'||P.species==='zebra'||P.species==='wildebeest');
-    score += (hunters>=2) ? (big? 8 : -2) : (big? -5 : 4);
-    if(score>bestScore){ bestScore=score; best=P; }
-  });
-  return best;
-}
-function nearestCarcass(pos, maxD){
-  let best=null, bd=maxD;
-  carcasses.forEach(c=>{ if(c.food<=0) return; const d=pos.distanceTo(c.pos); if(d<bd){ bd=d; best=c; } });
-  return best;
 }
 
 function updateLions(dt){
@@ -1530,12 +1281,10 @@ function updateLions(dt){
 
     // Hunger rises over time → drives aggression & detection range.
     L.hunger = clamp(L.hunger + HUNGER_RISE*dt, 0, 100);
-    if(L.fedTimer > 0) L.fedTimer -= dt;          // recently fed → lazy/slow for a while
 
     const ppos = player.pos, lpos = L.pos;
     const dist = lpos.distanceTo(ppos);
     const hungerAggr = 0.7 + (L.hunger/100)*0.6;   // 0.7 (fed) .. 1.3 (starving)
-    const guardingKill = !!nearestCarcass(lpos, 6);   // defends a kill aggressively
 
     // ---- mutual stealth detection (Phase 3) ----
     // VISUAL: lion's sight (sex + activity + hunger) × the player's visibility
@@ -1548,10 +1297,7 @@ function updateLions(dt){
     const dx=lpos.x-ppos.x, dz=lpos.z-ppos.z, dl=Math.hypot(dx,dz)||1;
     const downwind = (wind.dirX*dx + wind.dirZ*dz)/dl;       // 1 = wind blows player→lion
     audio += clamp(downwind,0,1) * 7 * (0.6 + (L.hunger/100)*0.5);
-    visual *= weather.detMul; audio *= weather.detMul;       // rain masks sight & scent
-    let detR = Math.max(visual, audio);
-    if(L.fedTimer > 0) detR *= 0.55;             // a fed lion is far less interested in you
-    if(guardingKill) detR += 6;                  // …unless you're near its kill — it defends it
+    const detR = Math.max(visual, audio);
     L._detR = detR; L._visR = visual; L._audR = audio;
     // Symmetric concealment: a lion lying up in tall grass (not yet committed to
     // the open chase) is hidden from the player's radar until very close.
@@ -1568,10 +1314,6 @@ function updateLions(dt){
       if(dist < detR){
         L.state = 'chase';
         prideAlert.pos.copy(ppos); prideAlert.timer = 9;   // broadcast to the pride
-      } else if(gorillas.length && (L._gorTarget=nearestGorilla(lpos,18)) && L._gorTarget.health>0){
-        L.state = 'fight_gorilla';                          // mob a nearby gorilla
-      } else if(L.state==='fight_gorilla'){
-        L.state = 'wander';                                 // gorilla gone/out of reach
       } else if(L.state==='chase'){
         // fed lions give up sooner; hungry ones commit further
         const giveUp = dist > HALF || (L.hunger < 28 && dist > 26) || dist > 40;
@@ -1580,12 +1322,6 @@ function updateLions(dt){
         L.state = 'converge';
       } else if(L.state==='converge'){
         if(prideAlert.timer <= 0 || lpos.distanceTo(prideAlert.pos) < 3) L.state = 'wander';
-      } else if(L.fedTimer<=0 && L.hunger>40 && nearestCarcass(lpos,22)){
-        L.state = 'scavenge';                    // free meal nearby (incl. stealing a kill)
-      } else if(L.fedTimer<=0 && L.hunger>48 && preyMeshes.length){
-        L.state = 'hunt_prey';                   // hungry → go hunt the herds
-      } else if(L.state==='scavenge' || L.state==='hunt_prey'){
-        L.state = 'wander';                      // sated / nothing to chase
       } else if(activity < 0.3){
         L.state = 'rest';
       } else {
@@ -1608,48 +1344,16 @@ function updateLions(dt){
     } else if(L.state==='converge'){
       dir.copy(prideAlert.pos).sub(lpos); dir.y=0;
       if(dir.lengthSq()>0) dir.normalize();
-    } else if(L.state==='fight_gorilla'){
-      const G=L._gorTarget;
-      if(G && G.health>0 && G.state!=='inTree'){ dir.copy(G.pos).sub(lpos); dir.y=0;
-        if(dir.length()<=1.8) dir.set(0,0,0); else dir.normalize(); }   // close in, then hold & bite
-      else L.state='wander';
-    } else if(L.state==='hunt_prey'){
-      // chase a target prey; on catch, maul it; on kill, feed & become 'fed'
-      if(!L.preyTarget || L.preyTarget.health<=0 || preyMeshes.indexOf(L.preyTarget)<0 || lpos.distanceTo(L.preyTarget.pos)>38){
-        L.preyTarget = pickPreyTarget(L);
-      }
-      if(L.preyTarget){
-        dir.copy(L.preyTarget.pos).sub(lpos); dir.y=0; if(dir.lengthSq()>0) dir.normalize();
-        if(lpos.distanceTo(L.preyTarget.pos) < 1.7){
-          const T=L.preyTarget; T.health -= 45*dt; T.flashTimer=0.2; T.state='flee'; T.alertTimer=2.5;
-          if(T.health<=0){ L.hunger=clamp(L.hunger-62,0,100); L.fedTimer=24; L.preyTarget=null;
-            showKillfeed('🦁 The pride brought down a '+T.label); }
-        }
-      } else { L.state='wander'; }
-    } else if(L.state==='scavenge'){
-      // move to the nearest kill and feed (this is how a male steals a lioness's kill)
-      const c=nearestCarcass(lpos, 24);
-      if(c){
-        const d=lpos.distanceTo(c.pos);
-        if(d>1.4){ dir.copy(c.pos).sub(lpos); dir.y=0; dir.normalize(); }
-        else { c.food=Math.max(0,c.food-28*dt); L.hunger=clamp(L.hunger-28*dt,0,100);
-               if(L.hunger<25 || c.food<=0) L.fedTimer=20; }
-      } else { L.state='wander'; }
     } else if(L.state==='rest'){
-      // Settle for the midday lull — either nearest shade or the watering hole
-      // (lions gather to drink/ambush there). Re-pick occasionally.
+      // drift to nearest shade (tree/rock) and settle there for the midday lull
       if(!L.restTarget || Math.random()<0.002){
         let best=null,bd=Infinity;
         treeObjects.forEach(t=>{ if(!t.big) return; const d=t.pos.distanceTo(lpos); if(d<bd){bd=d;best=t;} });
-        // ~40% head for water instead of shade
-        L.restTarget = (wateringHole && Math.random()<0.4)
-          ? new THREE.Vector3(wateringHole.x, terrainY(wateringHole.x,wateringHole.z), wateringHole.z)
-          : (best ? best.pos : null);
+        L.restTarget = best ? best.pos : null;
       }
       if(L.restTarget){
         const d = L.restTarget.distanceTo(lpos);
-        const stop = (wateringHole && Math.abs(L.restTarget.x-wateringHole.x)<0.1) ? wateringHole.r+1 : 2.5;
-        if(d > stop){ dir.copy(L.restTarget).sub(lpos); dir.y=0; dir.normalize(); }
+        if(d > 2.5){ dir.copy(L.restTarget).sub(lpos); dir.y=0; dir.normalize(); }
       }
     } else { // wander
       L.wanderTimer -= dt;
@@ -1671,16 +1375,9 @@ function updateLions(dt){
     if(L.state==='chase'){
       L.burst = clamp(L.burst - dt*0.26, 0, 1);          // tire during the rush
       speed = lerp(10.5, sprintMax, L.burst);
-    } else if(L.state==='hunt_prey'){
-      L.burst = clamp(L.burst - dt*0.2, 0, 1);           // committed sprint after prey
-      speed = lerp(9.5, sprintMax, L.burst);
     } else if(L.state==='converge'){
       L.burst = clamp(L.burst + dt*0.12, 0, 1);
       speed = L.isMale ? 9 : 11;
-    } else if(L.state==='fight_gorilla'){
-      speed = L.isMale ? 9 : 11;
-    } else if(L.state==='scavenge'){
-      speed = L.isMale ? 7 : 8;
     } else if(L.state==='fleeing_fire'){
       speed = L.isMale ? 11 : 13;
     } else { // wander/rest — slow, slower still at the midday trough
@@ -1688,7 +1385,6 @@ function updateLions(dt){
       const restF = (L.state==='rest') ? 0.35 : 1;
       speed = (L.isMale?3.0:3.6) * (0.5 + activity*0.8) * restF;
     }
-    if(L.fedTimer > 0) speed *= 0.6;          // a full lion moves lazily
     L._lastSpeed = speed;
 
     // Feeding: pressed against the player, the lion is eating → hunger drops.
@@ -1697,7 +1393,6 @@ function updateLions(dt){
     L.pos.addScaledVector(dir, speed*dt);
     L.pos.x = clamp(L.pos.x, -HALF+0.3, HALF-0.3);
     L.pos.z = clamp(L.pos.z, -HALF+0.3, HALF-0.3);
-    collideWalls(L.pos, 0.7);                       // hard stop at walls (avoidance alone leaked through)
     L.pos.y = terrainY(L.pos.x, L.pos.z);
     L.mesh.position.copy(L.pos);
     // Stalkers lying up in grass crouch lower so the blades cover them.
@@ -1754,526 +1449,38 @@ function updateCorpses(dt){
 }
 
 // =====================================================================
-//  PREY ANIMALS & FOOD CHAIN  (Phase 6)
-// =====================================================================
-// Six procedural savanna species — distinct silhouettes, palettes, horns,
-// speeds, herd sizes and flee behaviour. food = hunger restored when eaten.
-const SPECIES = {
-  zebra:     { label:'zebra',      size:1.0,  color:0xe8e2d2, herd:[4,6], speed:13.5, flee:16, hp:42, juke:0,   hop:0, neck:0.55, horns:null,      stripe:true,  mane:0x2a2a2a, food:55, dust:0 },
-  wildebeest:{ label:'wildebeest', size:1.05, color:0x4d473f, herd:[5,8], speed:13,   flee:15, hp:48, juke:0,   hop:0, neck:0.6,  horns:'cow',     beard:true,                   food:60, dust:1 },
-  gazelle:   { label:"Thomson's gazelle", size:0.6, color:0xcf9e5c, color2:0x241b13, herd:[3,5], speed:18.5, flee:21, hp:16, juke:0.7, hop:0, neck:0.42, horns:'straight', side:true, food:30, dust:0 },
-  impala:    { label:'impala',     size:0.82, color:0xb87b40, herd:[4,6], speed:17,   flee:19, hp:24, juke:0,   hop:1, neck:0.5,  horns:'lyre',                    food:38, dust:0 },
-  warthog:   { label:'warthog',    size:0.58, color:0x53493f, herd:[1,3], speed:15,   flee:11, hp:30, juke:0,   hop:0, neck:0.22, horns:null,      tusks:true, low:true, counter:14, food:34, dust:0 },
-  kudu:      { label:'kudu',       size:1.18, color:0x8c7c66, herd:[1,2], speed:11,   flee:14, hp:72, juke:0,   hop:0, neck:0.9,  horns:'spiral',  stripeThin:true, food:70, dust:0 },
-};
-const SPECIES_KEYS = Object.keys(SPECIES);
-
-// Procedural zebra stripes (no asset files).
-let _zebraTex=null;
-function zebraTex(){
-  if(_zebraTex) return _zebraTex;
-  const S=128, cv=document.createElement('canvas'); cv.width=cv.height=S;
-  const g=cv.getContext('2d');
-  g.fillStyle='#e8e2d2'; g.fillRect(0,0,S,S);
-  g.fillStyle='#23211e';
-  for(let i=-8;i<S;i+=13){ const w=4+Math.random()*4; g.save(); g.translate(i,0); g.rotate(0.14); g.fillRect(0,-10,w,S+20); g.restore(); }
-  const t=new THREE.CanvasTexture(cv); t.wrapS=t.wrapT=THREE.RepeatWrapping; return _zebraTex=t;
-}
-
-function addHorns(g, type, sc, hy, hz, col){
-  const m=lmat(col);
-  [-1,1].forEach(side=>{
-    if(type==='straight'){ const h=new THREE.Mesh(new THREE.ConeGeometry(0.03*sc,0.42*sc,4),m); h.position.set(side*0.07*sc,hy+0.22*sc,hz-0.02*sc); h.rotation.x=0.45; g.add(h); }
-    else if(type==='lyre'){ const h=new THREE.Mesh(new THREE.ConeGeometry(0.035*sc,0.62*sc,4),m); h.position.set(side*0.1*sc,hy+0.3*sc,hz-0.04*sc); h.rotation.z=-side*0.45; h.rotation.x=0.25; g.add(h); }
-    else if(type==='cow'){ const h=new THREE.Mesh(new THREE.ConeGeometry(0.05*sc,0.3*sc,4),m); h.position.set(side*0.15*sc,hy+0.12*sc,hz); h.rotation.z=side*1.15; g.add(h);
-      const h2=new THREE.Mesh(new THREE.ConeGeometry(0.03*sc,0.2*sc,4),m); h2.position.set(side*0.26*sc,hy+0.22*sc,hz); h2.rotation.z=side*0.25; g.add(h2); }
-    else if(type==='spiral'){ for(let k=0;k<4;k++){ const seg=new THREE.Mesh(new THREE.ConeGeometry((0.06-k*0.011)*sc,0.3*sc,4),m); seg.position.set(side*(0.07+k*0.028)*sc, hy+0.2*sc+k*0.25*sc, hz-0.03*sc); seg.rotation.z=side*0.22; seg.rotation.y=k*0.6*side; g.add(seg); } }
-  });
-}
-
-function makeHerbivore(key){
-  const s=SPECIES[key], sc=s.size;
-  const g=new THREE.Group();
-  const baseCol=jcol(s.color,0.05);
-  const skinMat = s.stripe ? new THREE.MeshLambertMaterial({map:zebraTex()}) : lmat(baseCol);
-  const limbMat = lmat(s.stripe ? jcol(0xd9d2c2,0.04) : baseCol);
-  const legLen=0.52*sc, bh=0.46*sc, bw=0.4*sc, bl=1.05*sc, bodyY=legLen+bh/2;
-  const body=new THREE.Mesh(new THREE.BoxGeometry(bw,bh,bl), skinMat); body.position.y=bodyY; body.castShadow=true; g.add(body);
-  const neckLen=s.neck*sc, neckBaseZ=bl/2-0.05*sc;
-  const neck=new THREE.Mesh(new THREE.BoxGeometry(bw*0.55,neckLen,bw*0.55), limbMat);
-  neck.position.set(0, bodyY+(s.low?0.0:neckLen*0.35), neckBaseZ+neckLen*0.18);
-  neck.rotation.x = s.low? -1.0 : -0.55; g.add(neck);
-  const hy = bodyY + (s.low? -0.05*sc : neckLen*0.72);
-  const hz = neckBaseZ + (s.low? 0.4*sc : neckLen*0.5);
-  const head=new THREE.Mesh(new THREE.BoxGeometry(bw*0.6, bh*0.55, bl*0.5), s.stripe?limbMat:skinMat);
-  head.position.set(0, hy, hz); head.castShadow=true; g.add(head);
-  const snout=new THREE.Mesh(new THREE.BoxGeometry(bw*0.4,bh*0.3,bl*0.28), limbMat);
-  snout.position.set(0, hy-0.05*sc, hz+bl*0.32); g.add(snout);
-  [-1,1].forEach(d=>{ const e=new THREE.Mesh(new THREE.ConeGeometry(0.05*sc,0.14*sc,4),limbMat); e.position.set(d*0.11*sc, hy+0.15*sc, hz-0.04*sc); e.rotation.z=d*0.3; g.add(e); });
-  const legs=[]; const lg=new THREE.CylinderGeometry(0.06*sc,0.05*sc,legLen,5);
-  [[-bw*0.42,0.62],[bw*0.42,0.62],[-bw*0.42,-0.62],[bw*0.42,-0.62]].forEach(([lx,lzf])=>{
-    const leg=new THREE.Mesh(lg, limbMat); leg.position.set(lx, legLen/2, lzf*bl*0.5); leg.castShadow=true; g.add(leg); legs.push(leg);
-  });
-  const tail=new THREE.Mesh(new THREE.CylinderGeometry(0.02*sc,0.03*sc,0.5*sc,4), limbMat);
-  tail.position.set(0, bodyY-0.02*sc, -bl/2-0.04*sc); tail.rotation.x = s.tusks? -1.3 : 0.5; g.add(tail);  // warthog tail up
-  if(s.mane){ const mane=new THREE.Mesh(new THREE.BoxGeometry(0.04*sc, neckLen*0.9, bw*0.5), lmat(s.mane)); mane.position.copy(neck.position); mane.position.y+=0.03*sc; mane.rotation.x=neck.rotation.x; g.add(mane); }
-  if(s.beard){ const b=new THREE.Mesh(new THREE.ConeGeometry(0.05*sc,0.24*sc,4), lmat(0x2a2620)); b.position.set(0, hy-0.13*sc, hz+0.08*sc); b.rotation.x=Math.PI; g.add(b); }
-  if(s.stripeThin){ for(let k=0;k<4;k++){ const st=new THREE.Mesh(new THREE.BoxGeometry(bw*1.02,0.02*sc,0.04*sc), lmat(0xece5d6)); st.position.set(0,bodyY+0.06*sc,-bl*0.3+k*bl*0.2); g.add(st); } }
-  if(s.side){ const st=new THREE.Mesh(new THREE.BoxGeometry(bw*1.04,0.08*sc,bl*0.75), lmat(s.color2)); st.position.set(0,bodyY-0.12*sc,0); g.add(st); }
-  if(s.tusks){ [-1,1].forEach(d=>{ const tu=new THREE.Mesh(new THREE.ConeGeometry(0.025*sc,0.16*sc,4), lmat(0xe8e0cf)); tu.position.set(d*0.09*sc, hy-0.04*sc, hz+bl*0.26); tu.rotation.z=d*0.5; tu.rotation.x=-0.6; g.add(tu); }); }
-  if(s.horns) addHorns(g, s.horns, sc, hy, hz, jcol(0x3a3128,0.1));
-  g.children.forEach(c=>{ if(c.isMesh) c.userData.origMat=c.material; });
-  return { group:g, legs, bodyY, legLen };
-}
-
-function makePrey(key,x,z,herdId){
-  const s=SPECIES[key], built=makeHerbivore(key), ty=terrainY(x,z);
-  built.group.position.set(x,ty,z); built.group.rotation.y=rand(0,6.28); built.group.name='prey';
-  scene.add(built.group);
-  const P={ mesh:built.group, legs:built.legs, legLen:built.legLen, species:key, label:s.label,
-    pos:new THREE.Vector3(x,ty,z), vel:new THREE.Vector3(),
-    health:s.hp, maxHealth:s.hp, speed:s.speed, fleeDist:s.flee, food:s.food, counter:s.counter||0,
-    herdId, state:'graze', alertTimer:0, grazeTimer:rand(1,4), stunTimer:0,
-    wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
-    legPhase:Math.random()*6.28, jukeTimer:0, jukeDir:0, hopPhase:0, flashTimer:0, _lastSpeed:0 };
-  preyMeshes.push(P);
-  return P;
-}
-
-function spawnHerds(){
-  const plan = ['zebra','wildebeest','gazelle','impala','warthog','kudu','impala','gazelle'];
-  plan.forEach((key,hi)=>{
-    const s=SPECIES[key];
-    let cx,cz;
-    if(hi%3===0 && wateringHole){ const a=rand(0,6.28), r=rand(11,22); cx=clamp(wateringHole.x+Math.cos(a)*r,-44,44); cz=clamp(wateringHole.z+Math.sin(a)*r,-44,44); }
-    else { cx=rand(-42,42); cz=rand(-42,42); }
-    const n=s.herd[0] + (Math.random()*(s.herd[1]-s.herd[0]+1)|0);
-    for(let i=0;i<n;i++) makePrey(key, clamp(cx+rand(-5,5),-46,46), clamp(cz+rand(-5,5),-46,46), 'h'+hi);
-  });
-}
-
-let _dustPuffs=[];
-function spawnDustPuff(pos){
-  if(_dustPuffs.length>40) return;
-  const m=new THREE.Mesh(new THREE.IcosahedronGeometry(0.4,0),
-    new THREE.MeshBasicMaterial({color:0xcaba92, transparent:true, opacity:0.5, depthWrite:false}));
-  m.position.set(pos.x, terrainY(pos.x,pos.z)+0.2, pos.z); m.name='puff'; scene.add(m);
-  _dustPuffs.push({mesh:m, mat:m.material, life:0.7});
-}
-function updateDustPuffs(dt){
-  for(let i=_dustPuffs.length-1;i>=0;i--){ const d=_dustPuffs[i]; d.life-=dt;
-    d.mesh.scale.multiplyScalar(1+dt*2.5); d.mat.opacity=Math.max(0,d.life*0.6); d.mesh.position.y+=dt*0.4;
-    if(d.life<=0){ killObj(d.mesh); _dustPuffs.splice(i,1); }
-  }
-}
-
-function updatePrey(dt){
-  if(gameState!=='playing') return;
-  // herd centroids for cohesion
-  const cen={};
-  preyMeshes.forEach(P=>{ const c=cen[P.herdId]||(cen[P.herdId]={x:0,z:0,n:0}); c.x+=P.pos.x; c.z+=P.pos.z; c.n++; });
-  for(const k in cen){ cen[k].x/=cen[k].n; cen[k].z/=cen[k].n; }
-
-  preyMeshes.forEach(P=>{
-    const s=SPECIES[P.species];
-    P.legPhase += dt*(3+(P._lastSpeed||0)*0.9);
-    const legBase=P.legLen/2;
-    P.legs.forEach((leg,i)=>{ leg.position.y = legBase + Math.sin(P.legPhase+i*Math.PI/2)*0.09*s.size*(P.state==='flee'?1.5:0.5); });
-    if(P.flashTimer>0){ P.flashTimer-=dt; const fl=P.flashTimer>0; P.mesh.children.forEach(c=>{ if(c.isMesh) c.material=fl?FLASH_MAT:c.userData.origMat; }); }
-
-    // Stunned by a thrown rock — frozen in place for a moment.
-    if(P.stunTimer>0){
-      P.stunTimer-=dt; P.state='stunned'; P._lastSpeed=0;
-      P.pos.y=terrainY(P.pos.x,P.pos.z); P.mesh.position.set(P.pos.x,P.pos.y,P.pos.z);
-      return;
-    }
-
-    // nearest predator (lion, gorilla, or player) — prey flee all of them
-    let threat=null, td=Infinity;
-    lionMeshes.forEach(L=>{ const d=L.pos.distanceTo(P.pos); if(d<td){td=d;threat=L.pos;} });
-    gorillas.forEach(G=>{ if(G.state==='inTree') return; const d=G.pos.distanceTo(P.pos); if(d<td){td=d;threat=G.pos;} });
-    const pd=player.pos.distanceTo(P.pos);
-    if(pd<td && !player.inTree){ td=pd; threat=player.pos; }   // treed player isn't a ground threat
-
-    let dir=new THREE.Vector3();
-    if(threat && td < P.fleeDist){ P.state='flee'; P.alertTimer=2.5; }
-    else if(P.alertTimer>0){ P.alertTimer-=dt; P.state='alert'; }
-    else P.state='graze';
-
-    if(P.state==='flee'){
-      dir.set(P.pos.x-threat.x,0,P.pos.z-threat.z);
-      if(dir.lengthSq()<0.01) dir.set(rand(-1,1),0,rand(-1,1));
-      dir.normalize();
-      if(s.juke){ P.jukeTimer-=dt; if(P.jukeTimer<=0){ P.jukeDir=rand(-1,1)*s.juke; P.jukeTimer=rand(0.3,0.7); } dir.applyAxisAngle(UP,P.jukeDir); }
-    } else if(P.state==='alert'){
-      dir.set(0,0,0);
-    } else { // graze: gentle wander + herd cohesion
-      P.grazeTimer-=dt; if(P.grazeTimer<0){ P.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); P.grazeTimer=rand(2,5); }
-      dir.copy(P.wanderDir).multiplyScalar(0.4);
-      const c=cen[P.herdId];
-      if(c){ const tx=c.x-P.pos.x, tz=c.z-P.pos.z, cd=Math.hypot(tx,tz); if(cd>6){ dir.x+=tx/cd*0.6; dir.z+=tz/cd*0.6; } }
-      if(dir.lengthSq()>0) dir.normalize();
-    }
-
-    let speed = P.state==='flee' ? s.speed : P.state==='alert' ? 0 : s.speed*0.16;
-    P._lastSpeed=speed;
-    let hopY=0;
-    if(s.hop && P.state==='flee'){ P.hopPhase+=dt*6.5; hopY=Math.max(0,Math.sin(P.hopPhase))*0.55*s.size; }
-    if(s.dust && P.state==='flee' && Math.random()<dt*3.5) spawnDustPuff(P.pos);
-
-    P.pos.addScaledVector(dir, speed*dt);
-    P.pos.x=clamp(P.pos.x,-47,47); P.pos.z=clamp(P.pos.z,-47,47);
-    collideWalls(P.pos, 0.7);                       // don't run through walls
-    P.pos.y=terrainY(P.pos.x,P.pos.z);
-    P.mesh.position.set(P.pos.x, P.pos.y+hopY, P.pos.z);
-    if(dir.lengthSq()>0.001) P.mesh.rotation.y = Math.atan2(dir.x, dir.z);
-  });
-
-  // dead prey → edible carcass
-  for(let i=preyMeshes.length-1;i>=0;i--){ if(preyMeshes[i].health<=0){
-    const P=preyMeshes[i]; spawnCarcass(P.pos.clone(), P.food, P.species); killObj(P.mesh); preyMeshes.splice(i,1);
-  }}
-
-  // keep the ecosystem stocked
-  if(preyMeshes.length < 9){
-    const key=SPECIES_KEYS[(Math.random()*SPECIES_KEYS.length)|0];
-    const a=rand(0,6.28), x=clamp(player.pos.x+Math.cos(a)*46,-46,46), z=clamp(player.pos.z+Math.sin(a)*46,-46,46);
-    const n=SPECIES[key].herd[0];
-    for(let i=0;i<n;i++) makePrey(key, clamp(x+rand(-4,4),-46,46), clamp(z+rand(-4,4),-46,46), 'r'+(elapsed|0));
-  }
-}
-
-// ---- carcasses + circling vultures ----
-function spawnCarcass(pos, food, species){
-  const grp=new THREE.Group(); const y=terrainY(pos.x,pos.z); grp.position.set(pos.x,y,pos.z);
-  const lump=new THREE.Mesh(new THREE.IcosahedronGeometry(0.55,0), lmat(0x6e3b2a)); lump.position.y=0.18; lump.scale.set(1.2,0.45,0.9); lump.castShadow=true; grp.add(lump);
-  for(let k=0;k<4;k++){ const rib=new THREE.Mesh(new THREE.TorusGeometry(0.16,0.02,4,6,Math.PI), lmat(0xc9b89a)); rib.position.set(-0.2+k*0.13,0.22,0); rib.rotation.x=Math.PI/2; grp.add(rib); }
-  grp.name='carcass'; scene.add(grp);
-  const c={ mesh:grp, pos:grp.position.clone(), food:food||40, timer:90, species, vultures:null };
-  carcasses.push(c); spawnVultures(c);
-  return c;
-}
-function updateCarcasses(dt){
-  for(let i=carcasses.length-1;i>=0;i--){ const c=carcasses[i]; c.timer-=dt;
-    if(c.food<=0 || c.timer<=0){ removeVultures(c); killObj(c.mesh); carcasses.splice(i,1); }
-  }
-}
-function makeVulture(){
-  const g=new THREE.Group(); const m=lmat(0x2b2622);
-  const wing=new THREE.Mesh(new THREE.BoxGeometry(1.3,0.04,0.34), m); g.add(wing);
-  const bodyB=new THREE.Mesh(new THREE.BoxGeometry(0.14,0.12,0.5), m); g.add(bodyB);
-  g.userData.wing=wing; return g;
-}
-function spawnVultures(c){
-  c.vultures=[];
-  for(let k=0;k<3;k++){ const v=makeVulture(); v.userData.ang=k*2.1; v.userData.r=2.6+k*0.9; v.userData.h=6.5+k*0.7; scene.add(v);
-    vultures.push({mesh:v, carcass:c}); c.vultures.push(v); }
-}
-function removeVultures(c){ if(!c.vultures) return; c.vultures.forEach(v=>{ const idx=vultures.findIndex(x=>x.mesh===v); if(idx>=0) vultures.splice(idx,1); killObj(v); }); c.vultures=null; }
-function updateVultures(dt){
-  for(let i=vultures.length-1;i>=0;i--){ const V=vultures[i], c=V.carcass;
-    if(!c || c.timer<=0){ vultures.splice(i,1); continue; }
-    const u=V.mesh.userData; u.ang += dt*0.55;
-    V.mesh.position.set(c.pos.x+Math.cos(u.ang)*u.r, c.pos.y+u.h+Math.sin(u.ang*2)*0.4, c.pos.z+Math.sin(u.ang)*u.r);
-    V.mesh.rotation.y = -u.ang + Math.PI/2;
-    if(u.wing) u.wing.rotation.x = Math.sin(u.ang*8)*0.35;   // flap
-  }
-}
-
-// ---- player hunting (Phase 6) ----
-// Pounce: a melee lunge at the prey you're facing. A hidden grass ambush hits
-// 3× (stealth kill on small prey); a standing pounce is weak. Warthogs gore back.
-function pouncePrey(){
-  if(player.inTree || player._pounceCd>0) return;
-  player._pounceCd = 0.8;
-  const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
-  fwd.y=0; if(fwd.lengthSq()<0.001){ fwd.set(0,0,-1); } fwd.normalize();
-  let best=null, bd=Infinity;
-  preyMeshes.forEach(P=>{
-    const to=new THREE.Vector3(P.pos.x-player.pos.x,0,P.pos.z-player.pos.z);
-    const d=to.length(); if(d>PLAYER.pounceRange) return;
-    if(to.normalize().dot(fwd) > 0.25 && d<bd){ bd=d; best=P; }
-  });
-  // lunge impulse for feel (knockback isn't clobbered by movement input)
-  player.knockback.x += fwd.x*7; player.knockback.z += fwd.z*7;
-  playSound('throw');
-  if(!best){ return; }
-  const mult = player._hidden ? 3.0 : player.crouching ? 1.8 : 1.0;
-  best.health -= PLAYER.pounceDamage * mult;
-  best.flashTimer = 0.25; best.state='flee'; best.alertTimer = 3;
-  if(best.health > 0 && best.counter > 0){    // cornered warthog gores back
-    player.health -= best.counter;
-    showKillfeed('🐗 The warthog gored you! (-'+best.counter+')');
-    shakeTime=0.22; shakeAmt=0.005;
-  } else {
-    showKillfeed(best.health<=0 ? '🩸 Pounce kill — '+best.label+'!' : '🐾 Pounced the '+best.label+' (flee!)');
-  }
-}
-
-// Eat from the nearest carcass (E). Cannot eat lions. Refills hunger in chunks.
-function eatNearbyCarcass(){
-  let c=null, cd=Infinity;
-  carcasses.forEach(k=>{ const d=k.pos.distanceTo(player.pos); if(d<2.6 && d<cd){ cd=d; c=k; } });
-  if(!c) return false;
-  if(player.hunger >= PLAYER.maxHunger-1){ showKillfeed('🍖 Already full'); return true; }
-  const bite = Math.min(35, c.food, PLAYER.maxHunger - player.hunger);
-  player.hunger = Math.min(PLAYER.maxHunger, player.hunger + bite);
-  c.food -= bite; c.timer = Math.min(c.timer, 60);   // an eaten carcass rots faster
-  playSound('collect');
-  showKillfeed('🍖 Ate '+(c.species)+' (+'+Math.round(bite)+' hunger)'+(c.food<=0?' — picked clean':''));
-  return true;
-}
-
-// =====================================================================
-//  GORILLA  (Phase 7) — territorial; attacks every moving thing nearby.
-//  Beats a lone lion; a whole pride ganging up can bring it down.
-// =====================================================================
-const GORILLA = {
-  hp:100, attack:20, attackCd:1.1, attackRange:2.4, senseR:14,
-  speed:3.0, chargeSpeed:7.5, lionBiteDps:14, playerDmg:24
-};
-
-function makeGorilla(x,z){
-  const g=new THREE.Group();
-  const dark=lmat(0x2c2b30), darker=lmat(0x1c1b20), silver=lmat(0x6a6a72), faceM=lmat(0x3c3338);
-  // torso (broad, hunched) + belly
-  const torso=new THREE.Mesh(new THREE.BoxGeometry(1.3,1.2,1.0), dark); torso.position.y=1.35; torso.castShadow=true; g.add(torso);
-  const belly=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.8,0.95), dark); belly.position.set(0,0.75,0.05); belly.castShadow=true; g.add(belly);
-  const shoulders=new THREE.Mesh(new THREE.BoxGeometry(1.55,0.55,0.95), dark); shoulders.position.y=1.85; shoulders.castShadow=true; g.add(shoulders);
-  const saddle=new THREE.Mesh(new THREE.BoxGeometry(1.05,0.55,0.9), silver); saddle.position.set(0,1.6,-0.06); g.add(saddle); // silverback
-  // head
-  const head=new THREE.Mesh(new THREE.BoxGeometry(0.62,0.56,0.6), darker); head.position.set(0,2.2,0.22); head.castShadow=true; g.add(head);
-  const brow=new THREE.Mesh(new THREE.BoxGeometry(0.66,0.16,0.14), darker); brow.position.set(0,2.34,0.5); g.add(brow);
-  const face=new THREE.Mesh(new THREE.BoxGeometry(0.42,0.36,0.16), faceM); face.position.set(0,2.12,0.52); g.add(face);
-  // arms — shoulder-pivot groups so they swing/pound
-  const arms=[];
-  [-1,1].forEach(side=>{
-    const pivot=new THREE.Group(); pivot.position.set(side*0.82,1.9,0.05); g.add(pivot);
-    const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.21,0.16,1.45,6), dark); arm.position.y=-0.72; arm.castShadow=true; pivot.add(arm);
-    const hand=new THREE.Mesh(new THREE.SphereGeometry(0.21,6,5), darker); hand.position.y=-1.45; pivot.add(hand);
-    arms.push(pivot);
-  });
-  // legs — hip-pivot groups
-  const legs=[];
-  [-1,1].forEach(side=>{
-    const pivot=new THREE.Group(); pivot.position.set(side*0.4,0.78,0); g.add(pivot);
-    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.27,0.22,0.8,6), dark); leg.position.y=-0.4; leg.castShadow=true; pivot.add(leg);
-    legs.push(pivot);
-  });
-  g.traverse(c=>{ if(c.isMesh) c.userData.origMat=c.material; });
-  const ty=terrainY(x,z); g.position.set(x,ty,z); g.name='gorilla'; scene.add(g);
-
-  const G={ mesh:g, arms, legs, pos:new THREE.Vector3(x,ty,z),
-    health:GORILLA.hp, maxHealth:GORILLA.hp,
-    state:'wander', homeTree:null, perch:null,
-    attackCd:0, stunTimer:0, flashTimer:0, pound:0,
-    walkPhase:Math.random()*6.28, wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
-    wanderTimer:rand(2,4), climbCd:rand(15,30), climbTimer:0 };
-  gorillas.push(G);
-  return G;
-}
-
-function spawnGorilla(){
-  // Home near a (preferably climbable) tree, but well away from the player so it
-  // doesn't pounce the instant the game starts / it respawns.
-  const px = player.pos ? player.pos.x : 0, pz = player.pos ? player.pos.z : 0;
-  const far = treeObjects.filter(t=>Math.hypot(t.pos.x-px, t.pos.z-pz) > 24);
-  const pool = far.length ? far : treeObjects;
-  const climbers = pool.filter(t=>t.climbable);
-  const cand = climbers.length ? climbers : pool;
-  const home = cand.length ? cand[(Math.random()*cand.length)|0] : null;
-  let x,z;
-  if(home){ const a=rand(0,6.28); x=clamp(home.pos.x+Math.cos(a)*4,-44,44); z=clamp(home.pos.z+Math.sin(a)*4,-44,44); }
-  else { const a=rand(0,6.28); x=clamp(px+Math.cos(a)*30,-44,44); z=clamp(pz+Math.sin(a)*30,-44,44); }
-  const G=makeGorilla(x,z); G.homeTree=home||null;
-  showKillfeed('🦍 A gorilla moves into the area');
-  return G;
-}
-
-function nearestGorilla(pos, maxD){
-  let best=null, bd=maxD;
-  for(const G of gorillas){ if(G.state==='inTree') continue; const d=pos.distanceTo(G.pos); if(d<bd){ bd=d; best=G; } }
-  return best;
-}
-
-function animateGorilla(G, dt, moving){
-  G.walkPhase += dt*(moving?6:1.6);
-  const sw = (moving?0.5:0.06)*Math.sin(G.walkPhase);
-  G.arms[0].rotation.x =  sw; G.arms[1].rotation.x = -sw;
-  G.legs[0].rotation.x = -sw*0.7; G.legs[1].rotation.x = sw*0.7;
-  if(G.pound>0){ G.pound-=dt; const p=Math.sin((1-Math.max(0,G.pound)/0.3)*Math.PI);
-    G.arms[0].rotation.x = -1.3*p; G.arms[1].rotation.x = -1.3*p; }
-}
-
-// Lions biting the gorilla — combined DPS from every lion pressed against it.
-function gorillaTakesBites(G, dt){
-  let biters=0;
-  lionMeshes.forEach(L=>{ if(L.stunTimer<=0 && L.pos.distanceTo(G.pos) < GORILLA.attackRange+0.4) biters++; });
-  if(biters) G.health -= GORILLA.lionBiteDps*biters*dt;
-}
-
-function updateGorillas(dt){
-  if(gameState!=='playing') return;
-
-  for(const G of gorillas){
-    if(G.flashTimer>0){ G.flashTimer-=dt; const fl=G.flashTimer>0; G.mesh.traverse(c=>{ if(c.isMesh) c.material = fl?FLASH_MAT:c.userData.origMat; }); }
-    if(G.attackCd>0) G.attackCd-=dt;
-
-    if(G.stunTimer>0){ G.stunTimer-=dt; gorillaTakesBites(G,dt); animateGorilla(G,dt,false); continue; }
-
-    // nearest moving thing (lion / prey / player) within senses
-    let target=null, td=Infinity, ttype=null;
-    lionMeshes.forEach(L=>{ const d=L.pos.distanceTo(G.pos); if(d<td){ td=d; target=L; ttype='lion'; } });
-    preyMeshes.forEach(P=>{ if(P.state==='stunned')return; const d=P.pos.distanceTo(G.pos); if(d<td){ td=d; target=P; ttype='prey'; } });
-    const pdist = player.inTree ? Infinity : player.pos.distanceTo(G.pos);
-    if(pdist<td){ td=pdist; target={pos:player.pos}; ttype='player'; }
-
-    // ---- tree behaviour (optional) ----
-    if(G.state==='inTree'){
-      G.mesh.position.copy(G.perch); G.climbTimer-=dt;
-      if((target && td<GORILLA.senseR) || G.climbTimer<=0) G.state='descend';   // come down to fight / done resting
-      continue;   // safe up here; lions can't reach
-    }
-    if(G.state==='descend'){ G.pos.y=terrainY(G.pos.x,G.pos.z); G.mesh.position.copy(G.pos); G.state='wander'; G.climbCd=rand(20,40); continue; }
-    if(G.state==='climb'){
-      if(target && td<GORILLA.senseR){ G.state='aggro'; }            // interrupted — defend
-      else if(!G.homeTree){ G.state='wander'; }
-      else {
-        const tx=G.homeTree.pos.x-G.pos.x, tz=G.homeTree.pos.z-G.pos.z, d=Math.hypot(tx,tz);
-        if(d>1.4){ G.pos.x+=tx/d*GORILLA.speed*1.3*dt; G.pos.z+=tz/d*GORILLA.speed*1.3*dt; G.pos.y=terrainY(G.pos.x,G.pos.z); G.mesh.position.copy(G.pos); G.mesh.rotation.y=Math.atan2(tx,tz); animateGorilla(G,dt,true); }
-        else { G.perch=new THREE.Vector3(G.homeTree.pos.x, terrainY(G.homeTree.pos.x,G.homeTree.pos.z)+G.homeTree.perchY, G.homeTree.pos.z); G.state='inTree'; G.climbTimer=rand(7,13); }
-        continue;
-      }
-    }
-
-    // ---- decide state ----
-    if(target && td<GORILLA.senseR) G.state = (td<GORILLA.attackRange) ? 'attack' : 'aggro';
-    else if(G.state==='attack'||G.state==='aggro') G.state='wander';
-
-    let dir=new THREE.Vector3(), speed=0;
-    if(G.state==='attack'){
-      dir.set(target.pos.x-G.pos.x,0,target.pos.z-G.pos.z);   // face it, don't advance
-      if(G.attackCd<=0){
-        G.attackCd=GORILLA.attackCd; G.pound=0.3; playSound('place');
-        if(ttype==='lion'){ target.health-=GORILLA.attack; target.flashTimer=0.25; target.stunTimer=Math.max(target.stunTimer,0.5);
-          if(target.health<=0) showKillfeed('🦍 The gorilla killed a lion!'); else showKillfeed('🦍 Gorilla pummels a lion'); }
-        else if(ttype==='prey'){ target.health-=GORILLA.attack; target.flashTimer=0.25; target.state='flee'; target.alertTimer=3; }
-        else { player.health-=GORILLA.playerDmg; shakeTime=0.3; shakeAmt=0.006; showKillfeed('🦍 The gorilla hit you!');
-          if(player.health<=0){ player.health=0; triggerGameOver(); } }
-      }
-    } else if(G.state==='aggro'){
-      dir.set(target.pos.x-G.pos.x,0,target.pos.z-G.pos.z); speed=GORILLA.chargeSpeed;
-    } else { // wander, loitering near the home tree
-      G.climbCd-=dt;
-      G.wanderTimer-=dt;
-      if(G.wanderTimer<=0){
-        if(G.homeTree && G.homeTree.pos.distanceTo(G.pos)>11){ const t=G.homeTree.pos; G.wanderDir.set(t.x-G.pos.x,0,t.z-G.pos.z).normalize(); }
-        else G.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize();
-        G.wanderTimer=rand(2.5,5);
-      }
-      dir.copy(G.wanderDir); speed=GORILLA.speed;
-      if(G.homeTree && G.homeTree.climbable && G.climbCd<=0){ G.state='climb'; }   // occasional climb when calm
-    }
-
-    if(dir.lengthSq()>0){ if(speed>0){ const dn=dir.clone().normalize(); G.pos.addScaledVector(dn, speed*dt); }
-      G.mesh.rotation.y=Math.atan2(dir.x,dir.z); }
-    G.pos.x=clamp(G.pos.x,-46,46); G.pos.z=clamp(G.pos.z,-46,46);
-    collideWalls(G.pos,0.9);
-    G.pos.y=terrainY(G.pos.x,G.pos.z); G.mesh.position.copy(G.pos);
-    animateGorilla(G, dt, speed>0.5);
-
-    // the pride bites back
-    gorillaTakesBites(G, dt);
-    // danger cue when it's right on top of the player
-    if(ttype==='player' && td<5) player.inDanger=true;
-  }
-
-  // deaths → corpse
-  for(let i=gorillas.length-1;i>=0;i--){
-    if(gorillas[i].health<=0){ spawnCorpse(gorillas[i].pos.clone()); killObj(gorillas[i].mesh); gorillas.splice(i,1); showKillfeed('🦍 The gorilla has fallen'); }
-  }
-  // a new one wanders in a while after the last dies
-  gorillaSpawnTimer-=dt;
-  if(gorillas.length===0 && gorillaSpawnTimer<=0){ spawnGorilla(); gorillaSpawnTimer=150; }
-}
-
-// =====================================================================
 //  GRAPPLE
 // =====================================================================
-function drawGrappleLine(pt){
-  const mat = new THREE.LineBasicMaterial({color:0xffee00});
-  const geo = new THREE.BufferGeometry().setFromPoints([camera.position.clone(), pt.clone()]);
-  grapple.line = new THREE.Line(geo, mat);
-  scene.add(grapple.line);
-}
-
 function fireGrapple(){
-  if(grapple.active || player.inTree || player.climbing) return;
-  if(player._grappleCd > 0) return;                 // rope cooldown after a drop
-  raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+  if(grapple.active) return;
+  const center = new THREE.Vector2(0,0);
+  raycaster.setFromCamera(center, camera);
 
-  // Prefer a climbable tree you're looking at → reel up to a perch (Phase 4).
-  // (Geometry-raycasting LOD trees is unreliable — LOD.raycast doesn't recurse —
-  // so we target by an aim cone toward the trunk, which is also easier to aim.)
-  const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
-  let best=null, bestDot=0.92;                       // ~23° cone
-  treeObjects.forEach(t=>{
-    if(!t.climbable) return;
-    const tp = t.pos;
-    const to = new THREE.Vector3(tp.x-camera.position.x,
-                                 (terrainY(tp.x,tp.z)+t.perchY)-camera.position.y,
-                                 tp.z-camera.position.z);
-    if(to.length() > PLAYER.grappleRange) return;
-    const dot = to.normalize().dot(fwd);
-    if(dot > bestDot){ bestDot = dot; best = t; }
-  });
-  if(best){
-    const tp = best.pos;
-    const away = new THREE.Vector3(player.pos.x-tp.x, 0, player.pos.z-tp.z);
-    if(away.lengthSq() < 0.01) away.set(1,0,0);
-    away.normalize().multiplyScalar((best.trunkR||0.4) + 0.6);   // sit on a branch beside the trunk
-    grapple.perch = new THREE.Vector3(tp.x+away.x, terrainY(tp.x,tp.z)+best.perchY, tp.z+away.z);
-    grapple.active = true; grapple.mode = 'climb'; grapple.tree = best;
-    grapple.point = grapple.perch.clone();
-    player.climbing = true;
-    drawGrappleLine(grapple.perch);
-    playSound('grapple');
-    return;
-  }
+  // Grapple ignores lions — it can no longer kill them. The ray only attaches
+  // to world geometry (trees, walls, boundary, terrain), passing over any lion.
 
-  // Fallback: pull toward any surface (mobility) — original behaviour.
+  // Check scene objects (trees, walls, boundary, terrain)
   const targets = scene.children.filter(c=>c.name==='tree'||c.name==='wall'||c.name==='boundary'||c.name==='terrain');
   const hits = raycaster.intersectObjects(targets, true);
-  if(!hits.length || hits[0].distance > 40) return;
-  grapple.active = true; grapple.mode = 'pull'; grapple.point = hits[0].point.clone();
-  drawGrappleLine(grapple.point);
+  if(!hits.length) return;
+  const hit = hits[0];
+  if(hit.distance > 40) return;
+
+  grapple.active = true;
+  grapple.point  = hit.point.clone();
+
+  // Draw line
+  const mat = new THREE.LineBasicMaterial({color:0xffee00});
+  const geo = new THREE.BufferGeometry().setFromPoints([camera.position.clone(), grapple.point]);
+  grapple.line = new THREE.Line(geo, mat);
+  scene.add(grapple.line);
   playSound('grapple');
 }
 
-// Arrived at the perch — lock in.
-function arriveInTree(){
-  player.inTree = true; player.climbing = false;
-  grapple.active = false; grapple.mode = 'perch';
-  player.pos.copy(grapple.perch); player.vel.set(0,0,0);
-  if(grapple.line){ killObj(grapple.line); grapple.line=null; }
-  showKillfeed('🌳 Perched — safe from lions (grip tiring)');
-  playSound('collect');
-}
-
-// Drop off the branch into a fall (Space / G / RMB / grip-out).
-function dropFromTree(){
-  if(!player.inTree) return;
-  player.inTree = false;
-  grapple.active = false; grapple.mode = null; grapple.tree = null; grapple.perch = null;
-  player.vel.set(0, -2, 0); player.onGround = false;
-  player._grappleCd = 2.5;            // can't immediately re-grapple (anti tree-bob)
-}
-
 function releaseGrapple(){
-  if(player.inTree){ dropFromTree(); return; }   // perched → drop down
   if(!grapple.active) return;
-  grapple.active = false; grapple.mode = null; grapple.tree = null; grapple.perch = null;
-  grapple.point  = null; player.climbing = false;
+  grapple.active = false;
+  grapple.point  = null;
   if(grapple.line){ killObj(grapple.line); grapple.line=null; }
   player.vel.set(0,0,0);
 }
@@ -2431,7 +1638,7 @@ function throwRock(){
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.copy(pos);
   scene.add(mesh);
-  thrownRocks.push({ mesh, vel:dir.multiplyScalar(48), dist:0 });   // fast, flat throw
+  thrownRocks.push({ mesh, vel:dir.multiplyScalar(25), dist:0 });
   playSound('throw');
 }
 
@@ -2440,11 +1647,11 @@ function updateThrownRocks(dt){
     const r = thrownRocks[i];
     r.mesh.position.addScaledVector(r.vel, dt);
     r.dist += r.vel.length()*dt;
-    r.vel.y -= 5*dt; // light gravity → flatter, faster-feeling throw
+    r.vel.y -= 9.8*dt; // gravity on rock
 
     let hit = false;
     lionMeshes.forEach(L=>{
-      if(r.mesh.position.distanceTo(L.pos) < 1.7){   // wider radius so fast rocks don't skip past
+      if(r.mesh.position.distanceTo(L.pos) < 1.2){
         L.health--;
         L.stunTimer = 5;
         L.state = 'stunned';
@@ -2453,23 +1660,8 @@ function updateThrownRocks(dt){
         if(L.health<=0){ showKillfeed('🪨 Rock kill!'); }
       }
     });
-    // Rocks also wound + STUN prey (ranged hunting) and scatter the herd.
-    if(!hit) preyMeshes.forEach(P=>{
-      if(r.mesh.position.distanceTo(P.pos) < 1.7){
-        P.health -= 9; P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
-        hit = true;
-        showKillfeed(P.health<=0 ? '🪨 Rock kill — '+P.label+'!' : '🪨 Stunned the '+P.label);
-      }
-    });
-    // Rocks sting the gorilla too (chip + brief stun — it's tough, so it won't drop it).
-    if(!hit) gorillas.forEach(G=>{
-      if(G.state!=='inTree' && r.mesh.position.distanceTo(G.pos) < 2.0){
-        G.health -= 8; G.flashTimer = 0.25; G.stunTimer = Math.max(G.stunTimer, 1.0);
-        hit = true; showKillfeed('🪨 Rock staggers the gorilla');
-      }
-    });
 
-    if(hit || r.dist > 50){
+    if(hit || r.dist > 30){
       killObj(r.mesh);
       thrownRocks.splice(i,1);
     }
@@ -2549,8 +1741,7 @@ const SKY = {
   night: { zen:0x05060f, hor:0x121a30, light:0.18, amb:0.12, sun:0.05, fog:0.050 },
 };
 const _C1=new THREE.Color(), _C2=new THREE.Color(), _CW=new THREE.Color(0xffffff),
-      _CSUN=new THREE.Color(0xfff4e0), _CHILL=new THREE.Color(0x6a6450),
-      _CSTORM=new THREE.Color(0x474b52);
+      _CSUN=new THREE.Color(0xfff4e0), _CHILL=new THREE.Color(0x6a6450);
 function lerpSky(a,b,f){
   return {
     zen: _C1.set(a.zen).lerp(_C2.set(b.zen), f).clone(),
@@ -2649,12 +1840,6 @@ function playSound(type){
       gain.gain.setValueAtTime(0.0001,t); gain.gain.exponentialRampToValueAtTime(0.12,t+0.15);
       gain.gain.exponentialRampToValueAtTime(0.001,t+1.1);
       osc.start(t); osc.stop(t+1.1);
-    } else if(type==='thunder'){         // storm thunderclap (Phase 5)
-      osc.type='triangle'; osc.frequency.setValueAtTime(70,t);
-      osc.frequency.exponentialRampToValueAtTime(35,t+1.0);
-      gain.gain.setValueAtTime(0.0001,t); gain.gain.exponentialRampToValueAtTime(0.2,t+0.04);
-      gain.gain.exponentialRampToValueAtTime(0.001,t+1.3);
-      osc.start(t); osc.stop(t+1.3);
     }
   } catch(e){}
 }
@@ -2680,19 +1865,14 @@ function showKillfeed(msg){
 
 function updateHUD(){
   if(gameState!=='playing') return;
-  // Health / stamina / hunger
+  // Health / stamina
   document.getElementById('health-bar').style.width  = (player.health/PLAYER.maxHealth*100)+'%';
   document.getElementById('stamina-bar').style.width = (player.stamina/PLAYER.maxStamina*100)+'%';
-  const hb=document.getElementById('hunger-bar');
-  hb.style.width = (player.hunger/PLAYER.maxHunger*100)+'%';
-  hb.style.background = player.hunger<20 ? '#e74c3c' : player.hunger<45 ? '#e6b020' : '#e69020';
 
   // Top left
   document.getElementById('topleft').innerHTML =
     `⏱ ${fmtTime(elapsed)}<br>📅 Day ${dn.day}`+
-    (player.inTree?`<br>🌳 IN TREE · grip ${player.stamina|0}`:
-       player.climbing?'<br>🧗 CLIMBING':
-       player.crouching?'<br>🧎 CROUCHING':'');
+    (player.crouching?'<br>🧎 CROUCHING':'');
 
   // Top right
   const timeLeft = dn.isDay
@@ -2700,7 +1880,6 @@ function updateHUD(){
     : CYCLE - dn.time;
   document.getElementById('topright').innerHTML =
     `${dn.isDay?'☀️ DAY':'🌙 NIGHT'} ${fmtTime(Math.max(0,timeLeft))}<br>`+
-    (weather.intensity>0.15?`⛈️ STORM<br>`:'')+
     `🦁 Lions: ${lionMeshes.length}<br>`+
     `🪨 Rocks: ${rockCount}`;
 
@@ -2714,8 +1893,6 @@ function updateHUD(){
   if(player.inDanger){
     const pulse = (Math.sin(Date.now()*0.006)+1)*0.5;
     shadow = `inset 0 0 100px rgba(200,0,0,${0.25+pulse*0.35})`;
-  } else if(player.inTree){
-    shadow = 'inset 0 0 150px rgba(20,40,10,0.55)';   // foliage tint in the canopy
   } else if(player._hidden){
     // Concealment cue — screen edges darken softly while you're hidden in grass.
     shadow = 'inset 0 0 140px rgba(0,0,0,0.5)';
@@ -2725,15 +1902,8 @@ function updateHUD(){
   // Prompt
   const promptEl = document.getElementById('prompt');
   let promptText = '';
-  if(player.inTree) promptText = '[Space] Drop down  ·  safe from lions up here';
-  else if(player.climbing) promptText = '…climbing…';
-  else {
-    let nearPrey=false; for(const P of preyMeshes){ if(P.pos.distanceTo(player.pos)<PLAYER.pounceRange){ nearPrey=true; break; } }
-    if(nearPrey) promptText = player._hidden ? '[Q] Pounce (ambush ×3!)' : '[Q] Pounce';
-  }
   treeObjects.forEach(t=>{ if(t.pos.distanceTo(player.pos)<3.5 && t.cooldown<=0) promptText='[E] Collect Wood'; });
   rockSpawns.forEach(r=>{ if(r.available && r.pos.distanceTo(player.pos)<3) promptText='[E] Pick up Rock'; });
-  carcasses.forEach(c=>{ if(c.pos.distanceTo(player.pos)<2.6) promptText='[E] Eat '+c.species+' (hunger)'; });
   promptEl.textContent = promptText;
   promptEl.style.display = promptText?'block':'none';
 
@@ -2758,18 +1928,16 @@ function updateSignals(){
   let html = `<div class="sig-h">RAW SIGNALS</div>`+
     `🕑 ${String(Math.floor(gameHour())).padStart(2,'0')}:00 · pride ${actLabel} ${(act*100|0)}%<br>`+
     `🌬 wind ${warr} (scent carries downwind)<br>`+
-    `🏃 stamina ${player.stamina|0} · ${player.crouching?'crouched':(player.sprinting?'sprinting':'walking')}<br>`+
-    `🍖 hunger ${player.hunger|0}%${player.hunger<=0?' <span class="sig-hi">STARVING</span>':''}<br>`;
+    `🏃 stamina ${player.stamina|0} · ${player.crouching?'crouched':(player.sprinting?'sprinting':'walking')}<br>`;
   if(window.__stealth){   // populated by Phase 3
     const s=window.__stealth;
     html += `👁 your visibility ${s.vis|0}m · 🔊 noise ${s.aud|0}m ${s.hidden?'<span class="sig-ok">HIDDEN</span>':'<span class="sig-hi">EXPOSED</span>'}<br>`;
   }
   if(near){
-    const st = near.state==='chase'?'<span class="sig-hi">CHASING YOU</span>':
+    const st = near.state==='chase'?'<span class="sig-hi">CHASING</span>':
                near.state==='converge'?'<span class="sig-w">converging</span>':
-               near.state==='hunt_prey'?'hunting prey':near.state==='scavenge'?'at a kill':
                near.state==='rest'?'resting':near.state==='fleeing_fire'?'fleeing fire':'wandering';
-    html += `🦁 nearest ${near.isMale?'♂ male':'♀ lioness'} ${nd.toFixed(0)}m · ${st}${near.fedTimer>0?' <span class="sig-ok">(fed)</span>':''}<br>`+
+    html += `🦁 nearest ${near.isMale?'♂ male':'♀ lioness'} ${nd.toFixed(0)}m · ${st}<br>`+
             `&nbsp;&nbsp;hunger ${near.hunger|0}% · sees ${near._detR.toFixed(0)}m`;
   }
   el.innerHTML = html;
@@ -2795,29 +1963,10 @@ function drawMinimap(){
     return [px,py];
   }
 
-  // Watering hole (Phase 5) — a blue landmark
-  if(wateringHole){
-    const [px,py]=toMM(wateringHole.x-player.pos.x, wateringHole.z-player.pos.z);
-    mmCtx.fillStyle='#2b6a8c';
-    mmCtx.beginPath(); mmCtx.arc(px,py, wateringHole.r*scale, 0, Math.PI*2); mmCtx.fill();
-  }
-
   // Trees
   mmCtx.fillStyle='#2d5a1a';
   treeObjects.forEach(t=>{
     const [px,py]=toMM(t.pos.x-player.pos.x, t.pos.z-player.pos.z);
-    mmCtx.beginPath(); mmCtx.arc(px,py,3,0,Math.PI*2); mmCtx.fill();
-  });
-
-  // Prey (Phase 6) — pale dots; carcasses dark red
-  mmCtx.fillStyle='#d8d0b0';
-  preyMeshes.forEach(P=>{
-    const [px,py]=toMM(P.pos.x-player.pos.x, P.pos.z-player.pos.z);
-    mmCtx.beginPath(); mmCtx.arc(px,py,2.5,0,Math.PI*2); mmCtx.fill();
-  });
-  mmCtx.fillStyle='#7a2018';
-  carcasses.forEach(c=>{
-    const [px,py]=toMM(c.pos.x-player.pos.x, c.pos.z-player.pos.z);
     mmCtx.beginPath(); mmCtx.arc(px,py,3,0,Math.PI*2); mmCtx.fill();
   });
 
@@ -2845,14 +1994,6 @@ function drawMinimap(){
                     : L.state==='converge' ? '#ff9500'
                     : L.state==='fleeing_fire' ? '#48a0ff' : '#ffcc00';
     mmCtx.beginPath(); mmCtx.arc(px,py, L.isMale?5:4, 0,Math.PI*2); mmCtx.fill();
-  });
-
-  // Gorilla (Phase 7) — big distinct marker
-  mmCtx.fillStyle='#b05cff';
-  gorillas.forEach(G=>{
-    if(G.state==='inTree') return;
-    const [px,py]=toMM(G.pos.x-player.pos.x, G.pos.z-player.pos.z);
-    mmCtx.beginPath(); mmCtx.arc(px,py,5.5,0,Math.PI*2); mmCtx.fill();
   });
 
   // Player dot
@@ -2913,10 +2054,6 @@ function resetGame(){
   [...campfires].forEach(f=>killObj(f.mesh));
   [...corpses].forEach(c=>killObj(c.mesh));
   [...thrownRocks].forEach(r=>killObj(r.mesh));
-  [...preyMeshes].forEach(P=>killObj(P.mesh));
-  [...gorillas].forEach(G=>killObj(G.mesh));
-  [...carcasses].forEach(c=>{ removeVultures(c); killObj(c.mesh); });
-  [..._dustPuffs].forEach(d=>killObj(d.mesh));
   if(grapple.line){ killObj(grapple.line); }
   if(torchState.light){ scene.remove(torchState.light); }   // light: nothing to dispose
 
@@ -2926,14 +2063,8 @@ function resetGame(){
   campfires.length  = 0;
   corpses.length    = 0;
   thrownRocks.length= 0;
-  preyMeshes.length = 0;
-  carcasses.length  = 0;
-  vultures.length   = 0;
-  gorillas.length   = 0;
-  gorillaSpawnTimer = 0;
-  _dustPuffs.length = 0;
 
-  grapple   = { active:false, point:null, line:null, mode:null, perch:null, tree:null };
+  grapple   = { active:false, point:null, line:null };
   torchState= { crafted:false, on:false, fuel:90, light:null };
 
   woodCount  = 0;
@@ -2947,9 +2078,6 @@ function resetGame(){
   // Start in full daylight (skip dawn) so the restart doesn't render the
   // world at midnight + heavy fog. Place us 15 s past dawn = full day.
   dn = { time: TWILIGHT + 5, day: 1, isDay: true, nextLionSpawn: 120 };
-  weather = { state:'clear', timer: rand(60,110), intensity:0, flash:0, detMul:1 };
-  roarTimer = rand(20,40);
-  if(rainSys) rainSys.pts.visible = false;
   keys = {};
   yaw=0; pitch=0; mouseDX=0; mouseDY=0;
 
@@ -2965,8 +2093,6 @@ function resetGame(){
   // Spawn the starting pride (2 lionesses + a male) and clear any stale alert
   prideAlert.timer = 0;
   spawnPride();
-  spawnHerds();              // populate the savanna with prey (Phase 6)
-  spawnGorilla();            // one territorial gorilla by the trees (Phase 7)
 
   gameState = 'playing';
   document.getElementById('overlay').style.display='none';
@@ -2984,24 +2110,16 @@ function animate(){
 
   updateWind(dt);
   updateDayNight(dt);
-  updateWeather(dt);          // storm (after day/night — scales its lighting)
   updatePlayer(dt);
   updateStealth(dt);
   updateHealth(dt);
-  updateHunger(dt);           // player hunger / starvation (Phase 6)
   updateLions(dt);
-  updatePrey(dt);             // herbivores: graze / herd / flee (Phase 6)
-  updateGorillas(dt);         // territorial gorilla (Phase 7)
-  updateCarcasses(dt);
-  updateVultures(dt);
-  updateDustPuffs(dt);
   updateCampfires(dt);
   updateThrownRocks(dt);
   updateCorpses(dt);
   updateTorch(dt);
   updateGrass(dt);
   updateDust(dt);
-  updateAmbience(dt);         // distant night roars
   updateHUD();
   drawMinimap();
 
@@ -3035,8 +2153,6 @@ camera.position.set(0, 3, 15);
 camera.lookAt(0, 1, 0);
 renderer.setClearColor(0x87ceeb, 1);
 renderer.render(scene, camera);
-// (Shadow support is decided up-front by probeShadowSupport() in initScene,
-//  before any world material compiles — no mid-boot recompile needed.)
 
 // Load leaderboard on menu
 const savedBoard = JSON.parse(localStorage.getItem('lionSurvivalLB')||'[]');

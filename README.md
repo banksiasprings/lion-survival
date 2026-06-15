@@ -31,6 +31,9 @@ grapple into a tree when the pride closes in.
 - **Food chain** — 6 prey species in herds (zebra, wildebeest, gazelle, impala, warthog,
   kudu); lions hunt them, vultures circle kills, you can hunt ahead of the pride or
   scavenge their kills (risky — they guard them). Keep your hunger up or you starve.
+- **Gorilla** — a territorial silverback loiters by the trees (and sometimes climbs one).
+  It attacks anything that moves — you, lions, prey. It'll kill a lone lion, but a whole
+  pride ganging up can bring it down.
 - **Weather** — occasional storms cut everyone's visibility; distant roars at night.
 
 The HUD reports the raw signals honestly: your visibility/noise, the nearest lion's
