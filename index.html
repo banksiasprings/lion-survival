@@ -2134,38 +2134,66 @@ function removeWallAt(idx){
 
 function makeGorilla(x, z){
   const group = new THREE.Group();
-  const furMat  = new THREE.MeshLambertMaterial({color:0x2a2a30});
-  const faceMat = new THREE.MeshLambertMaterial({color:0x16161a});
-  const browMat = new THREE.MeshLambertMaterial({color:0x3a3a42});
-  // Barrel torso + hips
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(1.5,1.35,1.1), furMat);
-  torso.position.y = 1.55; group.add(torso);
-  const hips  = new THREE.Mesh(new THREE.BoxGeometry(1.2,0.85,1.0), furMat);
-  hips.position.y = 0.8; group.add(hips);
-  // Head + heavy brow
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.82,0.72,0.78), faceMat);
-  head.position.set(0,2.4,0.12); group.add(head);
-  const brow = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.42,0.22), browMat);
-  brow.position.set(0,2.36,0.5); group.add(brow);
-  // Long thick arms (refs kept for the swing animation)
-  const armG = new THREE.BoxGeometry(0.44,1.55,0.44);
+  // --- palette: a multi-tone coat so the silhouette reads as a gorilla, not a
+  //     dark blob. Darker than any lion, with a grey silverback saddle, a lit
+  //     chest plate, a paler jutting muzzle, and near-black face/hands/feet.
+  //     Everything is added flat to `group` (arms/legs sit one level under a
+  //     shoulder/hip pivot) so the shared hit-flash recolours it via traverse. ---
+  const furMat    = new THREE.MeshLambertMaterial({color:0x2b2b32}); // main coat
+  const backMat   = new THREE.MeshLambertMaterial({color:0x53535e}); // silverback saddle
+  const chestMat  = new THREE.MeshLambertMaterial({color:0x3a3a44}); // lit chest plate
+  const faceMat   = new THREE.MeshLambertMaterial({color:0x141418}); // near-black face/skull
+  const browMat   = new THREE.MeshLambertMaterial({color:0x303038}); // heavy brow ridge
+  const muzzleMat = new THREE.MeshLambertMaterial({color:0x47403a}); // paler prognathous muzzle
+  const darkMat   = new THREE.MeshLambertMaterial({color:0x0c0c10}); // hands, feet, eyes, nostrils
+  const box = (w,h,d,mat,x,y,z)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); m.position.set(x,y,z); group.add(m); return m; };
+
+  // Core mass — barrel chest over heavy hips with a hunched shoulder yoke.
+  box(1.28,0.95,1.08, furMat,   0, 0.86,  0.00);      // hips
+  box(1.62,1.45,1.20, furMat,   0, 1.70,  0.02);      // barrel torso
+  box(1.85,0.62,1.18, furMat,   0, 2.32, -0.04);      // bulky hunched shoulders
+  box(1.18,1.00,0.18, chestMat, 0, 1.62,  0.62);      // lit chest plate (front highlight)
+  box(1.30,0.70,0.95, backMat,  0, 2.00, -0.32);      // grey silverback saddle (the signature)
+
+  // Head — low and forward off the shoulders (the knuckle-walk posture).
+  box(0.92,0.82,0.86, faceMat,   0,   2.60, 0.32);    // cranium
+  box(0.30,0.40,0.66, faceMat,   0,   3.05, 0.20);    // sagittal crest (domed skull)
+  box(0.78,0.24,0.18, browMat,   0,   2.70, 0.78);    // prominent brow ridge
+  box(0.13,0.10,0.08, darkMat,  -0.20,2.60, 0.80);    // eyes — deep-set under the brow
+  box(0.13,0.10,0.08, darkMat,   0.20,2.60, 0.80);
+  box(0.56,0.46,0.40, muzzleMat, 0,   2.40, 0.84);    // jutting paler muzzle
+  box(0.30,0.14,0.08, darkMat,   0,   2.34, 1.06);    // dark nostril pad
+  box(0.11,0.18,0.13, faceMat,  -0.50,2.66, 0.30);    // ears — small, set back
+  box(0.11,0.18,0.13, faceMat,   0.50,2.66, 0.30);
+
+  // Long knuckle-walking arms — each on a shoulder pivot so it swings as one
+  // piece, with a dark knuckle pad at the wrist. (refs kept for gait/combat poses)
+  const upperArmG = new THREE.BoxGeometry(0.52,1.90,0.52); upperArmG.translate(0,-0.95,0);
   const arms = [];
   [-1.02,1.02].forEach(ax=>{
-    const arm = new THREE.Mesh(armG, furMat);
-    arm.position.set(ax,1.15,0.12); group.add(arm); arms.push(arm);
+    const sh = new THREE.Group(); sh.position.set(ax,2.20,0.06);
+    sh.add(new THREE.Mesh(upperArmG, furMat));
+    const hand = new THREE.Mesh(new THREE.BoxGeometry(0.50,0.34,0.62), darkMat);
+    hand.position.set(0,-1.86,0.14); sh.add(hand);
+    group.add(sh); arms.push(sh);
   });
-  // Short stout legs (refs kept for the gait)
-  const legG = new THREE.BoxGeometry(0.52,0.9,0.52);
+
+  // Short stout legs — each on a hip pivot, dark foot planted at the base.
+  const thighG = new THREE.BoxGeometry(0.62,0.92,0.66); thighG.translate(0,-0.46,0);
   const legs = [];
-  [-0.46,0.46].forEach(lx=>{
-    const leg = new THREE.Mesh(legG, furMat);
-    leg.position.set(lx,0.45,0); group.add(leg); legs.push(leg);
+  [-0.44,0.44].forEach(lx=>{
+    const hp = new THREE.Group(); hp.position.set(lx,1.12,0.00);
+    hp.add(new THREE.Mesh(thighG, furMat));
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.52,0.26,0.74), darkMat);
+    foot.position.set(0,-0.92,0.16); hp.add(foot);
+    group.add(hp); legs.push(hp);
   });
-  group.children.forEach(c=>{ if(c.isMesh) c.userData.origMat = c.material; });
+
+  group.traverse(c=>{ if(c.isMesh) c.userData.origMat = c.material; });
 
   const ty = terrainY(x,z);
   group.position.set(x, ty, z);
-  group.scale.setScalar(1.28);     // clearly larger than any lion
+  group.scale.setScalar(1.32);     // clearly larger/heavier than any lion (~1.5x footprint)
   group.castShadow = true;
   group.name = 'gorilla';
   scene.add(group);
@@ -2267,11 +2295,52 @@ function gorillaMoveToward(G, tx, tz, speed, dt){
   G._lastSpeed = speed;
 }
 
-// Limb animation: gait drives leg/arm swing amplitude.
+// Limb + pose animation. A hunched knuckle-walk for roaming/pursuing/engaging-
+// rush; folds into a tucked crouch when perched/sleeping; and plays explicit
+// combat poses (swipe / wall-smash / tree-grab) straight off each action's
+// wind-up clock, so the tell you see matches the hit that lands. Arms and legs
+// are shoulder/hip pivot Groups, so a single rotation.x swings the whole limb.
 function animateGorilla(G, dt, gait){
-  G.legPhase += dt*(2 + (gait||0)*2);
-  G.legs.forEach((leg,i)=>{ leg.position.y = 0.45 + Math.sin(G.legPhase + i*Math.PI)*0.10*(0.25 + (gait||0)); });
-  G.arms.forEach((arm,i)=>{ arm.rotation.x = Math.sin(G.legPhase + i*Math.PI)*0.30*(0.3 + (gait||0)); });
+  G.legPhase += dt*(2 + (gait||0)*2.2);
+  const A = G.arms, L = G.legs, st = G.state, g = gait||0;
+
+  // wall smash — both arms hoist overhead, then hammer straight down
+  if(st==='smashing'){
+    const t = clamp(1 - G.actionTimer/GOR.SMASH_WINDUP, 0, 1);
+    const x = t < 0.6 ? -(t/0.6)*2.5 : -2.5 + ((t-0.6)/0.4)*3.7;       // raise → slam
+    A.forEach(a=>{ a.rotation.x = x; a.rotation.z = 0; });
+    L.forEach(l=> l.rotation.x = 0.10);
+    return;
+  }
+  // tree-grab — reach straight up into the canopy for the player
+  if(st==='treegrab'){
+    const t = clamp(1 - G.actionTimer/GOR.GRAB_WINDUP, 0, 1);
+    A.forEach((a,i)=>{ a.rotation.x = -2.1 - t*0.6; a.rotation.z = (i?1:-1)*0.20*t; });
+    L.forEach(l=> l.rotation.x = -0.12);
+    return;
+  }
+  // swipe — rear the lead arm back through the wind-up, slash across on the strike
+  if(st==='engaging' && G.phase==='swing'){
+    const total = GOR.SWIPE_WINDUP + GOR.SWIPE_RECOVER, wind = GOR.SWIPE_WINDUP/total;
+    const t = clamp(1 - G.actionTimer/total, 0, 1);
+    const lead = A[0], off = A[1];
+    if(t < wind){ const u=t/wind;            lead.rotation.x = -1.9*u;        lead.rotation.z = -1.0*u; }
+    else        { const u=(t-wind)/(1-wind); lead.rotation.x = -1.9 + 2.7*u;  lead.rotation.z = -1.0 + 2.0*u; }
+    off.rotation.x = 0.20; off.rotation.z = 0;
+    L.forEach(l=> l.rotation.x = 0.12);
+    return;
+  }
+  // perched / sleeping (and roughly stationary) — tuck into a crouch; breathe if asleep
+  if((st==='perched' || st==='sleeping') && g < 0.25){
+    const breath = st==='sleeping' ? Math.sin(G.legPhase*0.4)*0.05 : 0;
+    A.forEach(a=>{ a.rotation.x += (-0.55+breath - a.rotation.x)*Math.min(1,6*dt); a.rotation.z += (0 - a.rotation.z)*Math.min(1,6*dt); });
+    L.forEach(l=>  l.rotation.x += (1.15 - l.rotation.x)*Math.min(1,6*dt));
+    return;
+  }
+  // default — hunched knuckle-walk (arms lead with a forward plant, legs follow at half amplitude)
+  const amp = 0.35 + g*0.50;
+  A.forEach((a,i)=>{ const s=Math.sin(G.legPhase + i*Math.PI); a.rotation.x = -0.35 + s*amp; a.rotation.z += (0 - a.rotation.z)*Math.min(1,8*dt); });
+  L.forEach((l,i)=>{ const s=Math.sin(G.legPhase + i*Math.PI); l.rotation.x = s*amp*0.5; });
 }
 
 // Smash wall i (the gorilla's version of chopWall — no wood reclaim, with feel).
@@ -2342,7 +2411,7 @@ function updateGorillas(dt){
     if(G.flashTimer > 0){
       G.flashTimer -= dt;
       const f = G.flashTimer > 0;
-      G.mesh.children.forEach(c=>{ if(c.isMesh) c.material = f ? FLASH_MAT : c.userData.origMat; });
+      G.mesh.traverse(c=>{ if(c.isMesh) c.material = f ? FLASH_MAT : c.userData.origMat; });
     }
 
     const gpos = G.pos, ppos = player.pos;

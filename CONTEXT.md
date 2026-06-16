@@ -111,7 +111,11 @@ not flavour.
       2026-06-17 from a divergent fork that had grown the AI without the animals
       (`dossiers/merge_2026-06-16.md`); retaliation + day aggression added same day
       (`dossiers/gorilla_retaliation_2026-06-17.md`). It replaced an earlier basic gorilla
-      (`GORILLA`/`gorillas[]`), now gone.
+      (`GORILLA`/`gorillas[]`), now gone. **Render** (2026-06-17): `makeGorilla` rebuilt to a
+      22-box, 7-tone silverback silhouette (hunched yoke, sagittal crest, brow, muzzle, grey
+      saddle, knuckle-walk arms); `animateGorilla` is now a per-state pose controller (arms/legs
+      are shoulder/hip pivot Groups; swipe/smash/treegrab poses run off `actionTimer`). Hit-flash
+      moved to `.traverse` so the nested limbs still flash (`dossiers/gorilla_render_2026-06-17.md`).
 
 ## Food chain (Phase 6) — quick reference
 prey graze in herds → flee any predator within species flee-dist → lions hunt the weak/slow
