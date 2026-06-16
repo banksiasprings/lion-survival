@@ -2095,6 +2095,10 @@ const GOR = {
   SLEEP_AFTER:   7,     // sec perched with no lion near → doze off (sleeping)
   LION_BITE_DPS: 7,     // dps each lion pressed against a grounded gorilla deals back
 
+  // --- retaliation: a lion that draws blood gets hunted down ---
+  RETALIATE_WINDOW: 4,  // sec after a bite the gorilla stays locked onto that attacker
+  RETALIATE_LEASH: 26,  // give up chasing a recent attacker beyond this distance
+
   SWIPE_RANGE:   3.4,   // reach of a swipe at a lion
   SWIPE_DMG:     34,    // damage dealt to a lion per swipe
   SWIPE_WINDUP:  0.45,  // tell before the swipe connects
@@ -2178,6 +2182,8 @@ function makeGorilla(x, z){
     idleTimer: 0,                  // time perched with nothing to do (→ sleeping)
     swipeCd: 0, grabCd: 0, smashCd: 0,
     swung: false,                  // has the in-progress swipe already connected
+    lastDamagedBy: null,           // the lion that most recently bit it (retaliation)
+    lastDamageTime: -999,          // elapsed-clock stamp of that bite
     heading: rand(0, Math.PI*2),
     wanderDir: new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
     wanderTimer: rand(2,4),
@@ -2345,17 +2351,40 @@ function updateGorillas(dt){
     const distP = Math.hypot(ppos.x - gpos.x, ppos.z - gpos.z);
     G._detR = isNight ? GOR.LION_DETECT : 0;   // what it's watching for, for the HUD
 
-    // nearest lion
+    // nearest LIVE lion (a just-killed one lingers a frame before the lion loop
+    // splices it — skip it so the gorilla never re-targets a corpse)
     let lion=null, ld=Infinity;
-    lionMeshes.forEach(L=>{ const d = L.pos.distanceTo(gpos); if(d < ld){ ld = d; lion = L; } });
+    lionMeshes.forEach(L=>{ if(L.health<=0) return; const d = L.pos.distanceTo(gpos); if(d < ld){ ld = d; lion = L; } });
 
     // The pride bites back: lions pressed against a GROUNDED gorilla wear it down
     // (a perched/sleeping gorilla is up its tree, out of reach). Its swipes punish
     // them, so a committed pride can bring it down but pays for it.
     if(G.state!=='perched' && G.state!=='sleeping'){
-      let biters=0;
-      lionMeshes.forEach(L=>{ if((L.stunTimer||0)<=0 && L.pos.distanceTo(gpos) < 2.8) biters++; });
-      if(biters) G.health -= GOR.LION_BITE_DPS*biters*dt;
+      let biters=0, biter=null, bbd=Infinity;
+      lionMeshes.forEach(L=>{
+        if((L.stunTimer||0)>0) return;
+        const bd = L.pos.distanceTo(gpos);
+        if(bd < 2.8){ biters++; if(bd<bbd){ bbd=bd; biter=L; } }
+      });
+      if(biters){
+        G.health -= GOR.LION_BITE_DPS*biters*dt;
+        G.lastDamagedBy = biter; G.lastDamageTime = elapsed;   // remember who, for retaliation
+      }
+    }
+
+    // ---- RETALIATION (top priority) -------------------------------------
+    // A lion that recently drew blood becomes the target, overriding
+    // roam / perch / wander / wall-smash / tree-grab / player-pursuit. Only
+    // fires while the bite is fresh (RETALIATE_WINDOW) and the attacker is
+    // within leash — so with no lions on it, the player-hunting behaviour
+    // below is untouched.
+    const atk = G.lastDamagedBy;
+    if(atk && atk.health > 0 && lionMeshes.includes(atk)
+       && (elapsed - G.lastDamageTime) < GOR.RETALIATE_WINDOW
+       && Math.hypot(atk.pos.x-gpos.x, atk.pos.z-gpos.z) < GOR.RETALIATE_LEASH
+       && (G.state!=='engaging' || G.target!==atk)){
+      G.state='engaging'; G.phase='rush'; G.target=atk; G.swung=false; G.idleTimer=0;
+      G.perchTree=null; G.perchPos=null;
     }
 
     let gait = 0.2;
@@ -2399,7 +2428,9 @@ function updateGorillas(dt){
 
     if(G.state === 'engaging'){
       const tgt = G.target;
-      if(!tgt || tgt.health <= 0 || !lionMeshes.includes(tgt)){
+      // target down/gone, or it broke the leash → stand down, back to mood state
+      if(!tgt || tgt.health <= 0 || !lionMeshes.includes(tgt)
+         || tgt.pos.distanceTo(gpos) > GOR.LION_DETECT*1.7){
         G.target = null; G.swung = false; G.phase = 'rush';
         G.state = isNight ? 'perched' : 'roaming';
         animateGorilla(G, dt, 0.4);
@@ -2407,21 +2438,22 @@ function updateGorillas(dt){
       }
       const td = tgt.pos.distanceTo(gpos);
       if(G.phase === 'rush'){
-        if(td > GOR.LION_DETECT*1.7){           // lion escaped — give up, go home
-          G.target = null; G.state = isNight ? 'perched' : 'roaming';
-        } else if(td <= GOR.SWIPE_RANGE){        // in reach — wind up the swipe
-          G.phase = 'swing'; G.actionTimer = GOR.SWIPE_WINDUP + GOR.SWIPE_RECOVER; G.swung = false;
+        if(td <= GOR.SWIPE_RANGE){               // in reach — face & hold
           gorillaFace(G, tgt.pos.x, tgt.pos.z, dt);
+          if(G.swipeCd <= 0){                    // cooldown clear → wind up a swipe
+            G.phase = 'swing'; G.actionTimer = GOR.SWIPE_WINDUP + GOR.SWIPE_RECOVER; G.swung = false;
+          }
+          animateGorilla(G, dt, 0.5);
         } else {                                 // close the distance fast
           gorillaMoveToward(G, tgt.pos.x, tgt.pos.z, GOR.SPEED_DROP, dt);
+          animateGorilla(G, dt, 1.6);
         }
-        animateGorilla(G, dt, G.phase==='rush' ? 1.6 : 0.5);
         return;
       }
-      // swing phase
+      // swing phase — the strike lands as the timer crosses into recovery
       gorillaFace(G, tgt.pos.x, tgt.pos.z, dt);
       G.actionTimer -= dt;
-      if(!G.swung && G.actionTimer <= GOR.SWIPE_RECOVER){   // the strike lands here
+      if(!G.swung && G.actionTimer <= GOR.SWIPE_RECOVER){
         G.swung = true;
         if(td < GOR.SWIPE_RANGE + 0.8){
           tgt.health   -= GOR.SWIPE_DMG;
@@ -2432,10 +2464,9 @@ function updateGorillas(dt){
         }
         playSound('throw');
       }
-      if(G.actionTimer <= 0){
-        G.swipeCd = GOR.SWIPE_CD; G.swung = false; G.phase = 'rush'; G.target = null;
-        G.state = isNight ? 'perched' : 'roaming';
-      }
+      if(G.actionTimer <= 0){                    // recovery done → re-rush; stays engaging
+        G.swipeCd = GOR.SWIPE_CD; G.swung = false; G.phase = 'rush';  // until the lion dies or
+      }                                          // breaks the leash (checked at the top)
       animateGorilla(G, dt, 0.4);
       return;
     }
@@ -2483,7 +2514,7 @@ function updateGorillas(dt){
     if(isNight){
       // NIGHT — hold a perch; drop to engage a lion that comes too close.
       gorillaEnsurePerch(G);
-      if(lion && ld < GOR.LION_DETECT && G.swipeCd <= 0){
+      if(lion && ld < GOR.LION_DETECT){
         G.state = 'engaging'; G.phase = 'rush'; G.target = lion; G.idleTimer = 0; G.swung = false;
       } else {
         // settle onto the perch; doze off if nothing happens for a while
@@ -2498,8 +2529,14 @@ function updateGorillas(dt){
         if(G.perchTree) G.mesh.position.y = terrainY(gpos.x, gpos.z) + (G.perchTree.perchY||3);
       }
     } else {
-      // DAY — roam the ground while the pride rests; smash a wall in the path.
+      // DAY — roam the ground while the pride rests. Territorial: engage any
+      // lion that strays into range; otherwise wander, smashing a wall in the path.
       G.perchTree = null; G.perchPos = null; G.idleTimer = 0;
+      if(lion && ld < GOR.LION_DETECT){
+        G.state = 'engaging'; G.phase = 'rush'; G.target = lion; G.swung = false;
+        animateGorilla(G, dt, 0.6);
+        return;
+      }
       G.wanderTimer -= dt;
       if(G.wanderTimer < 0){ G.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); G.wanderTimer = rand(3,6); }
       if(Math.hypot(gpos.x, gpos.z) > HALF-6){ G.wanderDir.set(-gpos.x,0,-gpos.z).normalize(); }
