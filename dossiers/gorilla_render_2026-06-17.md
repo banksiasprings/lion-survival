@@ -77,3 +77,48 @@ Verified two ways instead:
    *exact* `animateGorilla` angles (painter's algorithm + Lambert shading matching the in-game
    directional light) into `gorilla_render_upgrade.png` (the image above). It's the actual mesh data,
    not a mock-up.
+
+---
+
+## "Make it cool" pass (same day)
+
+**Trigger:** Steven — *"make it look cool."* Not just detailed — visually striking, intimidating, the
+most distinctive entity on screen. The image at the top is from this pass.
+
+### Glowing eyes (the signature)
+The headline addition: **emissive eyes + an additive glow halo** that make the gorilla read at a glance
+and feel menacing — especially as *two burning eyes in the dark* when it's night-perched in a tree.
+
+- Each eye is a small `MeshLambertMaterial` with an `emissive` colour (glows regardless of lighting),
+  fronted by an additive `PlaneGeometry` halo (`gorGlowTexture()` — a shared white radial sprite the
+  halo tints). Both opt out of the hit-flash (`userData.noFlash`) so the **eyes keep burning even as
+  the body flashes white on a hit**; the flash loop now skips `noFlash` meshes.
+- `animateGorilla` drives the glow each frame from `G.state` + day/night — amber at rest, **red-hot**
+  when aggressive, dim embers asleep, and cranked ×1.5 at night. A pulse clock adds a slow breathe at
+  rest and a fast throb in combat. Smoothed via `G.eyeI` so it flares/fades rather than snapping.
+
+  | State | Eye emissive (verified) | Halo opacity | Feel |
+  |---|---|---|---|
+  | sleeping (night) | `45290d` | 0.38 | dim embers |
+  | roaming (day) | `88511b` | 0.57 | watchful amber |
+  | perched (night) | `ffa135` | 0.94 | **blazing amber in the canopy** |
+  | engaging (day) | `cb450e` | 0.75 | red-hot |
+  | smashing (night) | `ff5d13` | 0.95 | **rage** |
+
+  Halo colour shifts amber→red with aggression; the additive blend is sized to read as eyes, not a torch.
+
+### Bolder, more imposing silhouette
+- **Heavy V-taper**: deeper barrel torso, **broad shoulder yoke** (2.12 wide), **narrow hips** (1.16) —
+  reads as raw power. Scale **1.32 → 1.36** (towers over the pride). Longer/thicker knuckle-walk arms
+  (2.05) with bigger dark knuckle pads; bigger planted feet; taller sagittal crest + heavier brow.
+- **Two-tone coat** for dramatic shading: lit upper body (`#26262c`) vs **shadowed limbs/underside**
+  (`#191920`), so the arms and legs recede and the chest/shoulders catch the light.
+- **Brighter silverback saddle** (`#6a6c7c`) with a **silver sheen strip** (`#9aa0b2`) along its top —
+  the iconic mark now actually pops instead of hiding in the dark coat.
+- **Battle scar**: a pale slash (`scarMat`, rotated `-0.7`) across one brow — a memorable asymmetry.
+
+Mesh count 22 → **28** (still 2-cap'd, only ~8 pivot rotations + a handful of material mutations per
+frame). Re-verified: 28 meshes, 0 missing `origMat`, **4 `noFlash`** (2 eyes + 2 halos), scale 1.36;
+flash recolours the 24 body meshes and leaves all 4 eye/halo meshes burning; each state yields a
+distinct eye colour/intensity (table above); the real `updateGorillas` ran 400 frames day↔night with a
+lion pressed in — **zero errors**.
