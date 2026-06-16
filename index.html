@@ -134,8 +134,7 @@ let corpses     = [];
 let preyMeshes  = [];   // Phase 6: herbivores
 let carcasses   = [];   // Phase 6: edible kills (prey) — food for player & lions
 let vultures    = [];   // Phase 6: circling birds over fresh kills
-let gorillas    = [];   // Phase 7: territorial gorilla(s) — attack everything that moves
-let gorillaSpawnTimer = 0;
+let gorillaMeshes = [];   // Phase 6/7: advanced apex gorilla — FSM sleeping|perched|roaming|engaging|smashing|treegrab
 
 // Savanna environment (Phase 1) — also feeds stealth (Phase 3) & grapple (Phase 4)
 let wind = { angle: rand(0, Math.PI*2), dirX: 0, dirZ: 0, speed: 0.55, time: 0 };
@@ -163,7 +162,9 @@ let dn = {
   time: 0, // 0..240 seconds full cycle, 0=dawn
   day: 1,
   isDay: true,
-  nextLionSpawn: 120
+  nextLionSpawn: 120,
+  firstGorilla: false,   // has the early first gorilla spawned yet?
+  nextGorillaDay: 3      // day of the next gorilla after the first (set when first spawns)
 };
 
 // Items
@@ -1036,6 +1037,7 @@ function initPlayer(){
     pos: new THREE.Vector3(0, 2, 0),
     vel: new THREE.Vector3(),
     knockback: new THREE.Vector3(),   // edge-bounce impulse (input can't cancel it)
+    stunTimer: 0,                      // dazed after a gorilla tree-grab — input locked while > 0
     health: PLAYER.maxHealth,
     stamina: PLAYER.maxStamina,
     onGround: false,
@@ -1058,6 +1060,7 @@ function registerControls(){
   document.addEventListener('keydown', e=>{
     if(gameState!=='playing') return;
     keys[e.code] = true;
+    if(player.stunTimer > 0) return;   // dazed by a gorilla tree-grab — no actions
     if(e.code==='Digit1') setSlot(1);
     if(e.code==='Digit2') setSlot(2);
     if(e.code==='Digit3') setSlot(3);
@@ -1085,6 +1088,7 @@ function registerControls(){
   document.addEventListener('mousedown', e=>{
     if(gameState!=='playing') return;
     if(!isPointerLocked){ renderer.domElement.requestPointerLock(); return; }
+    if(player.stunTimer > 0) return;   // dazed by a gorilla tree-grab — no actions
     if(e.button===0) onLeftClick();
     if(e.button===2) onRightClick();
   });
@@ -1122,14 +1126,21 @@ function onRightClick(){
 function updatePlayer(dt){
   if(gameState!=='playing') return;
 
-  // Mouse look
+  // Tree-grab daze: while stunned the player can't look, move, or act. Gravity
+  // and collisions below still run, so you slump where the gorilla dropped you.
+  if(player.stunTimer > 0) player.stunTimer -= dt;
+  const stunned = player.stunTimer > 0;
+
+  // Mouse look (frozen while stunned; accumulators still cleared so it doesn't snap on release)
   const sens = 0.002;
-  yaw   -= mouseDX * sens;
-  pitch -= mouseDY * sens;
-  pitch  = clamp(pitch, -1.2, 1.2);
+  if(!stunned){
+    yaw   -= mouseDX * sens;
+    pitch -= mouseDY * sens;
+    pitch  = clamp(pitch, -1.2, 1.2);
+    camera.rotation.y = yaw;
+    camera.rotation.x = pitch;
+  }
   mouseDX = 0; mouseDY = 0;
-  camera.rotation.y = yaw;
-  camera.rotation.x = pitch;
 
   // Crouch
   player.crouching = !!keys['KeyC'];
@@ -1162,6 +1173,7 @@ function updatePlayer(dt){
   if(keys['KeyS']) move.addScaledVector(forward,-1);
   if(keys['KeyA']) move.addScaledVector(right,  -1);
   if(keys['KeyD']) move.addScaledVector(right,   1);
+  if(stunned) move.set(0,0,0);                              // dazed — no walking
   if(move.lengthSq()>0) move.normalize().multiplyScalar(speed);
 
   // ---- Grapple / climbing / perched (Phase 4) ----
@@ -1190,7 +1202,7 @@ function updatePlayer(dt){
     // Gravity
     if(!player.onGround) player.vel.y += PLAYER.gravity * dt;
     // Jump
-    if(keys['Space'] && player.onGround){ player.vel.y = PLAYER.jumpForce; player.onGround = false; }
+    if(keys['Space'] && player.onGround && !stunned){ player.vel.y = PLAYER.jumpForce; player.onGround = false; }
   }
 
   // Integrate position
@@ -1283,6 +1295,17 @@ function updateHealth(dt){
         nearLion = true;
       }
       if(d < 6) veryNear = true;
+    });
+  }
+  // A grounded gorilla that's reached the player mauls them (the tree-grab
+  // handles treed players). Skip when it's up a tree (perched/sleeping) or
+  // mid tree-grab wind-up.
+  if(!player.inTree){
+    gorillaMeshes.forEach(G=>{
+      if(G.state==='perched' || G.state==='sleeping' || G.state==='treegrab') return;
+      const d = G.pos.distanceTo(player.pos);
+      if(d < GOR.MAUL_RANGE){ player.health -= GOR.MAUL_DPS * dt; nearLion = true; }
+      if(d < 7) veryNear = true;
     });
   }
   player.inDanger = veryNear;
@@ -1568,8 +1591,8 @@ function updateLions(dt){
       if(dist < detR){
         L.state = 'chase';
         prideAlert.pos.copy(ppos); prideAlert.timer = 9;   // broadcast to the pride
-      } else if(gorillas.length && (L._gorTarget=nearestGorilla(lpos,18)) && L._gorTarget.health>0){
-        L.state = 'fight_gorilla';                          // mob a nearby gorilla
+      } else if(gorillaMeshes.length && (L._gorTarget=nearestGorilla(lpos,18)) && L._gorTarget.health>0){
+        L.state = 'fight_gorilla';                          // mob a nearby (grounded) gorilla
       } else if(L.state==='fight_gorilla'){
         L.state = 'wander';                                 // gorilla gone/out of reach
       } else if(L.state==='chase'){
@@ -1610,7 +1633,7 @@ function updateLions(dt){
       if(dir.lengthSq()>0) dir.normalize();
     } else if(L.state==='fight_gorilla'){
       const G=L._gorTarget;
-      if(G && G.health>0 && G.state!=='inTree'){ dir.copy(G.pos).sub(lpos); dir.y=0;
+      if(G && G.health>0 && G.state!=='perched' && G.state!=='sleeping'){ dir.copy(G.pos).sub(lpos); dir.y=0;
         if(dir.length()<=1.8) dir.set(0,0,0); else dir.normalize(); }   // close in, then hold & bite
       else L.state='wander';
     } else if(L.state==='hunt_prey'){
@@ -1891,7 +1914,7 @@ function updatePrey(dt){
     // nearest predator (lion, gorilla, or player) — prey flee all of them
     let threat=null, td=Infinity;
     lionMeshes.forEach(L=>{ const d=L.pos.distanceTo(P.pos); if(d<td){td=d;threat=L.pos;} });
-    gorillas.forEach(G=>{ if(G.state==='inTree') return; const d=G.pos.distanceTo(P.pos); if(d<td){td=d;threat=G.pos;} });
+    gorillaMeshes.forEach(G=>{ if(G.state==='perched'||G.state==='sleeping') return; const d=G.pos.distanceTo(P.pos); if(d<td){td=d;threat=G.pos;} });
     const pd=player.pos.distanceTo(P.pos);
     if(pd<td && !player.inTree){ td=pd; threat=player.pos; }   // treed player isn't a ground threat
 
@@ -2025,176 +2048,486 @@ function eatNearbyCarcass(){
 }
 
 // =====================================================================
-//  GORILLA  (Phase 7) — territorial; attacks every moving thing nearby.
-//  Beats a lone lion; a whole pride ganging up can bring it down.
+//  GORILLA  (Phase 6/7 — solo apex, single explicit FSM)
 // =====================================================================
-const GORILLA = {
-  hp:100, attack:20, attackCd:1.1, attackRange:2.4, senseR:14,
-  speed:3.0, chargeSpeed:7.5, lionBiteDps:14, playerDmg:24
+// One large, slow, powerful animal sharing the world with the pride. It
+// inverts the lions' rhythm: it ROAMS the ground by day while the pride rests,
+// and PERCHES in a tree by night, DROPPING to ENGAGE any lion that strays into
+// range before returning to its perch. Unlike the lions it can SEE a player up
+// a tree and will PURSUE the player — SMASHING any wall in its path rather than
+// routing around it (slower wind-up than the player's axe). It TREE-GRABs a
+// sheltered player back to the ground, or mauls a grounded one on contact.
+// The pride can still mob a grounded gorilla (LION_BITE_DPS) — it's tanky, but
+// a committed pride brings it down while paying for it in swipes.
+//
+//   FSM states (Raw-Signals labels in brackets):
+//     sleeping  [sleeping]      → dozing on the perch (deep night, nothing nearby)
+//     perched   [perched]       → alert in a tree (night)
+//     roaming   [roaming]       → walking the ground (day, no target)
+//     pursuing  [engaging]      → advancing on the player (treed or grounded)
+//     engaging  [engaging]      → dropping on / swiping a lion
+//     smashing  [smashing wall] → mid wind-up on a wall in its path
+//     treegrab  [tree-grab]     → mid wind-up on a tree-sheltered player
+//
+// All numeric tunings live in GOR so they're tweakable in one place.
+const GOR = {
+  MAX:           2,     // hard cap on simultaneous gorillas
+  SPAWN_EVERY:   2,     // in-game days between spawns (after the first)
+  FIRST_SPAWN_T: 22,    // sec into the game the FIRST gorilla arrives (then every 2 days)
+
+  HEALTH:        160,   // very tanky — rocks chip it, the pride wears it down slowly
+
+  SPEED_ROAM:    4.4,   // ground roam speed (day)
+  SPEED_DROP:    11.5,  // burst speed closing on a lion at night
+
+  // --- player pursuit (gorilla actively hunts the player, smashing through) ---
+  SEES_TREED_PLAYER: true, // EXCEPTION: the gorilla (and only the gorilla) can see a
+                           // tree-sheltered player. Lions stay blind to treed players.
+  PURSUE_RANGE:  26,    // notices & advances on a player (treed or grounded) within this
+  MAUL_RANGE:    2.2,   // contact range at which a grounded player takes damage
+  MAUL_DPS:      18,    // damage/sec while a grounded player is in the gorilla's grip
+  PATH_SMASH_DOT: 0.4,  // how "ahead" a wall must be (cos angle to the aim) to smash through
+
+  TURN:          7,     // heading-lerp rate (rad/s-ish)
+
+  LION_DETECT:   13,    // perched gorilla drops on a lion inside this radius
+  WAKE_DETECT:   16,    // a sleeping gorilla wakes (→ perched) inside this
+  SLEEP_AFTER:   7,     // sec perched with no lion near → doze off (sleeping)
+  LION_BITE_DPS: 7,     // dps each lion pressed against a grounded gorilla deals back
+
+  SWIPE_RANGE:   3.4,   // reach of a swipe at a lion
+  SWIPE_DMG:     34,    // damage dealt to a lion per swipe
+  SWIPE_WINDUP:  0.45,  // tell before the swipe connects
+  SWIPE_RECOVER: 0.55,  // recovery after the swipe before returning to perch
+  SWIPE_CD:      2.4,   // per-gorilla cooldown between swipes
+
+  GRAB_RANGE:    4.2,   // horizontal reach to a tree-sheltered player
+  GRAB_WINDUP:   0.85,  // tell before the grab lands (a window to drop/grapple away)
+  GRAB_DMG:      28,    // damage on a successful tree-grab
+  GRAB_STUN:     1.3,   // sec the player is dazed after being pulled out
+  GRAB_KB:       15,    // knockback impulse away from the tree
+  GRAB_CD:       8,     // cooldown before it can grab again
+
+  SMASH_RANGE:   3.2,   // reach to a wall it can smash
+  SMASH_WINDUP:  1.3,   // wind-up — deliberately longer than the player's instant chop
+  SMASH_CD:      1.6,   // cooldown after a smash
+
+  SHELTER_MINH:  2.2,   // player counts as "up a tree" above this height AGL
 };
 
-function makeGorilla(x,z){
-  const g=new THREE.Group();
-  const dark=lmat(0x2c2b30), darker=lmat(0x1c1b20), silver=lmat(0x6a6a72), faceM=lmat(0x3c3338);
-  // torso (broad, hunched) + belly
-  const torso=new THREE.Mesh(new THREE.BoxGeometry(1.3,1.2,1.0), dark); torso.position.y=1.35; torso.castShadow=true; g.add(torso);
-  const belly=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.8,0.95), dark); belly.position.set(0,0.75,0.05); belly.castShadow=true; g.add(belly);
-  const shoulders=new THREE.Mesh(new THREE.BoxGeometry(1.55,0.55,0.95), dark); shoulders.position.y=1.85; shoulders.castShadow=true; g.add(shoulders);
-  const saddle=new THREE.Mesh(new THREE.BoxGeometry(1.05,0.55,0.9), silver); saddle.position.set(0,1.6,-0.06); g.add(saddle); // silverback
-  // head
-  const head=new THREE.Mesh(new THREE.BoxGeometry(0.62,0.56,0.6), darker); head.position.set(0,2.2,0.22); head.castShadow=true; g.add(head);
-  const brow=new THREE.Mesh(new THREE.BoxGeometry(0.66,0.16,0.14), darker); brow.position.set(0,2.34,0.5); g.add(brow);
-  const face=new THREE.Mesh(new THREE.BoxGeometry(0.42,0.36,0.16), faceM); face.position.set(0,2.12,0.52); g.add(face);
-  // arms — shoulder-pivot groups so they swing/pound
-  const arms=[];
-  [-1,1].forEach(side=>{
-    const pivot=new THREE.Group(); pivot.position.set(side*0.82,1.9,0.05); g.add(pivot);
-    const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.21,0.16,1.45,6), dark); arm.position.y=-0.72; arm.castShadow=true; pivot.add(arm);
-    const hand=new THREE.Mesh(new THREE.SphereGeometry(0.21,6,5), darker); hand.position.y=-1.45; pivot.add(hand);
-    arms.push(pivot);
-  });
-  // legs — hip-pivot groups
-  const legs=[];
-  [-1,1].forEach(side=>{
-    const pivot=new THREE.Group(); pivot.position.set(side*0.4,0.78,0); g.add(pivot);
-    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.27,0.22,0.8,6), dark); leg.position.y=-0.4; leg.castShadow=true; pivot.add(leg);
-    legs.push(pivot);
-  });
-  g.traverse(c=>{ if(c.isMesh) c.userData.origMat=c.material; });
-  const ty=terrainY(x,z); g.position.set(x,ty,z); g.name='gorilla'; scene.add(g);
+// Tear down wall i, freeing its VRAM. wallMeshes[i] and wallAABBs[i] are kept in
+// lockstep (built together), so splice both at the same index. Returns the wall's
+// world position (for FX), or null. Shared by the axe (chopWall) and the gorilla's
+// wall-smash so the two paths can't drift apart.
+function removeWallAt(idx){
+  if(idx < 0 || idx >= wallMeshes.length) return null;
+  const pos = wallMeshes[idx].position.clone();
+  killObj(wallMeshes[idx]);
+  wallMeshes.splice(idx, 1);
+  wallAABBs.splice(idx, 1);
+  return pos;
+}
 
-  const G={ mesh:g, arms, legs, pos:new THREE.Vector3(x,ty,z),
-    health:GORILLA.hp, maxHealth:GORILLA.hp,
-    state:'wander', homeTree:null, perch:null,
-    attackCd:0, stunTimer:0, flashTimer:0, pound:0,
-    walkPhase:Math.random()*6.28, wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
-    wanderTimer:rand(2,4), climbCd:rand(15,30), climbTimer:0 };
-  gorillas.push(G);
+function makeGorilla(x, z){
+  const group = new THREE.Group();
+  const furMat  = new THREE.MeshLambertMaterial({color:0x2a2a30});
+  const faceMat = new THREE.MeshLambertMaterial({color:0x16161a});
+  const browMat = new THREE.MeshLambertMaterial({color:0x3a3a42});
+  // Barrel torso + hips
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(1.5,1.35,1.1), furMat);
+  torso.position.y = 1.55; group.add(torso);
+  const hips  = new THREE.Mesh(new THREE.BoxGeometry(1.2,0.85,1.0), furMat);
+  hips.position.y = 0.8; group.add(hips);
+  // Head + heavy brow
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.82,0.72,0.78), faceMat);
+  head.position.set(0,2.4,0.12); group.add(head);
+  const brow = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.42,0.22), browMat);
+  brow.position.set(0,2.36,0.5); group.add(brow);
+  // Long thick arms (refs kept for the swing animation)
+  const armG = new THREE.BoxGeometry(0.44,1.55,0.44);
+  const arms = [];
+  [-1.02,1.02].forEach(ax=>{
+    const arm = new THREE.Mesh(armG, furMat);
+    arm.position.set(ax,1.15,0.12); group.add(arm); arms.push(arm);
+  });
+  // Short stout legs (refs kept for the gait)
+  const legG = new THREE.BoxGeometry(0.52,0.9,0.52);
+  const legs = [];
+  [-0.46,0.46].forEach(lx=>{
+    const leg = new THREE.Mesh(legG, furMat);
+    leg.position.set(lx,0.45,0); group.add(leg); legs.push(leg);
+  });
+  group.children.forEach(c=>{ if(c.isMesh) c.userData.origMat = c.material; });
+
+  const ty = terrainY(x,z);
+  group.position.set(x, ty, z);
+  group.scale.setScalar(1.28);     // clearly larger than any lion
+  group.castShadow = true;
+  group.name = 'gorilla';
+  scene.add(group);
+
+  const G = {
+    mesh: group, arms, legs,
+    pos: new THREE.Vector3(x, ty, z),
+    state: 'roaming',              // sleeping|perched|roaming|engaging|smashing|treegrab
+    phase: 'rush',                 // sub-phase while engaging: rush → swing
+    health: GOR.HEALTH, maxHealth: GOR.HEALTH,
+    perchTree: null, perchPos: null,
+    target: null,                  // current lion (engaging) or wall mesh (smashing)
+    actionTimer: 0,                // wind-up / recovery clock for the current action
+    idleTimer: 0,                  // time perched with nothing to do (→ sleeping)
+    swipeCd: 0, grabCd: 0, smashCd: 0,
+    swung: false,                  // has the in-progress swipe already connected
+    heading: rand(0, Math.PI*2),
+    wanderDir: new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
+    wanderTimer: rand(2,4),
+    legPhase: Math.random()*Math.PI*2,
+    flashTimer: 0,
+    _detR: 0, _lastSpeed: 0,
+  };
+  gorillaMeshes.push(G);
   return G;
 }
 
+// A gorilla arrives from a map edge, like a recruited lion.
 function spawnGorilla(){
-  // Home near a (preferably climbable) tree, but well away from the player so it
-  // doesn't pounce the instant the game starts / it respawns.
-  const px = player.pos ? player.pos.x : 0, pz = player.pos ? player.pos.z : 0;
-  const far = treeObjects.filter(t=>Math.hypot(t.pos.x-px, t.pos.z-pz) > 24);
-  const pool = far.length ? far : treeObjects;
-  const climbers = pool.filter(t=>t.climbable);
-  const cand = climbers.length ? climbers : pool;
-  const home = cand.length ? cand[(Math.random()*cand.length)|0] : null;
-  let x,z;
-  if(home){ const a=rand(0,6.28); x=clamp(home.pos.x+Math.cos(a)*4,-44,44); z=clamp(home.pos.z+Math.sin(a)*4,-44,44); }
-  else { const a=rand(0,6.28); x=clamp(px+Math.cos(a)*30,-44,44); z=clamp(pz+Math.sin(a)*30,-44,44); }
-  const G=makeGorilla(x,z); G.homeTree=home||null;
-  showKillfeed('🦍 A gorilla moves into the area');
-  return G;
+  const a = rand(0, Math.PI*2), r = rand(38, 46);
+  makeGorilla(Math.cos(a)*r, Math.sin(a)*r);
+  showKillfeed('🦍 A gorilla enters the valley');
+  playSound('roar');
 }
 
-function nearestGorilla(pos, maxD){
-  let best=null, bd=maxD;
-  for(const G of gorillas){ if(G.state==='inTree') continue; const d=pos.distanceTo(G.pos); if(d<bd){ bd=d; best=G; } }
+// Nearest climbable tree to a point (or null).
+function nearestClimbableTree(pos, maxD){
+  let best=null, bd = maxD||Infinity;
+  treeObjects.forEach(t=>{
+    if(!t.climbable) return;
+    const d = Math.hypot(t.pos.x-pos.x, t.pos.z-pos.z);
+    if(d < bd){ bd = d; best = t; }
+  });
   return best;
 }
 
-function animateGorilla(G, dt, moving){
-  G.walkPhase += dt*(moving?6:1.6);
-  const sw = (moving?0.5:0.06)*Math.sin(G.walkPhase);
-  G.arms[0].rotation.x =  sw; G.arms[1].rotation.x = -sw;
-  G.legs[0].rotation.x = -sw*0.7; G.legs[1].rotation.x = sw*0.7;
-  if(G.pound>0){ G.pound-=dt; const p=Math.sin((1-Math.max(0,G.pound)/0.3)*Math.PI);
-    G.arms[0].rotation.x = -1.3*p; G.arms[1].rotation.x = -1.3*p; }
+// The climbable tree the player is currently sheltered up (elevated, within a
+// canopy), or null. Reuses the height the grapple-to-perch lifts the player to.
+function playerShelterTree(){
+  const agl = player.pos.y - terrainY(player.pos.x, player.pos.z);
+  if(agl < GOR.SHELTER_MINH) return null;
+  let best=null, bd=Infinity;
+  treeObjects.forEach(t=>{
+    if(!t.climbable) return;
+    const d = Math.hypot(t.pos.x-player.pos.x, t.pos.z-player.pos.z);
+    if(d < (t.canopyR||2.5)+1.6 && d < bd){ bd = d; best = t; }
+  });
+  return best;
 }
 
-// Lions biting the gorilla — combined DPS from every lion pressed against it.
-function gorillaTakesBites(G, dt){
-  let biters=0;
-  lionMeshes.forEach(L=>{ if(L.stunTimer<=0 && L.pos.distanceTo(G.pos) < GORILLA.attackRange+0.4) biters++; });
-  if(biters) G.health -= GORILLA.lionBiteDps*biters*dt;
+// Nearest GROUNDED gorilla to a point (perched/sleeping ones are up a tree, out of
+// reach), or null. Used by the lions' fight_gorilla mob behaviour.
+function nearestGorilla(pos, maxD){
+  let best=null, bd = maxD||Infinity;
+  for(const G of gorillaMeshes){
+    if(G.state==='perched' || G.state==='sleeping') continue;
+    const d = pos.distanceTo(G.pos);
+    if(d < bd){ bd = d; best = G; }
+  }
+  return best;
+}
+
+// Smooth-turn the gorilla toward an XZ target.
+function gorillaFace(G, tx, tz, dt){
+  const a = Math.atan2(tx - G.pos.x, tz - G.pos.z);
+  let d = a - G.heading;
+  while(d >  Math.PI) d -= Math.PI*2;
+  while(d < -Math.PI) d += Math.PI*2;
+  G.heading += d * Math.min(1, GOR.TURN*(dt||0.016));
+  G.mesh.rotation.y = G.heading;
+}
+
+// Step the gorilla toward an XZ target, clamp to the world, drop onto terrain.
+function gorillaMoveToward(G, tx, tz, speed, dt){
+  const dx = tx - G.pos.x, dz = tz - G.pos.z;
+  const d = Math.hypot(dx, dz);
+  if(d > 0.001){
+    const step = Math.min(speed*dt, d);
+    G.pos.x += (dx/d)*step;
+    G.pos.z += (dz/d)*step;
+  }
+  G.pos.x = clamp(G.pos.x, -HALF+0.5, HALF-0.5);
+  G.pos.z = clamp(G.pos.z, -HALF+0.5, HALF-0.5);
+  G.pos.y = terrainY(G.pos.x, G.pos.z);
+  G.mesh.position.copy(G.pos);
+  gorillaFace(G, tx, tz, dt);
+  G._lastSpeed = speed;
+}
+
+// Limb animation: gait drives leg/arm swing amplitude.
+function animateGorilla(G, dt, gait){
+  G.legPhase += dt*(2 + (gait||0)*2);
+  G.legs.forEach((leg,i)=>{ leg.position.y = 0.45 + Math.sin(G.legPhase + i*Math.PI)*0.10*(0.25 + (gait||0)); });
+  G.arms.forEach((arm,i)=>{ arm.rotation.x = Math.sin(G.legPhase + i*Math.PI)*0.30*(0.3 + (gait||0)); });
+}
+
+// Smash wall i (the gorilla's version of chopWall — no wood reclaim, with feel).
+function gorillaSmashWall(G, idx){
+  const pos = removeWallAt(idx);
+  if(!pos) return;
+  showKillfeed('🦍 Gorilla smashed a wall');
+  playSound('place');
+  if(pos.distanceTo(player.pos) < 16){ shakeTime = Math.max(shakeTime,0.22); shakeAmt = 0.006; }
+}
+
+// Make sure a night gorilla has a perch picked; cache its elevated perch point.
+function gorillaEnsurePerch(G){
+  if(G.perchTree && treeObjects.includes(G.perchTree)) return;
+  G.perchTree = nearestClimbableTree(G.pos, 70);
+  if(G.perchTree){
+    const p = G.perchTree.pos;
+    G.perchPos = new THREE.Vector3(p.x, terrainY(p.x,p.z) + (G.perchTree.perchY||3), p.z);
+  } else {
+    G.perchPos = null;
+  }
+}
+
+// Index of the nearest wall within smash range that BLOCKS the straight line
+// from the gorilla toward (tx,tz), or -1. This is what makes wall-smash a
+// first-class option: the gorilla commits to smashing through a wall in its way
+// instead of routing around it (the lions' wall-avoidance never applies here).
+function wallBlockingPath(G, tx, tz){
+  const gx = G.pos.x, gz = G.pos.z;
+  let aimX = tx-gx, aimZ = tz-gz;
+  const al = Math.hypot(aimX, aimZ) || 1; aimX /= al; aimZ /= al;
+  let bi = -1, bd = Infinity;
+  for(let i=0; i<wallMeshes.length; i++){
+    const w = wallMeshes[i];
+    const wx = w.position.x-gx, wz = w.position.z-gz;
+    const wl = Math.hypot(wx, wz);
+    if(wl > GOR.SMASH_RANGE) continue;                  // too far to reach
+    const dot = wl > 0.001 ? (wx*aimX + wz*aimZ)/wl : 1; // ahead, toward the aim?
+    if(dot < GOR.PATH_SMASH_DOT) continue;               // behind or off to the side
+    if(wl < bd){ bd = wl; bi = i; }
+  }
+  return bi;
 }
 
 function updateGorillas(dt){
   if(gameState!=='playing') return;
 
-  for(const G of gorillas){
-    if(G.flashTimer>0){ G.flashTimer-=dt; const fl=G.flashTimer>0; G.mesh.traverse(c=>{ if(c.isMesh) c.material = fl?FLASH_MAT:c.userData.origMat; }); }
-    if(G.attackCd>0) G.attackCd-=dt;
-
-    if(G.stunTimer>0){ G.stunTimer-=dt; gorillaTakesBites(G,dt); animateGorilla(G,dt,false); continue; }
-
-    // nearest moving thing (lion / prey / player) within senses
-    let target=null, td=Infinity, ttype=null;
-    lionMeshes.forEach(L=>{ const d=L.pos.distanceTo(G.pos); if(d<td){ td=d; target=L; ttype='lion'; } });
-    preyMeshes.forEach(P=>{ if(P.state==='stunned')return; const d=P.pos.distanceTo(G.pos); if(d<td){ td=d; target=P; ttype='prey'; } });
-    const pdist = player.inTree ? Infinity : player.pos.distanceTo(G.pos);
-    if(pdist<td){ td=pdist; target={pos:player.pos}; ttype='player'; }
-
-    // ---- tree behaviour (optional) ----
-    if(G.state==='inTree'){
-      G.mesh.position.copy(G.perch); G.climbTimer-=dt;
-      if((target && td<GORILLA.senseR) || G.climbTimer<=0) G.state='descend';   // come down to fight / done resting
-      continue;   // safe up here; lions can't reach
+  // ---- spawn: the FIRST gorilla arrives early so it's a present, testable
+  //      threat; subsequent ones follow the every-2-days cadence. ----
+  if(gorillaMeshes.length < GOR.MAX){
+    if(!dn.firstGorilla){
+      if(elapsed > GOR.FIRST_SPAWN_T){ spawnGorilla(); dn.firstGorilla = true; dn.nextGorillaDay = dn.day + GOR.SPAWN_EVERY; }
+    } else if(dn.day >= dn.nextGorillaDay){
+      spawnGorilla(); dn.nextGorillaDay += GOR.SPAWN_EVERY;
     }
-    if(G.state==='descend'){ G.pos.y=terrainY(G.pos.x,G.pos.z); G.mesh.position.copy(G.pos); G.state='wander'; G.climbCd=rand(20,40); continue; }
-    if(G.state==='climb'){
-      if(target && td<GORILLA.senseR){ G.state='aggro'; }            // interrupted — defend
-      else if(!G.homeTree){ G.state='wander'; }
-      else {
-        const tx=G.homeTree.pos.x-G.pos.x, tz=G.homeTree.pos.z-G.pos.z, d=Math.hypot(tx,tz);
-        if(d>1.4){ G.pos.x+=tx/d*GORILLA.speed*1.3*dt; G.pos.z+=tz/d*GORILLA.speed*1.3*dt; G.pos.y=terrainY(G.pos.x,G.pos.z); G.mesh.position.copy(G.pos); G.mesh.rotation.y=Math.atan2(tx,tz); animateGorilla(G,dt,true); }
-        else { G.perch=new THREE.Vector3(G.homeTree.pos.x, terrainY(G.homeTree.pos.x,G.homeTree.pos.z)+G.homeTree.perchY, G.homeTree.pos.z); G.state='inTree'; G.climbTimer=rand(7,13); }
-        continue;
-      }
-    }
-
-    // ---- decide state ----
-    if(target && td<GORILLA.senseR) G.state = (td<GORILLA.attackRange) ? 'attack' : 'aggro';
-    else if(G.state==='attack'||G.state==='aggro') G.state='wander';
-
-    let dir=new THREE.Vector3(), speed=0;
-    if(G.state==='attack'){
-      dir.set(target.pos.x-G.pos.x,0,target.pos.z-G.pos.z);   // face it, don't advance
-      if(G.attackCd<=0){
-        G.attackCd=GORILLA.attackCd; G.pound=0.3; playSound('place');
-        if(ttype==='lion'){ target.health-=GORILLA.attack; target.flashTimer=0.25; target.stunTimer=Math.max(target.stunTimer,0.5);
-          if(target.health<=0) showKillfeed('🦍 The gorilla killed a lion!'); else showKillfeed('🦍 Gorilla pummels a lion'); }
-        else if(ttype==='prey'){ target.health-=GORILLA.attack; target.flashTimer=0.25; target.state='flee'; target.alertTimer=3; }
-        else { player.health-=GORILLA.playerDmg; shakeTime=0.3; shakeAmt=0.006; showKillfeed('🦍 The gorilla hit you!');
-          if(player.health<=0){ player.health=0; triggerGameOver(); } }
-      }
-    } else if(G.state==='aggro'){
-      dir.set(target.pos.x-G.pos.x,0,target.pos.z-G.pos.z); speed=GORILLA.chargeSpeed;
-    } else { // wander, loitering near the home tree
-      G.climbCd-=dt;
-      G.wanderTimer-=dt;
-      if(G.wanderTimer<=0){
-        if(G.homeTree && G.homeTree.pos.distanceTo(G.pos)>11){ const t=G.homeTree.pos; G.wanderDir.set(t.x-G.pos.x,0,t.z-G.pos.z).normalize(); }
-        else G.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize();
-        G.wanderTimer=rand(2.5,5);
-      }
-      dir.copy(G.wanderDir); speed=GORILLA.speed;
-      if(G.homeTree && G.homeTree.climbable && G.climbCd<=0){ G.state='climb'; }   // occasional climb when calm
-    }
-
-    if(dir.lengthSq()>0){ if(speed>0){ const dn=dir.clone().normalize(); G.pos.addScaledVector(dn, speed*dt); }
-      G.mesh.rotation.y=Math.atan2(dir.x,dir.z); }
-    G.pos.x=clamp(G.pos.x,-46,46); G.pos.z=clamp(G.pos.z,-46,46);
-    collideWalls(G.pos,0.9);
-    G.pos.y=terrainY(G.pos.x,G.pos.z); G.mesh.position.copy(G.pos);
-    animateGorilla(G, dt, speed>0.5);
-
-    // the pride bites back
-    gorillaTakesBites(G, dt);
-    // danger cue when it's right on top of the player
-    if(ttype==='player' && td<5) player.inDanger=true;
   }
 
-  // deaths → corpse
-  for(let i=gorillas.length-1;i>=0;i--){
-    if(gorillas[i].health<=0){ spawnCorpse(gorillas[i].pos.clone()); killObj(gorillas[i].mesh); gorillas.splice(i,1); showKillfeed('🦍 The gorilla has fallen'); }
+  const isNight = !dn.isDay;
+  const shelter = playerShelterTree();   // the player's tree hideout, or null
+
+  gorillaMeshes.forEach(G=>{
+    // cooldowns
+    G.swipeCd = Math.max(0, G.swipeCd - dt);
+    G.grabCd  = Math.max(0, G.grabCd  - dt);
+    G.smashCd = Math.max(0, G.smashCd - dt);
+
+    // hit flash (reuses the shared lion flash material)
+    if(G.flashTimer > 0){
+      G.flashTimer -= dt;
+      const f = G.flashTimer > 0;
+      G.mesh.children.forEach(c=>{ if(c.isMesh) c.material = f ? FLASH_MAT : c.userData.origMat; });
+    }
+
+    const gpos = G.pos, ppos = player.pos;
+    // Horizontal reach to the player — a sheltered player sits metres up a tree,
+    // so the grab must ignore the vertical gap (the gorilla reaches up).
+    const distP = Math.hypot(ppos.x - gpos.x, ppos.z - gpos.z);
+    G._detR = isNight ? GOR.LION_DETECT : 0;   // what it's watching for, for the HUD
+
+    // nearest lion
+    let lion=null, ld=Infinity;
+    lionMeshes.forEach(L=>{ const d = L.pos.distanceTo(gpos); if(d < ld){ ld = d; lion = L; } });
+
+    // The pride bites back: lions pressed against a GROUNDED gorilla wear it down
+    // (a perched/sleeping gorilla is up its tree, out of reach). Its swipes punish
+    // them, so a committed pride can bring it down but pays for it.
+    if(G.state!=='perched' && G.state!=='sleeping'){
+      let biters=0;
+      lionMeshes.forEach(L=>{ if((L.stunTimer||0)<=0 && L.pos.distanceTo(gpos) < 2.8) biters++; });
+      if(biters) G.health -= GOR.LION_BITE_DPS*biters*dt;
+    }
+
+    let gait = 0.2;
+
+    // ============ ACTION STATES (run to completion) ============
+    if(G.state === 'treegrab'){
+      gorillaFace(G, ppos.x, ppos.z, dt);
+      G.actionTimer -= dt;
+      if(G.actionTimer <= 0){
+        const st = playerShelterTree();
+        if(st && distP < GOR.GRAB_RANGE + 1.0){
+          if(grapple.active) releaseGrapple();
+          player.pos.y = terrainY(player.pos.x, player.pos.z) + 0.1;   // yanked down
+          player.vel.set(0,0,0);
+          player.health -= GOR.GRAB_DMG;
+          player.stunTimer = GOR.GRAB_STUN;
+          const ax = player.pos.x - gpos.x, az = player.pos.z - gpos.z, al = Math.hypot(ax,az)||1;
+          player.knockback.x = (ax/al)*GOR.GRAB_KB;
+          player.knockback.z = (az/al)*GOR.GRAB_KB;
+          shakeTime = 0.4; shakeAmt = 0.008; playSound('spotted');
+          showKillfeed('🦍 Gorilla wrenched you from the tree!');
+        }
+        G.grabCd = GOR.GRAB_CD;
+        G.state = isNight ? 'perched' : 'roaming';
+      }
+      animateGorilla(G, dt, 0);
+      return;
+    }
+
+    if(G.state === 'smashing'){
+      if(G.target) gorillaFace(G, G.target.position.x, G.target.position.z, dt);
+      G.actionTimer -= dt;
+      if(G.actionTimer <= 0){
+        gorillaSmashWall(G, G.target ? wallMeshes.indexOf(G.target) : -1);
+        G.target = null; G.smashCd = GOR.SMASH_CD;
+        G.state = isNight ? 'perched' : 'roaming';
+      }
+      animateGorilla(G, dt, 0);
+      return;
+    }
+
+    if(G.state === 'engaging'){
+      const tgt = G.target;
+      if(!tgt || tgt.health <= 0 || !lionMeshes.includes(tgt)){
+        G.target = null; G.swung = false; G.phase = 'rush';
+        G.state = isNight ? 'perched' : 'roaming';
+        animateGorilla(G, dt, 0.4);
+        return;
+      }
+      const td = tgt.pos.distanceTo(gpos);
+      if(G.phase === 'rush'){
+        if(td > GOR.LION_DETECT*1.7){           // lion escaped — give up, go home
+          G.target = null; G.state = isNight ? 'perched' : 'roaming';
+        } else if(td <= GOR.SWIPE_RANGE){        // in reach — wind up the swipe
+          G.phase = 'swing'; G.actionTimer = GOR.SWIPE_WINDUP + GOR.SWIPE_RECOVER; G.swung = false;
+          gorillaFace(G, tgt.pos.x, tgt.pos.z, dt);
+        } else {                                 // close the distance fast
+          gorillaMoveToward(G, tgt.pos.x, tgt.pos.z, GOR.SPEED_DROP, dt);
+        }
+        animateGorilla(G, dt, G.phase==='rush' ? 1.6 : 0.5);
+        return;
+      }
+      // swing phase
+      gorillaFace(G, tgt.pos.x, tgt.pos.z, dt);
+      G.actionTimer -= dt;
+      if(!G.swung && G.actionTimer <= GOR.SWIPE_RECOVER){   // the strike lands here
+        G.swung = true;
+        if(td < GOR.SWIPE_RANGE + 0.8){
+          tgt.health   -= GOR.SWIPE_DMG;
+          tgt.flashTimer = 0.15;
+          tgt.stunTimer  = Math.max(tgt.stunTimer||0, 0.8);
+          showKillfeed('🦍 Gorilla swiped a lion');
+          if(ld < 18){ shakeTime = Math.max(shakeTime,0.16); shakeAmt = 0.004; }
+        }
+        playSound('throw');
+      }
+      if(G.actionTimer <= 0){
+        G.swipeCd = GOR.SWIPE_CD; G.swung = false; G.phase = 'rush'; G.target = null;
+        G.state = isNight ? 'perched' : 'roaming';
+      }
+      animateGorilla(G, dt, 0.4);
+      return;
+    }
+
+    // ============ DECISION (not mid-action) ============
+    // The gorilla can SEE a tree-sheltered player (GOR.SEES_TREED_PLAYER) — the
+    // lions cannot. `treed` is non-null whenever the player is up a tree.
+    const treed = (GOR.SEES_TREED_PLAYER ? shelter : null);
+    const noticesPlayer = distP < GOR.PURSUE_RANGE;
+
+    // 1) Tree-grab a sheltered player already in reach — the prize.
+    if(treed && distP < GOR.GRAB_RANGE && G.grabCd <= 0){
+      G.state = 'treegrab'; G.actionTimer = GOR.GRAB_WINDUP; G.idleTimer = 0;
+      gorillaFace(G, ppos.x, ppos.z, dt);
+      animateGorilla(G, dt, 0);
+      return;
+    }
+
+    // 2) Pursue the player when noticed — and SMASH any wall in the way rather
+    //    than detouring. Treed players are hunted day or night (the gorilla
+    //    closes on the tree, then grabs at step 1); grounded players are hunted
+    //    by day (at night the gorilla stays perch-focused unless you're treed).
+    if(noticesPlayer && (treed || !isNight)){
+      G.perchTree = null; G.perchPos = null; G.idleTimer = 0;
+      const wb = wallBlockingPath(G, ppos.x, ppos.z);
+      if(wb >= 0 && G.smashCd <= 0){
+        G.state = 'smashing'; G.target = wallMeshes[wb]; G.actionTimer = GOR.SMASH_WINDUP;
+        gorillaFace(G, G.target.position.x, G.target.position.z, dt);
+        animateGorilla(G, dt, 0);
+        return;
+      }
+      // close in; once at the tree the grab fires (step 1), on the ground the
+      // maul damage applies (updateHealth). 'pursuing' shows as "engaging".
+      const stopDist = treed ? GOR.GRAB_RANGE*0.7 : GOR.MAUL_RANGE*0.85;
+      if(distP > stopDist){
+        gorillaMoveToward(G, ppos.x, ppos.z, isNight ? GOR.SPEED_ROAM*1.3 : GOR.SPEED_ROAM*1.3, dt);
+      } else {
+        gorillaFace(G, ppos.x, ppos.z, dt);
+      }
+      G.state = 'pursuing';
+      animateGorilla(G, dt, 1.1);
+      return;
+    }
+
+    if(isNight){
+      // NIGHT — hold a perch; drop to engage a lion that comes too close.
+      gorillaEnsurePerch(G);
+      if(lion && ld < GOR.LION_DETECT && G.swipeCd <= 0){
+        G.state = 'engaging'; G.phase = 'rush'; G.target = lion; G.idleTimer = 0; G.swung = false;
+      } else {
+        // settle onto the perch; doze off if nothing happens for a while
+        G.idleTimer += dt;
+        if(G.perchPos){
+          const pd = Math.hypot(G.perchPos.x-gpos.x, G.perchPos.z-gpos.z);
+          if(pd > 0.5){ gorillaMoveToward(G, G.perchPos.x, G.perchPos.z, GOR.SPEED_ROAM*1.5, dt); gait = 0.8; }
+        }
+        G.state = (G.idleTimer > GOR.SLEEP_AFTER) ? 'sleeping' : 'perched';
+        if(G.state === 'sleeping' && lion && ld < GOR.WAKE_DETECT){ G.state = 'perched'; G.idleTimer = 0; }
+        // sit up in the canopy
+        if(G.perchTree) G.mesh.position.y = terrainY(gpos.x, gpos.z) + (G.perchTree.perchY||3);
+      }
+    } else {
+      // DAY — roam the ground while the pride rests; smash a wall in the path.
+      G.perchTree = null; G.perchPos = null; G.idleTimer = 0;
+      G.wanderTimer -= dt;
+      if(G.wanderTimer < 0){ G.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); G.wanderTimer = rand(3,6); }
+      if(Math.hypot(gpos.x, gpos.z) > HALF-6){ G.wanderDir.set(-gpos.x,0,-gpos.z).normalize(); }
+      const aimX = gpos.x + G.wanderDir.x*8, aimZ = gpos.z + G.wanderDir.z*8;
+      const wb = wallBlockingPath(G, aimX, aimZ);
+      if(wb >= 0 && G.smashCd <= 0){
+        G.state = 'smashing'; G.target = wallMeshes[wb]; G.actionTimer = GOR.SMASH_WINDUP;
+        gorillaFace(G, G.target.position.x, G.target.position.z, dt);
+        animateGorilla(G, dt, 0);
+        return;
+      }
+      gorillaMoveToward(G, aimX, aimZ, GOR.SPEED_ROAM, dt);
+      G.state = 'roaming'; gait = 0.9;
+    }
+
+    animateGorilla(G, dt, gait);
+  });
+
+  // Remove downed gorillas (rocks chip them, the pride wears them down) — leave a
+  // corpse behind, then free the VRAM.
+  for(let i=gorillaMeshes.length-1; i>=0; i--){
+    if(gorillaMeshes[i].health <= 0){
+      spawnCorpse(gorillaMeshes[i].pos.clone());
+      killObj(gorillaMeshes[i].mesh);
+      gorillaMeshes.splice(i,1);
+      showKillfeed('🦍 The gorilla is down!');
+    }
   }
-  // a new one wanders in a while after the last dies
-  gorillaSpawnTimer-=dt;
-  if(gorillas.length===0 && gorillaSpawnTimer<=0){ spawnGorilla(); gorillaSpawnTimer=150; }
 }
 
 // =====================================================================
@@ -2319,10 +2652,7 @@ function chopWall(){
   const hits = raycaster.intersectObjects(wallMeshes, false);
   if(!hits.length || hits[0].distance > 6) return;
   const idx = wallMeshes.indexOf(hits[0].object);
-  if(idx === -1) return;
-  killObj(wallMeshes[idx]);
-  wallMeshes.splice(idx, 1);
-  wallAABBs.splice(idx, 1);
+  if(!removeWallAt(idx)) return;   // shared with the gorilla's wall-smash (lockstep splice)
   woodCount++;                 // reclaim the wood you spent building it
   updateWoodHUD();
   showKillfeed('🪓 Wall chopped! (+1 wood)');
@@ -2461,10 +2791,11 @@ function updateThrownRocks(dt){
         showKillfeed(P.health<=0 ? '🪨 Rock kill — '+P.label+'!' : '🪨 Stunned the '+P.label);
       }
     });
-    // Rocks sting the gorilla too (chip + brief stun — it's tough, so it won't drop it).
-    if(!hit) gorillas.forEach(G=>{
-      if(G.state!=='inTree' && r.mesh.position.distanceTo(G.pos) < 2.0){
-        G.health -= 8; G.flashTimer = 0.25; G.stunTimer = Math.max(G.stunTimer, 1.0);
+    // Rocks chip the gorilla too — it's far tankier than prey, so a rock only
+    // dents it and makes it flinch (skip a perched/sleeping one, up its tree).
+    if(!hit) gorillaMeshes.forEach(G=>{
+      if(G.state!=='perched' && G.state!=='sleeping' && r.mesh.position.distanceTo(G.pos) < 2.0){
+        G.health -= 8; G.flashTimer = 0.25;
         hit = true; showKillfeed('🪨 Rock staggers the gorilla');
       }
     });
@@ -2772,6 +3103,20 @@ function updateSignals(){
     html += `🦁 nearest ${near.isMale?'♂ male':'♀ lioness'} ${nd.toFixed(0)}m · ${st}${near.fedTimer>0?' <span class="sig-ok">(fed)</span>':''}<br>`+
             `&nbsp;&nbsp;hunger ${near.hunger|0}% · sees ${near._detR.toFixed(0)}m`;
   }
+  // Gorilla row — mirrors the lion entry. States: sleeping / perched /
+  // engaging / roaming / smashing wall / tree-grab.
+  if(gorillaMeshes.length){
+    let gnear=null, gd=Infinity;
+    gorillaMeshes.forEach(G=>{ const d=G.pos.distanceTo(player.pos); if(d<gd){gd=d;gnear=G;} });
+    const GST = {
+      sleeping:'sleeping', perched:'<span class="sig-w">perched</span>',
+      roaming:'roaming', engaging:'<span class="sig-hi">engaging</span>',
+      pursuing:'<span class="sig-hi">engaging</span>',
+      smashing:'<span class="sig-hi">smashing wall</span>', treegrab:'<span class="sig-hi">tree-grab</span>'
+    };
+    html += `🦍 gorilla ${gd.toFixed(0)}m · ${GST[gnear.state]||gnear.state}<br>`+
+            `&nbsp;&nbsp;hp ${(gnear.health/gnear.maxHealth*100)|0}% · ${dn.isDay?'day-roamer':'night-perched'}`;
+  }
   el.innerHTML = html;
 }
 
@@ -2847,10 +3192,10 @@ function drawMinimap(){
     mmCtx.beginPath(); mmCtx.arc(px,py, L.isMale?5:4, 0,Math.PI*2); mmCtx.fill();
   });
 
-  // Gorilla (Phase 7) — big distinct marker
-  mmCtx.fillStyle='#b05cff';
-  gorillas.forEach(G=>{
-    if(G.state==='inTree') return;
+  // Gorilla — big distinct marker; brighter when it's actively engaging
+  gorillaMeshes.forEach(G=>{
+    if(G.state==='perched' || G.state==='sleeping') return;   // up its tree — off-radar
+    mmCtx.fillStyle = (G.state==='engaging'||G.state==='pursuing'||G.state==='treegrab'||G.state==='smashing') ? '#c050ff' : '#b05cff';
     const [px,py]=toMM(G.pos.x-player.pos.x, G.pos.z-player.pos.z);
     mmCtx.beginPath(); mmCtx.arc(px,py,5.5,0,Math.PI*2); mmCtx.fill();
   });
@@ -2914,7 +3259,7 @@ function resetGame(){
   [...corpses].forEach(c=>killObj(c.mesh));
   [...thrownRocks].forEach(r=>killObj(r.mesh));
   [...preyMeshes].forEach(P=>killObj(P.mesh));
-  [...gorillas].forEach(G=>killObj(G.mesh));
+  [...gorillaMeshes].forEach(G=>killObj(G.mesh));
   [...carcasses].forEach(c=>{ removeVultures(c); killObj(c.mesh); });
   [..._dustPuffs].forEach(d=>killObj(d.mesh));
   if(grapple.line){ killObj(grapple.line); }
@@ -2929,8 +3274,7 @@ function resetGame(){
   preyMeshes.length = 0;
   carcasses.length  = 0;
   vultures.length   = 0;
-  gorillas.length   = 0;
-  gorillaSpawnTimer = 0;
+  gorillaMeshes.length = 0;
   _dustPuffs.length = 0;
 
   grapple   = { active:false, point:null, line:null, mode:null, perch:null, tree:null };
@@ -2946,7 +3290,7 @@ function resetGame(){
 
   // Start in full daylight (skip dawn) so the restart doesn't render the
   // world at midnight + heavy fog. Place us 15 s past dawn = full day.
-  dn = { time: TWILIGHT + 5, day: 1, isDay: true, nextLionSpawn: 120 };
+  dn = { time: TWILIGHT + 5, day: 1, isDay: true, nextLionSpawn: 120, firstGorilla: false, nextGorillaDay: 3 };
   weather = { state:'clear', timer: rand(60,110), intensity:0, flash:0, detMul:1 };
   roarTimer = rand(20,40);
   if(rainSys) rainSys.pts.visible = false;
@@ -2966,7 +3310,7 @@ function resetGame(){
   prideAlert.timer = 0;
   spawnPride();
   spawnHerds();              // populate the savanna with prey (Phase 6)
-  spawnGorilla();            // one territorial gorilla by the trees (Phase 7)
+  // (the apex gorilla self-spawns ~22s in via updateGorillas, then every 2 days)
 
   gameState = 'playing';
   document.getElementById('overlay').style.display='none';

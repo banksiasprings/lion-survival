@@ -94,6 +94,18 @@ not flavour.
       eat carcasses `[E]`. **6c** lions hunt prey when hungry (group→big payoff, solo→easy prey),
       feed → 'fed' lull, scavenge/steal kills, guard kills (approach a fresh kill → pride turns
       on you). Closes predator↔prey↔player loop; watering hole is the convergence point.
+- [x] Phase 7 — apex gorilla (`GOR` config / `gorillaMeshes[]`, single explicit FSM:
+      `sleeping/perched/roaming/engaging/smashing/treegrab`). Inverts the lions' rhythm —
+      **roams the ground by day, perches in a tree by night** and drops to swipe any lion in
+      range. The one animal that can **see a treed player**: it pursues, **smashes walls in its
+      path** (`wallBlockingPath`→`removeWallAt`, shared with the axe so `wallMeshes`/`wallAABBs`
+      stay in lockstep) and **tree-grabs** a sheltered player back to the ground (`player.stunTimer`
+      daze + knockback). Tanky (160 hp): rocks chip it and a committed pride can mob a *grounded*
+      one (`GOR.LION_BITE_DPS`) but pays in swipes. First spawns ~22 s in, then every 2 days
+      (`dn.firstGorilla`/`nextGorillaDay`). Raw-Signals 🦍 row shows state + day-roamer/night-perched
+      mood. NOTE: this is the *advanced* gorilla — merged 2026-06-17 from a divergent fork that had
+      grown the AI without the animals; see `dossiers/merge_2026-06-16.md`. It replaced an earlier
+      basic gorilla (`GORILLA`/`gorillas[]`), now gone.
 
 ## Food chain (Phase 6) — quick reference
 prey graze in herds → flee any predator within species flee-dist → lions hunt the weak/slow
