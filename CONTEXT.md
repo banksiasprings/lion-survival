@@ -112,10 +112,14 @@ not flavour.
       (`dossiers/merge_2026-06-16.md`); retaliation + day aggression added same day
       (`dossiers/gorilla_retaliation_2026-06-17.md`). It replaced an earlier basic gorilla
       (`GORILLA`/`gorillas[]`), now gone. **Render** (2026-06-17): `makeGorilla` rebuilt to a
-      22-box, 7-tone silverback silhouette (hunched yoke, sagittal crest, brow, muzzle, grey
-      saddle, knuckle-walk arms); `animateGorilla` is now a per-state pose controller (arms/legs
-      are shoulder/hip pivot Groups; swipe/smash/treegrab poses run off `actionTimer`). Hit-flash
-      moved to `.traverse` so the nested limbs still flash (`dossiers/gorilla_render_2026-06-17.md`).
+      28-box bold-silverback silhouette (broad shoulder yoke + narrow hips V-taper, tall crest,
+      heavy brow, two-tone coat, bright silver saddle + sheen, battle scar, knuckle-walk arms);
+      `animateGorilla` is a per-state pose controller (arms/legs are shoulder/hip pivot Groups;
+      swipe/smash/treegrab poses run off `actionTimer`) **and** drives **emissive glowing eyes + an
+      additive glow halo** (`gorGlowTexture`) — amber at rest, red-hot in combat, cranked at night
+      so a perched gorilla is two burning eyes in the canopy. Eyes/halos are `userData.noFlash`;
+      the hit-flash moved to `.traverse` and skips `noFlash` so the body flashes white while the
+      eyes keep burning. Scale 1.36 (`dossiers/gorilla_render_2026-06-17.md`).
 
 ## Food chain (Phase 6) — quick reference
 prey graze in herds → flee any predator within species flee-dist → lions hunt the weak/slow

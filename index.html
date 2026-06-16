@@ -2132,60 +2132,99 @@ function removeWallAt(idx){
   return pos;
 }
 
+// Soft radial sprite for the gorilla's eye-glow — white falloff, so each glow
+// mesh's own colour tints it. Built once, shared, and kept alive across disposals.
+let _gorGlowTex = null;
+function gorGlowTexture(){
+  if(_gorGlowTex) return _gorGlowTex;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(32,32,0, 32,32,32);
+  grd.addColorStop(0.0,'rgba(255,255,255,1)');
+  grd.addColorStop(0.28,'rgba(255,255,255,0.55)');
+  grd.addColorStop(1.0,'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0,0,64,64);
+  _gorGlowTex = new THREE.CanvasTexture(c);
+  return _gorGlowTex;
+}
+
 function makeGorilla(x, z){
   const group = new THREE.Group();
-  // --- palette: a multi-tone coat so the silhouette reads as a gorilla, not a
-  //     dark blob. Darker than any lion, with a grey silverback saddle, a lit
-  //     chest plate, a paler jutting muzzle, and near-black face/hands/feet.
-  //     Everything is added flat to `group` (arms/legs sit one level under a
-  //     shoulder/hip pivot) so the shared hit-flash recolours it via traverse. ---
-  const furMat    = new THREE.MeshLambertMaterial({color:0x2b2b32}); // main coat
-  const backMat   = new THREE.MeshLambertMaterial({color:0x53535e}); // silverback saddle
-  const chestMat  = new THREE.MeshLambertMaterial({color:0x3a3a44}); // lit chest plate
-  const faceMat   = new THREE.MeshLambertMaterial({color:0x141418}); // near-black face/skull
-  const browMat   = new THREE.MeshLambertMaterial({color:0x303038}); // heavy brow ridge
-  const muzzleMat = new THREE.MeshLambertMaterial({color:0x47403a}); // paler prognathous muzzle
-  const darkMat   = new THREE.MeshLambertMaterial({color:0x0c0c10}); // hands, feet, eyes, nostrils
+  // --- palette: a bold, intimidating silverback. Two-tone coat (lit upper body
+  //     vs shadowed limbs/underside) under a bright steel saddle with a sheen
+  //     highlight, a lit chest plate and a paler jutting muzzle — PLUS emissive
+  //     eyes and an additive glow halo that flares red-hot in combat and blazes
+  //     amber in the dark when night-perched. It's meant to be the most
+  //     distinctive thing on screen. Everything is flat under `group` (limbs one
+  //     level under a shoulder/hip pivot) so the hit-flash recolours it via
+  //     traverse; the eye + glow meshes opt out (`noFlash`) so the eyes keep
+  //     burning even as the body flashes white on a hit. ---
+  const furMat    = new THREE.MeshLambertMaterial({color:0x26262c}); // lit coat (upper body)
+  const furMat2   = new THREE.MeshLambertMaterial({color:0x191920}); // shadowed limbs/underside
+  const backMat   = new THREE.MeshLambertMaterial({color:0x6a6c7c}); // bright silverback saddle
+  const sheenMat  = new THREE.MeshLambertMaterial({color:0x9aa0b2}); // silver sheen along the saddle top
+  const chestMat  = new THREE.MeshLambertMaterial({color:0x3c3c48}); // lit chest plate
+  const faceMat   = new THREE.MeshLambertMaterial({color:0x0f0f13}); // near-black face/skull
+  const browMat   = new THREE.MeshLambertMaterial({color:0x2b2b34}); // heavy brow ridge
+  const muzzleMat = new THREE.MeshLambertMaterial({color:0x4a4138}); // paler prognathous muzzle
+  const scarMat   = new THREE.MeshLambertMaterial({color:0x9a8e82}); // old battle scar
+  const darkMat   = new THREE.MeshLambertMaterial({color:0x09090c}); // hands, feet, sockets, nostrils
+  const eyeMat    = new THREE.MeshLambertMaterial({color:0x140a02, emissive:0xff8a20}); // glowing eyes (mutated/frame)
   const box = (w,h,d,mat,x,y,z)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); m.position.set(x,y,z); group.add(m); return m; };
 
-  // Core mass — barrel chest over heavy hips with a hunched shoulder yoke.
-  box(1.28,0.95,1.08, furMat,   0, 0.86,  0.00);      // hips
-  box(1.62,1.45,1.20, furMat,   0, 1.70,  0.02);      // barrel torso
-  box(1.85,0.62,1.18, furMat,   0, 2.32, -0.04);      // bulky hunched shoulders
-  box(1.18,1.00,0.18, chestMat, 0, 1.62,  0.62);      // lit chest plate (front highlight)
-  box(1.30,0.70,0.95, backMat,  0, 2.00, -0.32);      // grey silverback saddle (the signature)
+  // Core mass — deep barrel chest, broad imposing shoulder yoke, narrow hips: a
+  // heavy V-taper that reads as raw power at a glance.
+  box(1.16,0.92,1.02, furMat2,  0, 0.82,  0.00);      // hips (narrow, shadowed)
+  box(1.70,1.52,1.28, furMat,   0, 1.74,  0.04);      // deep barrel torso
+  box(2.12,0.72,1.34, furMat,   0, 2.42, -0.04);      // broad hunched shoulder yoke
+  box(1.30,1.08,0.18, chestMat, 0, 1.66,  0.68);      // lit chest plate (front highlight)
+  box(1.50,0.84,1.04, backMat,  0, 2.12, -0.36);      // bright silverback saddle (the signature)
+  box(1.28,0.18,0.92, sheenMat, 0, 2.58, -0.34);      // silver sheen lift along the saddle top
 
-  // Head — low and forward off the shoulders (the knuckle-walk posture).
-  box(0.92,0.82,0.86, faceMat,   0,   2.60, 0.32);    // cranium
-  box(0.30,0.40,0.66, faceMat,   0,   3.05, 0.20);    // sagittal crest (domed skull)
-  box(0.78,0.24,0.18, browMat,   0,   2.70, 0.78);    // prominent brow ridge
-  box(0.13,0.10,0.08, darkMat,  -0.20,2.60, 0.80);    // eyes — deep-set under the brow
-  box(0.13,0.10,0.08, darkMat,   0.20,2.60, 0.80);
-  box(0.56,0.46,0.40, muzzleMat, 0,   2.40, 0.84);    // jutting paler muzzle
-  box(0.30,0.14,0.08, darkMat,   0,   2.34, 1.06);    // dark nostril pad
-  box(0.11,0.18,0.13, faceMat,  -0.50,2.66, 0.30);    // ears — small, set back
-  box(0.11,0.18,0.13, faceMat,   0.50,2.66, 0.30);
+  // Head — low and forward off the shoulders; tall sagittal crest, heavy brow.
+  box(0.98,0.88,0.92, faceMat,   0,   2.70, 0.36);    // cranium
+  box(0.36,0.54,0.78, faceMat,   0,   3.22, 0.24);    // tall sagittal crest (domed skull)
+  box(0.88,0.30,0.22, browMat,   0,   2.82, 0.86);    // heavy brow ridge
+  box(0.18,0.13,0.10, darkMat,  -0.23,2.70, 0.90);    // eye sockets — deep-set under the brow
+  box(0.18,0.13,0.10, darkMat,   0.23,2.70, 0.90);
+  box(0.62,0.52,0.46, muzzleMat, 0,   2.50, 0.96);    // jutting paler muzzle
+  box(0.34,0.16,0.08, darkMat,   0,   2.42, 1.22);    // dark nostril pad
+  box(0.12,0.20,0.14, faceMat,  -0.56,2.78, 0.34);    // ears — small, set back
+  box(0.12,0.20,0.14, faceMat,   0.56,2.78, 0.34);
+  const scar = box(0.52,0.07,0.07, scarMat, -0.30,2.66,0.95); scar.rotation.z = -0.7;  // old slash over one eye
 
-  // Long knuckle-walking arms — each on a shoulder pivot so it swings as one
-  // piece, with a dark knuckle pad at the wrist. (refs kept for gait/combat poses)
-  const upperArmG = new THREE.BoxGeometry(0.52,1.90,0.52); upperArmG.translate(0,-0.95,0);
+  // Emissive eyes + additive glow halos (noFlash so they keep burning on a hit).
+  const glow = [];
+  [-0.23, 0.23].forEach(ex=>{
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.15,0.12,0.08), eyeMat);
+    eye.position.set(ex, 2.70, 0.965); eye.userData.noFlash = true; group.add(eye);
+    const gmat = new THREE.MeshBasicMaterial({ map:gorGlowTexture(), color:0xff9a36,
+      transparent:true, opacity:0.0, blending:THREE.AdditiveBlending, depthWrite:false });
+    gmat.userData.keep = true;                          // shared glow texture survives a disposal
+    const halo = new THREE.Mesh(new THREE.PlaneGeometry(0.64,0.64), gmat);
+    halo.position.set(ex, 2.70, 1.0); halo.userData.noFlash = true; group.add(halo); glow.push(halo);
+  });
+
+  // Long knuckle-walking arms — broad shadowed upper arm + big dark knuckle pad,
+  // on a shoulder pivot so the whole limb swings from the joint. (refs kept)
+  const upperArmG = new THREE.BoxGeometry(0.58,2.05,0.58); upperArmG.translate(0,-1.02,0);
   const arms = [];
-  [-1.02,1.02].forEach(ax=>{
-    const sh = new THREE.Group(); sh.position.set(ax,2.20,0.06);
-    sh.add(new THREE.Mesh(upperArmG, furMat));
-    const hand = new THREE.Mesh(new THREE.BoxGeometry(0.50,0.34,0.62), darkMat);
-    hand.position.set(0,-1.86,0.14); sh.add(hand);
+  [-1.14,1.14].forEach(ax=>{
+    const sh = new THREE.Group(); sh.position.set(ax,2.30,0.06);
+    sh.add(new THREE.Mesh(upperArmG, furMat2));
+    const hand = new THREE.Mesh(new THREE.BoxGeometry(0.60,0.40,0.72), darkMat);
+    hand.position.set(0,-2.02,0.16); sh.add(hand);
     group.add(sh); arms.push(sh);
   });
 
-  // Short stout legs — each on a hip pivot, dark foot planted at the base.
-  const thighG = new THREE.BoxGeometry(0.62,0.92,0.66); thighG.translate(0,-0.46,0);
+  // Short stout legs — each on a hip pivot, big dark foot planted at the base.
+  const thighG = new THREE.BoxGeometry(0.68,0.98,0.72); thighG.translate(0,-0.49,0);
   const legs = [];
-  [-0.44,0.44].forEach(lx=>{
-    const hp = new THREE.Group(); hp.position.set(lx,1.12,0.00);
-    hp.add(new THREE.Mesh(thighG, furMat));
-    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.52,0.26,0.74), darkMat);
-    foot.position.set(0,-0.92,0.16); hp.add(foot);
+  [-0.46,0.46].forEach(lx=>{
+    const hp = new THREE.Group(); hp.position.set(lx,1.10,0.00);
+    hp.add(new THREE.Mesh(thighG, furMat2));
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.58,0.28,0.82), darkMat);
+    foot.position.set(0,-0.96,0.18); hp.add(foot);
     group.add(hp); legs.push(hp);
   });
 
@@ -2193,13 +2232,15 @@ function makeGorilla(x, z){
 
   const ty = terrainY(x,z);
   group.position.set(x, ty, z);
-  group.scale.setScalar(1.32);     // clearly larger/heavier than any lion (~1.5x footprint)
+  group.scale.setScalar(1.36);     // towers over the pride — the heaviest thing on the field
   group.castShadow = true;
   group.name = 'gorilla';
   scene.add(group);
 
   const G = {
     mesh: group, arms, legs,
+    eyeMat, glow,                  // emissive eye material + additive glow halos
+    eyeI: 0.5, eyePulse: 0,        // smoothed glow intensity + pulse clock
     pos: new THREE.Vector3(x, ty, z),
     state: 'roaming',              // sleeping|perched|roaming|engaging|smashing|treegrab
     phase: 'rush',                 // sub-phase while engaging: rush → swing
@@ -2301,6 +2342,26 @@ function gorillaMoveToward(G, tx, tz, speed, dt){
 // wind-up clock, so the tell you see matches the hit that lands. Arms and legs
 // are shoulder/hip pivot Groups, so a single rotation.x swings the whole limb.
 function animateGorilla(G, dt, gait){
+  // --- menace: emissive eyes flare with aggression and blaze in the dark. Amber
+  //     at rest, red-hot while engaging/smashing/grabbing/pursuing, dim embers
+  //     asleep; night cranks the whole thing so a perched gorilla is two burning
+  //     eyes in the canopy. Eyes/halos are noFlash, so this survives the hit-flash. ---
+  if(G.eyeMat){
+    const s = G.state;
+    const hot = (s==='engaging' || s==='smashing' || s==='treegrab' || s==='pursuing');
+    const base = (s==='sleeping') ? 0.16 : (s==='perched') ? 0.72 : hot ? 1.0 : 0.5;
+    const target = dn.isDay ? base : Math.min(1.25, base*1.5);
+    G.eyeI += (target - G.eyeI) * Math.min(1, 4*dt);
+    G.eyePulse += dt*(hot ? 9 : 2.2);
+    const I = G.eyeI * (1 + Math.sin(G.eyePulse)*(hot ? 0.20 : 0.07));
+    const cl = v => v<0?0 : v>1?1 : v;
+    G.eyeMat.emissive.setRGB(cl(I), cl((hot?0.34:0.60)*I), cl((hot?0.07:0.20)*I));  // amber → red
+    for(const h of G.glow){
+      h.material.opacity = cl(0.18 + I*0.72);
+      const sc = 0.7 + I*0.8; h.scale.set(sc, sc, sc);
+      h.material.color.setRGB(1, hot?0.40:0.66, hot?0.12:0.28);
+    }
+  }
   G.legPhase += dt*(2 + (gait||0)*2.2);
   const A = G.arms, L = G.legs, st = G.state, g = gait||0;
 
@@ -2411,7 +2472,7 @@ function updateGorillas(dt){
     if(G.flashTimer > 0){
       G.flashTimer -= dt;
       const f = G.flashTimer > 0;
-      G.mesh.traverse(c=>{ if(c.isMesh) c.material = f ? FLASH_MAT : c.userData.origMat; });
+      G.mesh.traverse(c=>{ if(c.isMesh && !c.userData.noFlash) c.material = f ? FLASH_MAT : c.userData.origMat; });
     }
 
     const gpos = G.pos, ppos = player.pos;
