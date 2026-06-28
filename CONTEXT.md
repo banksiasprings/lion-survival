@@ -123,9 +123,14 @@ not flavour.
       eyes keep burning. Scale 1.36 (`dossiers/gorilla_render_2026-06-17.md`).
 
 ## Tweaks (2026-06-28) — `dossiers/tweaks_2026-06-28.md`
-- **Spear** = toolbar slot **6** (`throwSpear`/`buildSpearMesh`): thrown like a rock (LMB while slot 6
-  is held) but **×5 damage** (`mult` on the thrown projectile, shared `thrownRocks` loop). Crafted on
-  the throw from **2 wood + 1 rock** — no stored count.
+- **Spear** = toolbar slot **6** (`throwSpear`/`buildSpearMesh`, modeled handle + flint leaf-blade):
+  thrown like a rock (LMB while slot 6 is held), crafted on the throw from **2 wood + 1 rock**. Damage
+  is now **sized per target** so kill-counts are predictable: gorilla `maxHealth/10` (**10 spears**),
+  lion `maxHealth/5` (**5**), prey one-shot (**1**) except the big-horned **kudu** `maxHealth/2` (**2**).
+  Rocks keep the old `mult` model (chip + stun).
+- **Pounce** (`Q`) buffed: `pounceRange 3.6 → 9` (long lunge), `pounceDamage 18 → 54` (3×); a hidden
+  grass ambush still adds ×3 on top (≈162 — one-shots anything). Lets you leap on prey that hold still
+  because grass hides you.
 - **Gorilla is a brute now** (batch 2): a grounded one **SMACKS** the player for **half the health bar**
   (`GOR.SMACK_DMG 50`) on a `SMACK_CD` cooldown with knockback + a brief daze — one big blow, not the old
   continuous `MAUL_DPS` grind. **`PURSUE_RANGE 26 → 40`** so it notices/hunts from far off. Counterplay:

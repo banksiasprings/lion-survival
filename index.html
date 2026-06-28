@@ -120,7 +120,7 @@ const PLAYER = {
   grappleRange: 36,                // max climb-grapple distance to a tree
   maxHunger: 100, hungerDrain: 0.5, hungerSprintMul: 2.4, // hunger/sec (×mul while sprinting)
   starveDamage: 3,                 // HP/sec once hunger hits 0
-  pounceRange: 3.6, pounceDamage: 18  // melee hunt; ×3 from a hidden ambush
+  pounceRange: 9.0, pounceDamage: 54  // long lunge, high damage; still ×3 more from a hidden ambush
 };
 let player = {};
 
@@ -3026,11 +3026,11 @@ function updateThrownRocks(dt){
     r.vel.y -= 5*dt; // light gravity → flatter, faster-feeling throw
     if(r.spear) r.mesh.lookAt(r.mesh.position.clone().add(r.vel));   // tip follows the arc
 
-    const m = r.mult || 1, ic = r.spear ? '🗡️' : '🪨';   // a spear hits 3× as hard
+    const m = r.mult || 1, ic = r.spear ? '🗡️' : '🪨';   // rocks use m; spear dmg is sized per target
     let hit = false;
     lionMeshes.forEach(L=>{
       if(r.mesh.position.distanceTo(L.pos) < 1.7){   // wider radius so fast throws don't skip past
-        L.health -= m;
+        L.health -= r.spear ? L.maxHealth/5 : m;     // spear: exactly 5 to down any lion
         L.stunTimer = 5;
         L.state = 'stunned';
         L.flashTimer = 0.25;
@@ -3039,18 +3039,21 @@ function updateThrownRocks(dt){
       }
     });
     // Thrown weapons also wound + STUN prey (ranged hunting) and scatter the herd.
+    // A spear one-shots any animal EXCEPT the big-horned kudu (two spears); rocks wound.
     if(!hit) preyMeshes.forEach(P=>{
       if(r.mesh.position.distanceTo(P.pos) < 1.7){
-        P.health -= 9*m; P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
+        P.health -= r.spear ? (P.species==='kudu' ? P.maxHealth/2 : P.maxHealth) : 9*m;
+        P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
         hit = true;
         showKillfeed(P.health<=0 ? ic+' Kill — '+P.label+'!' : ic+' Stunned the '+P.label);
       }
     });
     // They chip the gorilla too — far tankier than prey (skip a perched/sleeping
-    // one, up its tree). A spear bites much deeper than a rock.
+    // one, up its tree). A spear takes ten throws to down it.
     if(!hit) gorillaMeshes.forEach(G=>{
       if(G.state!=='perched' && G.state!=='sleeping' && r.mesh.position.distanceTo(G.pos) < 2.0){
-        G.health -= 8*m; G.flashTimer = 0.25;
+        G.health -= r.spear ? G.maxHealth/10 : 8*m;   // spear: 10 to down the gorilla
+        G.flashTimer = 0.25;
         G.stunTimer = Math.max(G.stunTimer||0, r.spear ? GOR.SPEAR_STUN : GOR.ROCK_STUN);  // daze the brute
         hit = true; showKillfeed(r.spear ? '🗡️ Spear staggers the gorilla!' : '🪨 Rock dazes the gorilla!');
       }
