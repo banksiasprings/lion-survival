@@ -145,8 +145,13 @@ not flavour.
   **won't hit through a wall or while you grapple/climb/are up high** (`playerOffGround`/`segHitsWall`);
   and below `FLEE_HP` it **breaks off and runs**. Shown on the minimap (grey dot, red when charging you).
   Spawns on a **2–5 day cadence** (`dn.nextRhinoDay`), `MAX 3`.
-- **All animals reheal at each day↔night turn** (`healAllAnimals` in `updateDayNight`); **prey bolt when
-  near death** (low-HP forces `flee`, panic-runs even with no predator in sight).
+- **All animals reheal at each day↔night turn** (`healAllAnimals` in `updateDayNight`).
+- **Every animal flees when about to die** (< ~25 % HP, runs from the nearest threat): prey (`flee`),
+  rhino (drops target & bolts), lion (`flee_hurt` state), gorilla (`fleeing` state).
+- **Spawn cadences:** **2 lions every day & every night** (at each day↔night turn, cap 12 — replaces the
+  old timer); **gorillas every 3–4 days** (`dn.nextGorillaDay`, randomised; `GOR.SPAWN_EVERY` is legacy);
+  **rhinos every 2–5 days** (`dn.nextRhinoDay`, `RHINO.MAX 3`). Lions, the gorilla and rhinos all show on
+  the minimap.
 - **Gorilla is a brute now** (batch 2): a grounded one **SMACKS** the player for **half the health bar**
   (`GOR.SMACK_DMG 50`) on a `SMACK_CD` cooldown with knockback + a brief daze — one big blow, not the old
   continuous `MAUL_DPS` grind. **`PURSUE_RANGE 26 → 40`** so it notices/hunts from far off. Counterplay:

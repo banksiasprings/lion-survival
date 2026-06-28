@@ -1599,6 +1599,9 @@ function updateLions(dt){
     // the open chase) is hidden from the player's radar until very close.
     L._hiddenFromPlayer = !!tallGrassAt(lpos.x, lpos.z) && L.state!=='chase';
 
+    // About to die → run from the nearest danger (overrides fire / hunt / fight).
+    if(L.health < L.maxHealth*0.25){ L.state='flee_hurt'; }
+    else {
     // Fire repulsion (campfires scare lions off)
     let nearFire = false;
     campfires.forEach(f=>{ if(L.pos.distanceTo(f.pos) < 9) nearFire = true; });
@@ -1638,6 +1641,7 @@ function updateLions(dt){
         L.state = 'wander';
       }
     }
+    }
 
     // ---- desired direction by state ----
     let dir = new THREE.Vector3();
@@ -1645,6 +1649,15 @@ function updateLions(dt){
       let nf=null,m=Infinity;
       campfires.forEach(f=>{ const d=L.pos.distanceTo(f.pos); if(d<m){m=d;nf=f;} });
       if(nf) dir.copy(L.pos).sub(nf.pos).normalize();
+    } else if(L.state==='flee_hurt'){
+      // run directly away from the nearest threat (player / gorilla / rhino)
+      let tx=0,tz=0,bd=Infinity,found=false;
+      const consider=p=>{ const d=Math.hypot(p.x-lpos.x,p.z-lpos.z); if(d<bd){bd=d;tx=p.x;tz=p.z;found=true;} };
+      if(!player.inTree) consider(player.pos);
+      gorillaMeshes.forEach(G=>{ if(G.health>0&&G.state!=='perched'&&G.state!=='sleeping') consider(G.pos); });
+      rhinoMeshes.forEach(R=>{ if(R.health>0) consider(R.pos); });
+      if(found){ dir.set(lpos.x-tx,0,lpos.z-tz); if(dir.lengthSq()<0.01) dir.copy(L.wanderDir); dir.normalize(); }
+      else dir.copy(L.wanderDir);
     } else if(L.state==='chase'){
       dir.copy(ppos).sub(lpos); dir.y=0;
       const d = dir.length();
@@ -1732,8 +1745,8 @@ function updateLions(dt){
       speed = L.isMale ? 9 : 11;
     } else if(L.state==='scavenge'){
       speed = L.isMale ? 7 : 8;
-    } else if(L.state==='fleeing_fire'){
-      speed = L.isMale ? 11 : 13;
+    } else if(L.state==='fleeing_fire' || L.state==='flee_hurt'){
+      speed = L.isMale ? 12 : 14;                    // bolt when scared / near death
     } else { // wander/rest — slow, slower still at the midday trough
       L.burst = clamp(L.burst + dt*0.25, 0, 1);
       const restF = (L.state==='rest') ? 0.35 : 1;
@@ -1767,14 +1780,8 @@ function updateLions(dt){
     }
   }
 
-  // Replenish the pride over time (mostly lionesses — the hunters)
-  dn.nextLionSpawn -= dt;
-  if(dn.nextLionSpawn <= 0 && lionMeshes.length < 7){
-    spawnLion(Math.random()<0.8 ? 'lioness' : 'male');
-    dn.nextLionSpawn = 130;
-  } else if(dn.nextLionSpawn <= 0){
-    dn.nextLionSpawn = 60;
-  }
+  // (Pride replenishment now happens at each day↔night turn — 2 lions per turn,
+  //  see updateDayNight.)
 }
 
 // =====================================================================
@@ -2111,8 +2118,8 @@ function eatNearbyCarcass(){
 // All numeric tunings live in GOR so they're tweakable in one place.
 const GOR = {
   MAX:           2,     // hard cap on simultaneous gorillas
-  SPAWN_EVERY:   2,     // in-game days between spawns (after the first)
-  FIRST_SPAWN_T: 22,    // sec into the game the FIRST gorilla arrives (then every 2 days)
+  SPAWN_EVERY:   2,     // (legacy) — cadence is now randomised 3-4 days at the spawn site
+  FIRST_SPAWN_T: 22,    // sec into the game the FIRST gorilla arrives (then every 3-4 days)
 
   HEALTH:        160,   // very tanky — rocks chip it, the pride wears it down slowly
 
@@ -2495,12 +2502,12 @@ function updateGorillas(dt){
   if(gameState!=='playing') return;
 
   // ---- spawn: the FIRST gorilla arrives early so it's a present, testable
-  //      threat; subsequent ones follow the every-2-days cadence. ----
+  //      threat; subsequent ones follow an every-3-4-days cadence. ----
   if(gorillaMeshes.length < GOR.MAX){
     if(!dn.firstGorilla){
-      if(elapsed > GOR.FIRST_SPAWN_T){ spawnGorilla(); dn.firstGorilla = true; dn.nextGorillaDay = dn.day + GOR.SPAWN_EVERY; }
+      if(elapsed > GOR.FIRST_SPAWN_T){ spawnGorilla(); dn.firstGorilla = true; dn.nextGorillaDay = dn.day + 3 + (Math.random()*2|0); }
     } else if(dn.day >= dn.nextGorillaDay){
-      spawnGorilla(); dn.nextGorillaDay += GOR.SPAWN_EVERY;
+      spawnGorilla(); dn.nextGorillaDay += 3 + (Math.random()*2|0);
     }
   }
 
@@ -2531,6 +2538,20 @@ function updateGorillas(dt){
     }
 
     const gpos = G.pos, ppos = player.pos;
+
+    // About to die → break off and FLEE the nearest threat (player / lion / rhino).
+    if(G.health < GOR.HEALTH*0.25){
+      let tx=0,tz=0,bd=Infinity,found=false;
+      const consider=p=>{ const d=Math.hypot(p.x-gpos.x,p.z-gpos.z); if(d<bd){bd=d;tx=p.x;tz=p.z;found=true;} };
+      if(!player.inTree) consider(player.pos);
+      lionMeshes.forEach(L=>{ if(L.health>0) consider(L.pos); });
+      rhinoMeshes.forEach(R=>{ if(R.health>0) consider(R.pos); });
+      G.state='fleeing'; G.target=null; G.perchTree=null; G.perchPos=null;
+      if(found){ const ax=gpos.x-tx, az=gpos.z-tz, al=Math.hypot(ax,az)||1; gorillaMoveToward(G, gpos.x+(ax/al)*10, gpos.z+(az/al)*10, GOR.SPEED_DROP, dt); }
+      animateGorilla(G, dt, 1.4);
+      return;
+    }
+
     // Horizontal reach to the player — a sheltered player sits metres up a tree,
     // so the grab must ignore the vertical gap (the gorilla reaches up).
     const distP = Math.hypot(ppos.x - gpos.x, ppos.z - gpos.z);
@@ -3474,7 +3495,11 @@ function updateDayNight(dt){
   if(dustSys){ dustSys.mat.opacity = 0.1 + s.light*0.32; dustSys.mat.color.copy(s.hor).lerp(_CW, 0.3); }
 
   dn.isDay = dn.time < HALF_CYCLE;
-  if(dn.isDay !== wasDay){ healAllAnimals(); }   // day↔night turn → all animals reheal
+  if(dn.isDay !== wasDay){                         // day↔night turn
+    healAllAnimals();                              // every animal reheals
+    for(let i=0;i<2 && lionMeshes.length<12;i++)   // and 2 fresh lions arrive every day & night
+      spawnLion(Math.random()<0.75 ? 'lioness' : 'male');
+  }
   if(dn.isDay && !wasDay){ dn.day++; showKillfeed('🌅 Day '+dn.day+' — the wildlife has recovered'); }
 }
 
@@ -3653,7 +3678,9 @@ function updateSignals(){
     const st = near.state==='chase'?'<span class="sig-hi">CHASING YOU</span>':
                near.state==='converge'?'<span class="sig-w">converging</span>':
                near.state==='hunt_prey'?'hunting prey':near.state==='scavenge'?'at a kill':
-               near.state==='rest'?'resting':near.state==='fleeing_fire'?'fleeing fire':'wandering';
+               near.state==='rest'?'resting':near.state==='fleeing_fire'?'fleeing fire':
+               near.state==='flee_hurt'?'<span class="sig-ok">fleeing — wounded</span>':
+               near.state==='fight_gorilla'||near.state==='fight_rhino'?'fighting':'wandering';
     html += `🦁 nearest ${near.isMale?'♂ male':'♀ lioness'} ${nd.toFixed(0)}m · ${st}${near.fedTimer>0?' <span class="sig-ok">(fed)</span>':''}<br>`+
             `&nbsp;&nbsp;hunger ${near.hunger|0}% · sees ${near._detR.toFixed(0)}m`;
   }
@@ -3666,7 +3693,8 @@ function updateSignals(){
       sleeping:'sleeping', perched:'<span class="sig-w">perched</span>',
       roaming:'roaming', engaging:'<span class="sig-hi">engaging</span>',
       pursuing:'<span class="sig-hi">engaging</span>',
-      smashing:'<span class="sig-hi">smashing wall</span>', treegrab:'<span class="sig-hi">tree-grab</span>'
+      smashing:'<span class="sig-hi">smashing wall</span>', treegrab:'<span class="sig-hi">tree-grab</span>',
+      fleeing:'<span class="sig-ok">fleeing — wounded</span>'
     };
     html += `🦍 gorilla ${gd.toFixed(0)}m · ${GST[gnear.state]||gnear.state}<br>`+
             `&nbsp;&nbsp;hp ${(gnear.health/gnear.maxHealth*100)|0}% · ${dn.isDay?'day-roamer':'night-perched'}`;
