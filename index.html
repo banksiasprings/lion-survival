@@ -2978,18 +2978,30 @@ function throwRock(){
   playSound('throw');
 }
 
-// A flint-tipped spear (toolbar slot 6): thrown like a rock but it hits ~3× as
-// hard. Crafted on the throw from 2 wood + 1 rock — no separate inventory slot.
+// A proper thrown spear (toolbar slot 6): a tapered wooden shaft (the handle)
+// with a leather grip + butt cap, a cord lashing, and a faceted flint leaf-blade
+// head at the front. Built lying along local -Z (head toward -Z) so the flight
+// code's lookAt(velocity) makes the spearhead lead the throw.
 function buildSpearMesh(){
   const g = new THREE.Group();
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.035,1.2,6),
-                               new THREE.MeshLambertMaterial({color:0x7a5230}));
-  shaft.rotation.x = Math.PI/2;                       // lay the shaft along local -Z (travel dir)
-  g.add(shaft);
-  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.09,0.30,6),
-                             new THREE.MeshLambertMaterial({color:0xb9bcc6}));
-  tip.rotation.x = -Math.PI/2; tip.position.z = -0.74;  // point the head forward (-Z)
-  g.add(tip);
+  const wood  = new THREE.MeshLambertMaterial({color:0x6e4a26}); // shaft
+  const grip  = new THREE.MeshLambertMaterial({color:0x33241a}); // leather grip / butt
+  const cord  = new THREE.MeshLambertMaterial({color:0x4a3a26}); // lashing binding the head on
+  const flint = new THREE.MeshLambertMaterial({color:0xc2c5cf}); // knapped flint blade (lit)
+  const flintLo = new THREE.MeshLambertMaterial({color:0x888d99}); // blade shadow facet
+  const lay = (geo, mat, z, rx)=>{ const m=new THREE.Mesh(geo,mat); m.rotation.x = (rx===undefined?Math.PI/2:rx); m.position.z=z; g.add(m); return m; };
+
+  // Shaft — slightly tapered, the handle. Lies along Z, set back so the head leads.
+  lay(new THREE.CylinderGeometry(0.032,0.042,1.5,8), wood, 0.10);
+  // Leather grip wrap (rear third) + a small butt cap at the very back.
+  lay(new THREE.CylinderGeometry(0.055,0.055,0.26,8), grip, 0.55);
+  lay(new THREE.CylinderGeometry(0.05,0.028,0.09,8),  grip, 0.86);
+  // Cord lashing where the head is bound to the shaft.
+  lay(new THREE.CylinderGeometry(0.062,0.062,0.14,8), cord, -0.66);
+  // Flint spearhead — a leaf blade: a long faceted point + a short rear taper,
+  // 4-sided cones for a hand-knapped look. Tip points forward (-Z).
+  lay(new THREE.ConeGeometry(0.13,0.52,4), flint,   -0.96, -Math.PI/2);  // forward point
+  lay(new THREE.ConeGeometry(0.13,0.18,4), flintLo, -0.61,  Math.PI/2);  // rear taper → leaf shape
   return g;
 }
 
