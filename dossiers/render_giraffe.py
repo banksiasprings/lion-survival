@@ -35,29 +35,43 @@ def cyl(rt,rb,h,seg,col,cx,cy,cz,rx=0.0):
         f.append(([(0,h/2,0),t0,t1],(0,1,0),col));f.append(([(0,-h/2,0),b1,b0],(0,-1,0),col))
     return _pl(f,rx,cx,cy,cz)
 
-COAT,PALE,SPOT,HORN,DARK=0xc79a52,0xe3d6b0,0x8a5a2a,0x5b4a32,0x141014
+COAT,PALE,SPOT,HORN,DARK,MANE=0xc79a52,0xe3d6b0,0x9a6a32,0x5b4a32,0x141014,0x6b4a26
 def giraffe():
     f=[]
-    legLen=1.7;bw=0.72;bh=0.8;bl=1.55;bodyY=legLen+bh*0.5
+    legLen=1.8;bw=0.72;bh=0.78;bl=1.5;bodyY=legLen+bh*0.5
     f+=box(bw,bh,bl,COAT,0,bodyY,0)
-    f+=box(bw*0.96,bh*0.78,bl*0.42,COAT,0,bodyY-0.13,-bl*0.42)
-    neckLen=2.1;th=0.38;c=math.cos(th);sn=math.sin(th);nbY=bodyY+bh*0.32;nbZ=bl*0.42
-    f+=cyl(0.17,0.20,neckLen,6,COAT, 0,nbY+c*neckLen*0.5,nbZ+sn*neckLen*0.5, th)  # neck (box->cyl approx, same dims)
+    f+=box(bw*0.98,bh*0.7,bl*0.5,COAT,0,bodyY+0.22,bl*0.28)        # raised withers
+    f+=box(bw*0.94,bh*0.74,bl*0.42,COAT,0,bodyY-0.16,-bl*0.46)     # dropped rump
+    neckLen=2.15;th=0.40;c=math.cos(th);sn=math.sin(th);nbY=bodyY+bh*0.34;nbZ=bl*0.40
+    f+=cyl(0.20,0.30,neckLen,8,COAT, 0,nbY+c*neckLen*0.5,nbZ+sn*neckLen*0.5, th)   # tapered neck
+    f+=cyl(0.05,0.06,neckLen*0.9,5,MANE, 0,nbY+c*neckLen*0.5+0.02,nbZ+sn*neckLen*0.5-0.18, th)  # mane
     tipY=nbY+c*neckLen;tipZ=nbZ+sn*neckLen
-    f+=box(0.38,0.42,0.52,COAT,0,tipY+0.05,tipZ+0.12)
-    f+=box(0.30,0.28,0.32,PALE,0,tipY-0.02,tipZ+0.42)
+    f+=box(0.34,0.36,0.46,COAT,0,tipY+0.06,tipZ+0.10)
+    f+=box(0.26,0.24,0.34,PALE,0,tipY-0.04,tipZ+0.40)
+    f+=box(0.20,0.10,0.06,DARK,0,tipY-0.10,tipZ+0.57)
     for d in(-1,1):
-        f+=cyl(0.05,0.06,0.26,5,HORN,d*0.12,tipY+0.34,tipZ+0.04)
-        f+=box(0.15,0.15,0.15,SPOT,d*0.12,tipY+0.49,tipZ+0.04)
-        f+=cone(0.09,0.22,4,COAT,d*0.27,tipY+0.22,tipZ-0.02,0)
-        f+=box(0.06,0.08,0.05,DARK,d*0.16,tipY+0.08,tipZ+0.27)
-    lg=[(-bw*0.42,0.62),(bw*0.42,0.62),(-bw*0.42,-0.62),(bw*0.42,-0.62)]
-    for lx,lzf in lg: f+=cyl(0.09,0.07,legLen,6,PALE,lx,legLen/2,lzf*bl*0.5)
-    f+=cyl(0.03,0.03,0.7,4,COAT,0,bodyY-0.1,-bl*0.5-0.05,0.5)
-    pts=[(bodyY+0.22,0.35),(bodyY+0.04,-0.05),(bodyY+0.24,-0.45),(bodyY-0.1,0.15),
-         (nbY+c*0.7,nbZ+sn*0.7),(nbY+c*1.3,nbZ+sn*1.3),(nbY+c*1.8,nbZ+sn*1.8)]
-    for py,pz in pts:
-        for d in(-1,1): f+=box(0.15,0.17,0.15,SPOT,d*0.30,py,pz)
+        f+=cyl(0.045,0.06,0.24,6,HORN,d*0.11,tipY+0.34,tipZ+0.02)
+        f+=box(0.14,0.14,0.14,DARK,d*0.11,tipY+0.48,tipZ+0.02)
+        f+=cone(0.085,0.26,5,COAT,d*0.26,tipY+0.20,tipZ-0.04,0)
+        f+=box(0.06,0.08,0.05,DARK,d*0.15,tipY+0.06,tipZ+0.26)
+    # legs posed mid-stride (pace: same-side legs together) — hip-pivot swing
+    def leg(lx,lz,ln,a):
+        cx=lx; cy=ln+(-math.cos(a))*ln/2; cz=lz+(-math.sin(a))*ln/2
+        out=cyl(0.085,0.06,ln,6,PALE,cx,cy,cz,a)
+        hx=lx; hy=ln+(-math.cos(a))*ln; hz=lz+(-math.sin(a))*ln
+        out+=cyl(0.07,0.08,0.12,6,MANE,hx,hy+0.06,hz,a)
+        return out
+    f+=leg(-bw*0.40, bl*0.34, legLen,      0.42)   # left side forward...
+    f+=leg(-bw*0.40,-bl*0.36, legLen*0.92, 0.42)
+    f+=leg( bw*0.40, bl*0.34, legLen,     -0.42)   # ...right side back
+    f+=leg( bw*0.40,-bl*0.36, legLen*0.92,-0.42)
+    f+=cyl(0.03,0.03,0.8,4,PALE,0,bodyY-0.1,-bl*0.5-0.05,0.6)      # tail
+    f+=box(0.16,0.16,0.16,DARK,0,bodyY-0.55,-bl*0.5-0.38)          # tuft
+    # a few flush coat patches to hint the reticulated texture
+    pts=[(bodyY+0.18,0.3,bw*0.5),(bodyY-0.06,-0.1,bw*0.5),(bodyY+0.14,-0.5,bw*0.48),
+         (nbY+c*0.9,nbZ+sn*0.9,0.24),(nbY+c*1.5,nbZ+sn*1.5,0.21)]
+    for py,pz,px in pts:
+        for d in(-1,1): f+=box(0.05,0.22,0.22,SPOT,d*px,py,pz)
     return f
 
 YAW,PITCH=-0.72,0.10;LIGHT=norm((-0.4,0.7,0.6))

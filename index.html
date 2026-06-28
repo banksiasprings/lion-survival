@@ -1844,6 +1844,25 @@ function zebraTex(){
   const t=new THREE.CanvasTexture(cv); t.wrapS=t.wrapT=THREE.RepeatWrapping; return _zebraTex=t;
 }
 
+// Procedural giraffe coat — russet patches webbed by pale cream lines (reticulated).
+let _giraffeTex=null;
+function giraffeTex(){
+  if(_giraffeTex) return _giraffeTex;
+  const S=128, cv=document.createElement('canvas'); cv.width=cv.height=S;
+  const g=cv.getContext('2d');
+  g.fillStyle='#d8c49a'; g.fillRect(0,0,S,S);          // cream network
+  for(let yy=0; yy<5; yy++) for(let xx=0; xx<5; xx++){
+    const cx=xx*26+13+(Math.random()*8-4), cy=yy*26+13+(Math.random()*8-4);
+    const r=9+Math.random()*3;
+    g.fillStyle = Math.random()<0.5 ? '#9a6a32' : '#8a5a28';   // patch (slight tone variation)
+    g.beginPath();                                       // irregular polygon patch
+    for(let k=0;k<6;k++){ const a=k/6*Math.PI*2, rr=r*(0.7+Math.random()*0.5);
+      const px=cx+Math.cos(a)*rr, py=cy+Math.sin(a)*rr; k?g.lineTo(px,py):g.moveTo(px,py); }
+    g.closePath(); g.fill();
+  }
+  const t=new THREE.CanvasTexture(cv); t.wrapS=t.wrapT=THREE.RepeatWrapping; return _giraffeTex=t;
+}
+
 function addHorns(g, type, sc, hy, hz, col){
   const m=lmat(col);
   [-1,1].forEach(side=>{
@@ -1895,44 +1914,52 @@ function makeHerbivore(key){
 // (leg gait, flee, etc.) drives it like any other herbivore.
 function makeGiraffe(){
   const g=new THREE.Group();
-  const coat = lmat(jcol(0xc79a52,0.05));   // tan coat
+  const coat = new THREE.MeshLambertMaterial({map:giraffeTex()});  // reticulated patches
   const pale = lmat(jcol(0xe3d6b0,0.04));   // pale lower legs / muzzle
-  const spot = lmat(jcol(0x8a5a2a,0.05));   // patches
+  const mane = lmat(0x6b4a26);              // short neck mane
   const horn = lmat(0x5b4a32);
+  const knobM= lmat(0x2a2018);
   const dark = lmat(0x141014);
-  const legLen=1.7, bw=0.72, bh=0.8, bl=1.55, bodyY=legLen+bh*0.5;
-  // body + sloped hindquarters (giraffe back drops toward the rear)
+  const legLen=1.8, bw=0.72, bh=0.78, bl=1.5, bodyY=legLen+bh*0.5;
+  // body + sloped withers/hindquarters (the giraffe's high shoulders → low rump)
   const body=new THREE.Mesh(new THREE.BoxGeometry(bw,bh,bl), coat); body.position.y=bodyY; body.castShadow=true; g.add(body);
-  const rump=new THREE.Mesh(new THREE.BoxGeometry(bw*0.96,bh*0.78,bl*0.42), coat); rump.position.set(0,bodyY-0.13,-bl*0.42); g.add(rump);
-  // long neck — up and slightly forward
-  const neckLen=2.1, th=0.38, c=Math.cos(th), sn=Math.sin(th);
-  const nbY=bodyY+bh*0.32, nbZ=bl*0.42;
-  const neck=new THREE.Mesh(new THREE.BoxGeometry(0.34,neckLen,0.40), coat);
+  const wither=new THREE.Mesh(new THREE.BoxGeometry(bw*0.98,bh*0.7,bl*0.5), coat); wither.position.set(0,bodyY+0.22,bl*0.28); g.add(wither);     // raised shoulders
+  const rump=new THREE.Mesh(new THREE.BoxGeometry(bw*0.94,bh*0.74,bl*0.42), coat); rump.position.set(0,bodyY-0.16,-bl*0.46); g.add(rump);        // dropped rump
+  // long neck — up and slightly forward, tapering to the head
+  const neckLen=2.15, th=0.40, c=Math.cos(th), sn=Math.sin(th);
+  const nbY=bodyY+bh*0.34, nbZ=bl*0.40;
+  const neckGeo=new THREE.CylinderGeometry(0.20,0.30,neckLen,8);   // tapered (thinner at the top)
+  const neck=new THREE.Mesh(neckGeo, coat);
   neck.position.set(0, nbY+c*neckLen*0.5, nbZ+sn*neckLen*0.5); neck.rotation.x=th; neck.castShadow=true; g.add(neck);
+  // short dark mane running up the back of the neck
+  const maneM=new THREE.Mesh(new THREE.BoxGeometry(0.10,neckLen*0.96,0.16), mane);
+  maneM.position.set(0, nbY+c*neckLen*0.5+0.02, nbZ+sn*neckLen*0.5-0.16); maneM.rotation.x=th; g.add(maneM);
   const tipY=nbY+c*neckLen, tipZ=nbZ+sn*neckLen;
-  // head, muzzle, ossicones, ears, eyes
-  const head=new THREE.Mesh(new THREE.BoxGeometry(0.38,0.42,0.52), coat); head.position.set(0,tipY+0.05,tipZ+0.12); head.castShadow=true; g.add(head);
-  const muz=new THREE.Mesh(new THREE.BoxGeometry(0.30,0.28,0.32), pale); muz.position.set(0,tipY-0.02,tipZ+0.42); g.add(muz);
+  // head: angled crown + tapered muzzle, ossicones, ears, eyes
+  const head=new THREE.Mesh(new THREE.BoxGeometry(0.34,0.36,0.46), coat); head.position.set(0,tipY+0.06,tipZ+0.10); head.rotation.x=0.25; head.castShadow=true; g.add(head);
+  const muz=new THREE.Mesh(new THREE.BoxGeometry(0.26,0.24,0.34), pale); muz.position.set(0,tipY-0.04,tipZ+0.40); g.add(muz);
+  const nostril=new THREE.Mesh(new THREE.BoxGeometry(0.20,0.10,0.06), dark); nostril.position.set(0,tipY-0.10,tipZ+0.57); g.add(nostril);
   [-1,1].forEach(d=>{
-    const oss=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,0.26,5), horn); oss.position.set(d*0.12,tipY+0.34,tipZ+0.04); g.add(oss);
-    const knob=new THREE.Mesh(new THREE.SphereGeometry(0.08,6,5), spot); knob.position.set(d*0.12,tipY+0.49,tipZ+0.04); g.add(knob);
-    const ear=new THREE.Mesh(new THREE.ConeGeometry(0.09,0.22,4), coat); ear.position.set(d*0.27,tipY+0.22,tipZ-0.02); ear.rotation.z=d*0.7; g.add(ear);
-    const eye=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.08,0.05), dark); eye.position.set(d*0.16,tipY+0.08,tipZ+0.27); g.add(eye);
+    const oss=new THREE.Mesh(new THREE.CylinderGeometry(0.045,0.06,0.24,6), horn); oss.position.set(d*0.11,tipY+0.34,tipZ+0.02); g.add(oss);
+    const knob=new THREE.Mesh(new THREE.SphereGeometry(0.075,7,6), knobM); knob.position.set(d*0.11,tipY+0.48,tipZ+0.02); g.add(knob);
+    const ear=new THREE.Mesh(new THREE.ConeGeometry(0.085,0.26,5), coat); ear.position.set(d*0.26,tipY+0.20,tipZ-0.04); ear.rotation.z=d*0.8; ear.rotation.x=-0.2; g.add(ear);
+    const eye=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.08,0.05), dark); eye.position.set(d*0.15,tipY+0.06,tipZ+0.26); g.add(eye);
   });
-  // long legs (pale), splayed at the corners
-  const legs=[]; const lg=new THREE.CylinderGeometry(0.09,0.07,legLen,6);
-  [[-bw*0.42,0.62],[bw*0.42,0.62],[-bw*0.42,-0.62],[bw*0.42,-0.62]].forEach(([lx,lzf])=>{
-    const leg=new THREE.Mesh(lg, pale); leg.position.set(lx, legLen/2, lzf*bl*0.5); leg.castShadow=true; g.add(leg); legs.push(leg);
-  });
+  // long legs on hip pivots so they SWING from the top (geometry hung below origin).
+  // Splayed slightly; front legs longer than back (the giraffe stance).
+  const legs=[];
+  const mkLeg=(lx,lz,len)=>{
+    const geo=new THREE.CylinderGeometry(0.085,0.06,len,6); geo.translate(0,-len/2,0);  // pivot at the hip
+    const leg=new THREE.Mesh(geo, pale); leg.position.set(lx, len, lz); leg.castShadow=true; g.add(leg); legs.push(leg);
+    const hoof=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.08,0.12,6), mane); hoof.position.set(0,-len+0.06,0); leg.add(hoof);  // dark hoof, swings with the leg
+  };
+  mkLeg(-bw*0.40, bl*0.34, legLen);        // front legs (taller)
+  mkLeg( bw*0.40, bl*0.34, legLen);
+  mkLeg(-bw*0.40,-bl*0.36, legLen*0.92);   // back legs (a touch shorter)
+  mkLeg( bw*0.40,-bl*0.36, legLen*0.92);
   // tail with a dark tuft
-  const tail=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,0.7,4), coat); tail.position.set(0,bodyY-0.1,-bl*0.5-0.05); tail.rotation.x=0.5; g.add(tail);
-  const tuft=new THREE.Mesh(new THREE.SphereGeometry(0.07,5,4), dark); tuft.position.set(0,bodyY-0.42,-bl*0.5-0.32); g.add(tuft);
-  // patches — the spotted coat, scattered down both flanks and the neck
-  const pts=[[bodyY+0.22,0.35],[bodyY+0.04,-0.05],[bodyY+0.24,-0.45],[bodyY-0.1,0.15],
-             [nbY+c*0.7,nbZ+sn*0.7],[nbY+c*1.3,nbZ+sn*1.3],[nbY+c*1.8,nbZ+sn*1.8]];
-  pts.forEach(([py,pz])=>{ [-1,1].forEach(d=>{
-    const p=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.17,0.15), spot); p.position.set(d*0.30, py, pz); g.add(p);
-  }); });
+  const tail=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,0.8,4), pale); tail.position.set(0,bodyY-0.1,-bl*0.5-0.05); tail.rotation.x=0.6; g.add(tail);
+  const tuft=new THREE.Mesh(new THREE.SphereGeometry(0.08,6,5), dark); tuft.position.set(0,bodyY-0.55,-bl*0.5-0.38); g.add(tuft);
   g.children.forEach(c2=>{ if(c2.isMesh) c2.userData.origMat=c2.material; });
   return { group:g, legs, bodyY, legLen };
 }
@@ -1990,7 +2017,14 @@ function updatePrey(dt){
     const s=SPECIES[P.species];
     P.legPhase += dt*(3+(P._lastSpeed||0)*0.9);
     const legBase=P.legLen/2;
-    P.legs.forEach((leg,i)=>{ leg.position.y = legBase + Math.sin(P.legPhase+i*Math.PI/2)*0.09*s.size*(P.state==='flee'?1.5:0.5); });
+    if(P.species==='giraffe'){
+      // hip-pivot legs SWING (a proper walk) — pacing gait (same-side legs together),
+      // amplitude scales with how fast it's actually moving so it's still when it stands.
+      const moving=(P._lastSpeed||0)>0.3, amp = moving ? (P.state==='flee'?0.6:0.32) : 0.03;
+      P.legs.forEach((leg,i)=>{ const off=(i===1||i===3)?Math.PI:0; leg.rotation.x = Math.sin(P.legPhase+off)*amp; });
+    } else {
+      P.legs.forEach((leg,i)=>{ leg.position.y = legBase + Math.sin(P.legPhase+i*Math.PI/2)*0.09*s.size*(P.state==='flee'?1.5:0.5); });
+    }
     if(P.flashTimer>0){ P.flashTimer-=dt; const fl=P.flashTimer>0; P.mesh.children.forEach(c=>{ if(c.isMesh) c.material=fl?FLASH_MAT:c.userData.origMat; }); }
 
     // Stunned by a thrown rock — frozen in place for a moment.

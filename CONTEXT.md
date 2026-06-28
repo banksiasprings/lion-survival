@@ -178,7 +178,9 @@ prey graze in herds → flee any predator within species flee-dist → lions hun
 can **hunt ahead of the pride** (sneak+pounce, the stealthy play) or **scavenge lion kills**
 (faster but the guarding pride attacks). Player hunger must be topped up by eating; lions
 **cannot** be eaten. Per-species params live in the `SPECIES` table. **7 species** now — the 6 above
-plus the **giraffe** (`SPECIES.giraffe`, `custom:'giraffe'` → dedicated tall `makeGiraffe()` mesh; hp 40
+plus the **giraffe** (`SPECIES.giraffe`, `custom:'giraffe'` → dedicated tall `makeGiraffe()` mesh —
+reticulated `giraffeTex()` coat, mane, withers/rump slope, ossicones, **hip-pivot legs that SWING**
+(a pacing walk, branched in `updatePrey`'s leg animation); hp 40
 ≈ a lion, speed 18 so it **outruns even a sprinting player** (16), bolts when hit or threatened like any
 prey, and takes **3 spears** to down (kudu 2, other prey 1 — sized in the `updateThrownRocks` prey
 branch). Spawns in the herd plan.
