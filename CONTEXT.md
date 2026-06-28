@@ -141,6 +141,12 @@ not flavour.
   `LION_DPS` to it; the gorilla's swipe damages + flips the rhino's target to the gorilla. Poor senses of
   the player (`SENSE_RANGE 8 × stealth.visMul` → grass hides you), **stunned** by rocks/spears, **blocked
   by walls** (`collideWalls`; gives up after `BLOCK_GIVEUP` pinned). 220 hp (~14 spears) → edible carcass.
+  After it gores the player it's **winded** (`SPEED_SLOW` for `SLOW_AFTER_HIT`) so you can break away; it
+  **won't hit through a wall or while you grapple/climb/are up high** (`playerOffGround`/`segHitsWall`);
+  and below `FLEE_HP` it **breaks off and runs**. Shown on the minimap (grey dot, red when charging you).
+  Spawns on a **2–5 day cadence** (`dn.nextRhinoDay`), `MAX 3`.
+- **All animals reheal at each day↔night turn** (`healAllAnimals` in `updateDayNight`); **prey bolt when
+  near death** (low-HP forces `flee`, panic-runs even with no predator in sight).
 - **Gorilla is a brute now** (batch 2): a grounded one **SMACKS** the player for **half the health bar**
   (`GOR.SMACK_DMG 50`) on a `SMACK_CD` cooldown with knockback + a brief daze — one big blow, not the old
   continuous `MAUL_DPS` grind. **`PURSUE_RANGE 26 → 40`** so it notices/hunts from far off. Counterplay:

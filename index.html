@@ -166,7 +166,8 @@ let dn = {
   isDay: true,
   nextLionSpawn: 120,
   firstGorilla: false,   // has the early first gorilla spawned yet?
-  nextGorillaDay: 3      // day of the next gorilla after the first (set when first spawns)
+  nextGorillaDay: 3,     // day of the next gorilla after the first (set when first spawns)
+  nextRhinoDay: 3        // day the next rhino wanders in (every 2-5 days)
 };
 
 // Items
@@ -1947,13 +1948,14 @@ function updatePrey(dt){
     if(pd<td && !player.inTree && pd < P.fleeDist*stealth.visMul){ td=pd; threat=player.pos; }
 
     let dir=new THREE.Vector3();
-    if(threat && td < P.fleeDist){ P.state='flee'; P.alertTimer=2.5; }
+    const lowHp = P.health < P.maxHealth*0.3;                  // about to die → bolt no matter what
+    if((threat && td < P.fleeDist) || lowHp){ P.state='flee'; P.alertTimer=2.5; }
     else if(P.alertTimer>0){ P.alertTimer-=dt; P.state='alert'; }
     else P.state='graze';
 
     if(P.state==='flee'){
-      dir.set(P.pos.x-threat.x,0,P.pos.z-threat.z);
-      if(dir.lengthSq()<0.01) dir.set(rand(-1,1),0,rand(-1,1));
+      if(threat){ dir.set(P.pos.x-threat.x,0,P.pos.z-threat.z); if(dir.lengthSq()<0.01) dir.set(rand(-1,1),0,rand(-1,1)); }
+      else dir.copy(P.wanderDir);                              // wounded, nothing in sight → just run
       dir.normalize();
       if(s.juke){ P.jukeTimer-=dt; if(P.jukeTimer<=0){ P.jukeDir=rand(-1,1)*s.juke; P.jukeTimer=rand(0.3,0.7); } dir.applyAxisAngle(UP,P.jukeDir); }
     } else if(P.state==='alert'){
@@ -2769,10 +2771,13 @@ function updateGorillas(dt){
 // it never hits from behind. Poor senses (grass/crouch hide you, stealth.visMul),
 // gets stunned by rocks/spears, and is BLOCKED by walls (no smashing through).
 const RHINO = {
-  MAX: 2,
+  MAX: 3,
   HEALTH: 220,            // tankier than the gorilla (160) — ~14 spears
   SPEED_ROAM: 3.0,        // slow amble
   SPEED_CHARGE: 15,       // keeps charging its target at this speed
+  SPEED_SLOW: 6.0,        // winded after a goring — still chases, but you can outrun it
+  SLOW_AFTER_HIT: 2.8,    // sec it's slowed after landing a hit on the player
+  FLEE_HP: 0.25,          // below this fraction of health it breaks off and runs
   SENSE_RANGE: 8,         // poor passive sense of the player (× stealth.visMul)
   LEASH: 32,              // gives up a target beyond this
   AGGRO_TIME: 5,          // stays aggro this long after losing the target
@@ -2833,7 +2838,7 @@ function makeRhino(x, z){
     mesh:group, legs, pos:new THREE.Vector3(x,ty,z),
     health:RHINO.HEALTH, maxHealth:RHINO.HEALTH,
     target:null, targetKind:null,     // who it's fighting: 'player' | 'lion' | 'gorilla'
-    aggroTimer:0, smackCd:0, blockedT:0, stunTimer:0, flashTimer:0,
+    aggroTimer:0, smackCd:0, blockedT:0, slowT:0, stunTimer:0, flashTimer:0,
     heading:rand(0,Math.PI*2),
     wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
     wanderTimer:rand(2,5), wanderPause:false, legPhase:Math.random()*Math.PI*2,
@@ -2874,10 +2879,28 @@ function rhinoStep(R, tx, tz, speed, dt, turn){
   return progress < speed*dt*0.5;                            // blocked by a wall/edge?
 }
 
+// True when the player is up a tree, grappling/climbing, or perched up high (on a
+// wall) — out of a ground animal's reach.
+function playerOffGround(){
+  return player.inTree || player.climbing || grapple.active ||
+         (player.pos.y - terrainY(player.pos.x, player.pos.z) > 1.5);
+}
+// Is a straight line from (ax,az)→(bx,bz) blocked by a wall? (so nothing gores
+// through a wall). Samples a few points against the wall AABBs.
+function segHitsWall(ax,az,bx,bz){
+  for(let i=1;i<8;i++){ const t=i/8, x=ax+(bx-ax)*t, z=az+(bz-az)*t;
+    for(const a of wallAABBs){ if(x>a.min.x && x<a.max.x && z>a.min.z && z<a.max.z) return true; } }
+  return false;
+}
+// Can the rhino actually land a hit on the player right now?
+function rhinoPlayerReachable(R){
+  return !playerOffGround() && !segHitsWall(R.pos.x,R.pos.z, player.pos.x,player.pos.z);
+}
+
 // Is the rhino's current target still a valid thing to fight?
 function rhinoTargetValid(R){
   const t=R.target; if(!t) return false;
-  if(R.targetKind==='player')  return !player.inTree;                       // treed player is unreachable
+  if(R.targetKind==='player')  return !playerOffGround();                   // treed/grappling/up-a-wall → unreachable
   if(R.targetKind==='lion')    return lionMeshes.includes(t) && t.health>0;
   if(R.targetKind==='gorilla') return gorillaMeshes.includes(t) && t.health>0 && t.state!=='perched' && t.state!=='sleeping';
   return false;
@@ -2888,11 +2911,12 @@ function rhinoTargetValid(R){
 function rhinoSmack(R){
   const t=R.target;
   if(R.targetKind==='player'){
-    if(player.inTree) return;
+    if(!rhinoPlayerReachable(R)) return;          // not through walls / when you're treed or grappling
     player.health -= RHINO.SMACK_DMG;
     player.stunTimer = Math.max(player.stunTimer||0, RHINO.SMACK_STUN);
     const ax=player.pos.x-R.pos.x, az=player.pos.z-R.pos.z, al=Math.hypot(ax,az)||1;
     player.knockback.x=(ax/al)*RHINO.SMACK_KB; player.knockback.z=(az/al)*RHINO.SMACK_KB;
+    R.slowT = RHINO.SLOW_AFTER_HIT;               // winded after the hit → you get a chance to flee
     shakeTime=Math.max(shakeTime,0.40); shakeAmt=0.009; playSound('spotted');
     showKillfeed('🦏 The rhino gores you!');
   } else if(t){
@@ -2903,14 +2927,34 @@ function rhinoSmack(R){
 
 function updateRhinos(dt){
   if(gameState!=='playing') return;
-  if(rhinoMeshes.length < RHINO.MAX && Math.random() < dt*0.05) spawnRhino();   // slow restock
+  // a new rhino wanders in every 2-5 in-game days (up to the cap)
+  if(dn.day >= dn.nextRhinoDay && rhinoMeshes.length < RHINO.MAX){
+    spawnRhino(); dn.nextRhinoDay = dn.day + 2 + (Math.random()*4|0);
+  }
 
   rhinoMeshes.forEach(R=>{
-    R.smackCd=Math.max(0,R.smackCd-dt); R.aggroTimer=Math.max(0,R.aggroTimer-dt);
+    R.smackCd=Math.max(0,R.smackCd-dt); R.aggroTimer=Math.max(0,R.aggroTimer-dt); R.slowT=Math.max(0,R.slowT-dt);
     if(R.flashTimer>0){ R.flashTimer-=dt; const f=R.flashTimer>0; R.mesh.children.forEach(c=>{ if(c.isMesh) c.material=f?FLASH_MAT:c.userData.origMat; }); }
 
     // STUNNED by a rock/spear — frozen (your counter; lions can pile on meanwhile).
     if((R.stunTimer||0)>0){ R.stunTimer-=dt; R.pos.y=terrainY(R.pos.x,R.pos.z); R.mesh.position.copy(R.pos); animateRhino(R,dt,0); return; }
+
+    // About to die → break off and RUN from the nearest threat (survival instinct).
+    if(R.health < R.maxHealth*RHINO.FLEE_HP){
+      R.target=null; R.targetKind=null;
+      let tx=0,tz=0,bd=Infinity,found=false;
+      const consider=p=>{ const d=Math.hypot(p.x-R.pos.x,p.z-R.pos.z); if(d<bd){bd=d;tx=p.x;tz=p.z;found=true;} };
+      lionMeshes.forEach(L=>{ if(L.health>0) consider(L.pos); });
+      gorillaMeshes.forEach(G=>{ if(G.health>0 && G.state!=='perched' && G.state!=='sleeping') consider(G.pos); });
+      if(!playerOffGround()) consider(player.pos);
+      if(found && bd < 24){
+        const ax=R.pos.x-tx, az=R.pos.z-tz, al=Math.hypot(ax,az)||1;
+        rhinoStep(R, R.pos.x+(ax/al)*10, R.pos.z+(az/al)*10, RHINO.SPEED_CHARGE, dt, RHINO.TURN);
+        animateRhino(R, dt, 1.6);
+        return;
+      }
+      // nothing close → fall through to a calm roam
+    }
 
     // Lions pressed against it wear it down — and it turns on the nearest biter.
     let biter=null, bbd=Infinity;
@@ -2923,7 +2967,7 @@ function updateRhinos(dt){
     // the gorilla's swipe / a thrown weapon).
     if(!rhinoTargetValid(R) || R.aggroTimer<=0){
       R.target=null; R.targetKind=null;
-      if(!player.inTree){
+      if(!playerOffGround()){
         const dp=Math.hypot(player.pos.x-R.pos.x, player.pos.z-R.pos.z);
         if(dp < RHINO.SENSE_RANGE*stealth.visMul){ R.target=player; R.targetKind='player'; R.aggroTimer=RHINO.AGGRO_TIME; }
       }
@@ -2935,9 +2979,11 @@ function updateRhinos(dt){
       else {
         R.aggroTimer=Math.max(R.aggroTimer, 0.3);          // stays locked on while in leash
         if(d > RHINO.MELEE_RANGE){
-          // KEEP CHARGING — home in on the target's CURRENT position (it tracks you).
-          const blocked = rhinoStep(R, t.pos.x, t.pos.z, RHINO.SPEED_CHARGE, dt, RHINO.TURN_CHARGE);
-          animateRhino(R, dt, 1.6);
+          // KEEP CHARGING — home in on the target's CURRENT position (it tracks you),
+          // but it's winded and slow for a moment after a goring so you can break away.
+          const chargeSpd = R.slowT>0 ? RHINO.SPEED_SLOW : RHINO.SPEED_CHARGE;
+          const blocked = rhinoStep(R, t.pos.x, t.pos.z, chargeSpd, dt, RHINO.TURN_CHARGE);
+          animateRhino(R, dt, R.slowT>0 ? 0.8 : 1.6);
           R.blockedT = blocked ? R.blockedT+dt : 0;
           if(R.blockedT > RHINO.BLOCK_GIVEUP){ R.target=null; R.targetKind=null; R.blockedT=0; }  // walled off → give up
         } else {
@@ -3397,6 +3443,15 @@ function dnState(t){
   return lerpSky(SKY.night, SKY.dawn, (t-(CYCLE-12))/12);                    // pre-dawn
 }
 
+// At each day↔night turn every animal recovers to full health (the herds and
+// predators heal up between rounds).
+function healAllAnimals(){
+  lionMeshes.forEach(L=>{ L.health=L.maxHealth; });
+  preyMeshes.forEach(P=>{ P.health=P.maxHealth; });
+  gorillaMeshes.forEach(G=>{ G.health=G.maxHealth; });
+  rhinoMeshes.forEach(R=>{ R.health=R.maxHealth; });
+}
+
 function updateDayNight(dt){
   dn.time = (dn.time + dt) % CYCLE;
   const wasDay = dn.isDay;
@@ -3419,7 +3474,8 @@ function updateDayNight(dt){
   if(dustSys){ dustSys.mat.opacity = 0.1 + s.light*0.32; dustSys.mat.color.copy(s.hor).lerp(_CW, 0.3); }
 
   dn.isDay = dn.time < HALF_CYCLE;
-  if(dn.isDay && !wasDay) dn.day++;
+  if(dn.isDay !== wasDay){ healAllAnimals(); }   // day↔night turn → all animals reheal
+  if(dn.isDay && !wasDay){ dn.day++; showKillfeed('🌅 Day '+dn.day+' — the wildlife has recovered'); }
 }
 
 // =====================================================================
@@ -3698,6 +3754,13 @@ function drawMinimap(){
     mmCtx.beginPath(); mmCtx.arc(px,py,5.5,0,Math.PI*2); mmCtx.fill();
   });
 
+  // Rhino — big grey marker; turns red when it's locked onto you (charging).
+  rhinoMeshes.forEach(R=>{
+    mmCtx.fillStyle = (R.targetKind==='player') ? '#ff5a4d' : '#c9c4b0';
+    const [px,py]=toMM(R.pos.x-player.pos.x, R.pos.z-player.pos.z);
+    mmCtx.beginPath(); mmCtx.arc(px,py,5.5,0,Math.PI*2); mmCtx.fill();
+  });
+
   // Player dot
   mmCtx.fillStyle='#00ff88';
   mmCtx.beginPath(); mmCtx.arc(C,C,5,0,Math.PI*2); mmCtx.fill();
@@ -3790,7 +3853,7 @@ function resetGame(){
 
   // Start in full daylight (skip dawn) so the restart doesn't render the
   // world at midnight + heavy fog. Place us 15 s past dawn = full day.
-  dn = { time: TWILIGHT + 5, day: 1, isDay: true, nextLionSpawn: 120, firstGorilla: false, nextGorillaDay: 3 };
+  dn = { time: TWILIGHT + 5, day: 1, isDay: true, nextLionSpawn: 120, firstGorilla: false, nextGorillaDay: 3, nextRhinoDay: 3 };
   weather = { state:'clear', timer: rand(60,110), intensity:0, flash:0, detMul:1 };
   roarTimer = rand(20,40);
   if(rainSys) rainSys.pts.visible = false;
