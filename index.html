@@ -3377,10 +3377,10 @@ function updateThrownRocks(dt){
       }
     });
     // Thrown weapons also wound + STUN prey (ranged hunting) and scatter the herd.
-    // A spear one-shots any animal EXCEPT the big-horned kudu (two spears); rocks wound.
+    // A spear one-shots most animals; the kudu takes two, the tall tough giraffe three; rocks wound.
     if(!hit) preyMeshes.forEach(P=>{
       if(r.mesh.position.distanceTo(P.pos) < 1.7){
-        P.health -= r.spear ? (P.species==='kudu' ? P.maxHealth/2 : P.maxHealth) : 9*m;
+        P.health -= r.spear ? (P.species==='kudu' ? P.maxHealth/2 : P.species==='giraffe' ? P.maxHealth/3 : P.maxHealth) : 9*m;
         P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
         hit = true;
         showKillfeed(P.health<=0 ? ic+' Kill — '+P.label+'!' : ic+' Stunned the '+P.label);
