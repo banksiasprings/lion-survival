@@ -73,6 +73,7 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
       <div class="inv-slot" id="slot3"><span class="hotkey">3</span><span class="icon">🔥</span><span>Campfire</span></div>
       <div class="inv-slot" id="slot4"><span class="hotkey">4</span><span class="icon">🔦</span><span>Torch</span></div>
       <div class="inv-slot" id="slot5"><span class="hotkey">5</span><span class="icon">🪓</span><span>Axe</span></div>
+      <div class="inv-slot" id="slot6"><span class="hotkey">6</span><span class="icon">🗡️</span><span class="count">2🪵+1🪨</span></div>
     </div>
   </div>
   <div id="minimap"><canvas id="mm" width="150" height="150"></canvas></div>
@@ -83,8 +84,8 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
      Hide in tall grass, stay low and quiet, mind the wind, and grapple into a tree when the pride closes in.</p>
   <div style="font-size:12px;opacity:0.65;line-height:1.9;text-align:center">
     WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hide in grass)<br>
-    1/G Grapple → tree (LMB fire · RMB/Space drop · safe from lions while perched) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe<br>
-    Q Pounce (hunt prey — ambush from grass for ×3) &nbsp;|&nbsp; E Eat kill / Collect &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; T Craft Torch &nbsp;|&nbsp; LMB+Axe Chop Wall<br>
+    1/G Grapple → tree (LMB fire · RMB/Space drop · safe from lions while perched, no stamina cost) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe &nbsp;|&nbsp; 6 Spear<br>
+    Q Pounce (hunt prey — ambush from grass for ×3) &nbsp;|&nbsp; E Eat kill / Collect &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; 6 + LMB Throw Spear (2🪵+1🪨, ×3 dmg) &nbsp;|&nbsp; T Craft Torch &nbsp;|&nbsp; LMB+Axe Chop Wall<br>
     <span style="opacity:0.8">Watch your 🍖 hunger — eat prey you hunt or scavenge lion kills (they'll fight you for it).</span>
   </div>
   <button id="start-btn">▶ START GAME</button>
@@ -115,7 +116,7 @@ const PLAYER = {
   maxHealth: 100, maxStamina: 100,
   staminaDrain: 30, staminaRegen: 18,
   healthRegen: 1.5, lionDamage: 25,
-  climbSpeed: 14, perchDrain: 7,   // grapple reel-up speed; grip stamina/sec while perched
+  climbSpeed: 14, perchDrain: 0,   // grapple reel-up speed; staying perched is free (no grip drain)
   grappleRange: 36,                // max climb-grapple distance to a tree
   maxHunger: 100, hungerDrain: 0.5, hungerSprintMul: 2.4, // hunger/sec (×mul while sprinting)
   starveDamage: 3,                 // HP/sec once hunger hits 0
@@ -1066,6 +1067,7 @@ function registerControls(){
     if(e.code==='Digit3') setSlot(3);
     if(e.code==='Digit4') setSlot(4);
     if(e.code==='Digit5') setSlot(5);
+    if(e.code==='Digit6') setSlot(6);
     if(e.code==='KeyG'){
       setSlot(1);
       if(grapple.active || player.inTree || player.climbing) releaseGrapple();
@@ -1101,7 +1103,7 @@ function registerControls(){
 
 function setSlot(n){
   activeSlot = n;
-  [1,2,3,4,5].forEach(i=>{
+  [1,2,3,4,5,6].forEach(i=>{
     const el = document.getElementById('slot'+i);
     el.classList.toggle('active', i===n);
   });
@@ -1113,6 +1115,7 @@ function onLeftClick(){
   else if(activeSlot===3) placeCampfire();
   else if(activeSlot===4) toggleTorch();
   else if(activeSlot===5) chopWall();
+  else if(activeSlot===6) throwSpear();
 }
 
 function onRightClick(){
@@ -1156,8 +1159,8 @@ function updatePlayer(dt){
     player.stamina = Math.max(0, player.stamina - PLAYER.staminaDrain*dt);
     player.sprinting = true;
   } else {
-    // No passive regen while perched — grip stamina only drains up there (anti-camp).
-    if(!player.inTree) player.stamina = Math.min(PLAYER.maxStamina, player.stamina + PLAYER.staminaRegen*dt);
+    // Passive stamina regen whenever not sprinting — a tree is a safe place to catch your breath.
+    player.stamina = Math.min(PLAYER.maxStamina, player.stamina + PLAYER.staminaRegen*dt);
     player.sprinting = false;
   }
 
@@ -1178,12 +1181,11 @@ function updatePlayer(dt){
 
   // ---- Grapple / climbing / perched (Phase 4) ----
   if(player.inTree){
-    // Perched on a branch: anchored, no gravity, safe from lions. Grip tires —
-    // when stamina hits zero you slip and fall (no infinite tree-camping).
+    // Perched on a branch: anchored, no gravity, safe from lions. Staying up costs
+    // no stamina — wait out the pride or the gorilla as long as you like, then
+    // drop with Space / RMB when the coast is clear.
     player.vel.set(0,0,0);
     player.pos.copy(grapple.perch);
-    player.stamina = Math.max(0, player.stamina - PLAYER.perchDrain*dt);
-    if(player.stamina <= 0){ showKillfeed('💪 Grip gave out!'); dropFromTree(); }
   } else if(grapple.active && grapple.mode==='climb'){
     // Reeling up to the perch point.
     const to = grapple.perch.clone().sub(player.pos);
@@ -1916,7 +1918,8 @@ function updatePrey(dt){
     lionMeshes.forEach(L=>{ const d=L.pos.distanceTo(P.pos); if(d<td){td=d;threat=L.pos;} });
     gorillaMeshes.forEach(G=>{ if(G.state==='perched'||G.state==='sleeping') return; const d=G.pos.distanceTo(P.pos); if(d<td){td=d;threat=G.pos;} });
     const pd=player.pos.distanceTo(P.pos);
-    if(pd<td && !player.inTree){ td=pd; threat=player.pos; }   // treed player isn't a ground threat
+    // Grass/crouch (stealth.visMul) hide you from the herd too — creep up to ambush.
+    if(pd<td && !player.inTree && pd < P.fleeDist*stealth.visMul){ td=pd; threat=player.pos; }
 
     let dir=new THREE.Vector3();
     if(threat && td < P.fleeDist){ P.state='flee'; P.alertTimer=2.5; }
@@ -1930,15 +1933,24 @@ function updatePrey(dt){
       if(s.juke){ P.jukeTimer-=dt; if(P.jukeTimer<=0){ P.jukeDir=rand(-1,1)*s.juke; P.jukeTimer=rand(0.3,0.7); } dir.applyAxisAngle(UP,P.jukeDir); }
     } else if(P.state==='alert'){
       dir.set(0,0,0);
-    } else { // graze: gentle wander + herd cohesion
-      P.grazeTimer-=dt; if(P.grazeTimer<0){ P.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); P.grazeTimer=rand(2,5); }
-      dir.copy(P.wanderDir).multiplyScalar(0.4);
-      const c=cen[P.herdId];
-      if(c){ const tx=c.x-P.pos.x, tz=c.z-P.pos.z, cd=Math.hypot(tx,tz); if(cd>6){ dir.x+=tx/cd*0.6; dir.z+=tz/cd*0.6; } }
-      if(dir.lengthSq()>0) dir.normalize();
+    } else { // graze: roam around + loose herd cohesion. Alternate walking with
+             // brief head-down grazing pauses so a calm herd actually drifts about.
+      P.grazeTimer-=dt;
+      if(P.grazeTimer<0){
+        P.grazePause = Math.random()<0.3;                         // ~30% of the time: stop and graze
+        if(!P.grazePause) P.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize();
+        P.grazeTimer = P.grazePause ? rand(1,2.5) : rand(3,6);
+      }
+      if(P.grazePause){ dir.set(0,0,0); }
+      else {
+        dir.copy(P.wanderDir);
+        const c=cen[P.herdId];
+        if(c){ const tx=c.x-P.pos.x, tz=c.z-P.pos.z, cd=Math.hypot(tx,tz); if(cd>9){ dir.x+=tx/cd*0.5; dir.z+=tz/cd*0.5; } }
+        if(dir.lengthSq()>0) dir.normalize();
+      }
     }
 
-    let speed = P.state==='flee' ? s.speed : P.state==='alert' ? 0 : s.speed*0.16;
+    let speed = P.state==='flee' ? s.speed : (P.state==='alert'||P.grazePause) ? 0 : s.speed*0.42;
     P._lastSpeed=speed;
     let hopY=0;
     if(s.hop && P.state==='flee'){ P.hopPhase+=dt*6.5; hopY=Math.max(0,Math.sin(P.hopPhase))*0.55*s.size; }
@@ -2188,7 +2200,6 @@ function makeGorilla(x, z){
   box(0.18,0.13,0.10, darkMat,  -0.23,2.70, 0.90);    // eye sockets — deep-set under the brow
   box(0.18,0.13,0.10, darkMat,   0.23,2.70, 0.90);
   box(0.62,0.52,0.46, muzzleMat, 0,   2.50, 0.96);    // jutting paler muzzle
-  box(0.34,0.16,0.08, darkMat,   0,   2.42, 1.22);    // dark nostril pad
   box(0.12,0.20,0.14, faceMat,  -0.56,2.78, 0.34);    // ears — small, set back
   box(0.12,0.20,0.14, faceMat,   0.56,2.78, 0.34);
   const scar = box(0.52,0.07,0.07, scarMat, -0.30,2.66,0.95); scar.rotation.z = -0.7;  // old slash over one eye
@@ -2605,7 +2616,10 @@ function updateGorillas(dt){
     // The gorilla can SEE a tree-sheltered player (GOR.SEES_TREED_PLAYER) — the
     // lions cannot. `treed` is non-null whenever the player is up a tree.
     const treed = (GOR.SEES_TREED_PLAYER ? shelter : null);
-    const noticesPlayer = distP < GOR.PURSUE_RANGE;
+    // Grass/crouch conceal a GROUNDED player from the gorilla too — same stealth
+    // signature the lions read (stealth.visMul). A treed player is the exception:
+    // the gorilla always sees that one, then closes in to tree-grab.
+    const noticesPlayer = distP < GOR.PURSUE_RANGE * (treed ? 1 : stealth.visMul);
 
     // 1) Tree-grab a sheltered player already in reach — the prize.
     if(treed && distP < GOR.GRAB_RANGE && G.grabCd <= 0){
@@ -2905,7 +2919,7 @@ function doCollect(){
   });
   // Collect rocks
   rockSpawns.forEach(r=>{
-    if(r.available && r.pos.distanceTo(player.pos) < 3 && rockCount<5){
+    if(r.available && r.pos.distanceTo(player.pos) < 3 && rockCount<10){
       rockCount++;
       r.available = false;
       r.cooldown  = 30;
@@ -2928,7 +2942,35 @@ function throwRock(){
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.copy(pos);
   scene.add(mesh);
-  thrownRocks.push({ mesh, vel:dir.multiplyScalar(48), dist:0 });   // fast, flat throw
+  thrownRocks.push({ mesh, vel:dir.multiplyScalar(48), dist:0, mult:1 });   // fast, flat throw
+  playSound('throw');
+}
+
+// A flint-tipped spear (toolbar slot 6): thrown like a rock but it hits ~3× as
+// hard. Crafted on the throw from 2 wood + 1 rock — no separate inventory slot.
+function buildSpearMesh(){
+  const g = new THREE.Group();
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.035,1.2,6),
+                               new THREE.MeshLambertMaterial({color:0x7a5230}));
+  shaft.rotation.x = Math.PI/2;                       // lay the shaft along local -Z (travel dir)
+  g.add(shaft);
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.09,0.30,6),
+                             new THREE.MeshLambertMaterial({color:0xb9bcc6}));
+  tip.rotation.x = -Math.PI/2; tip.position.z = -0.74;  // point the head forward (-Z)
+  g.add(tip);
+  return g;
+}
+
+function throwSpear(){
+  if(woodCount < 2 || rockCount < 1){ showKillfeed('🗡️ Need 2 🪵 + 1 🪨 to make a spear'); return; }
+  woodCount -= 2; rockCount -= 1;
+  updateWoodHUD(); updateRockHUD();
+  const dir  = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation);
+  const mesh = buildSpearMesh();
+  mesh.position.copy(camera.position);
+  mesh.lookAt(mesh.position.clone().add(dir));          // tip leads (object's -Z faces the throw)
+  scene.add(mesh);
+  thrownRocks.push({ mesh, vel:dir.clone().multiplyScalar(52), dist:0, mult:3, spear:true });
   playSound('throw');
 }
 
@@ -2938,32 +2980,34 @@ function updateThrownRocks(dt){
     r.mesh.position.addScaledVector(r.vel, dt);
     r.dist += r.vel.length()*dt;
     r.vel.y -= 5*dt; // light gravity → flatter, faster-feeling throw
+    if(r.spear) r.mesh.lookAt(r.mesh.position.clone().add(r.vel));   // tip follows the arc
 
+    const m = r.mult || 1, ic = r.spear ? '🗡️' : '🪨';   // a spear hits 3× as hard
     let hit = false;
     lionMeshes.forEach(L=>{
-      if(r.mesh.position.distanceTo(L.pos) < 1.7){   // wider radius so fast rocks don't skip past
-        L.health--;
+      if(r.mesh.position.distanceTo(L.pos) < 1.7){   // wider radius so fast throws don't skip past
+        L.health -= m;
         L.stunTimer = 5;
         L.state = 'stunned';
         L.flashTimer = 0.25;
         hit = true;
-        if(L.health<=0){ showKillfeed('🪨 Rock kill!'); }
+        if(L.health<=0){ showKillfeed(ic+' '+(r.spear?'Spear':'Rock')+' kill!'); }
       }
     });
-    // Rocks also wound + STUN prey (ranged hunting) and scatter the herd.
+    // Thrown weapons also wound + STUN prey (ranged hunting) and scatter the herd.
     if(!hit) preyMeshes.forEach(P=>{
       if(r.mesh.position.distanceTo(P.pos) < 1.7){
-        P.health -= 9; P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
+        P.health -= 9*m; P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
         hit = true;
-        showKillfeed(P.health<=0 ? '🪨 Rock kill — '+P.label+'!' : '🪨 Stunned the '+P.label);
+        showKillfeed(P.health<=0 ? ic+' Kill — '+P.label+'!' : ic+' Stunned the '+P.label);
       }
     });
-    // Rocks chip the gorilla too — it's far tankier than prey, so a rock only
-    // dents it and makes it flinch (skip a perched/sleeping one, up its tree).
+    // They chip the gorilla too — far tankier than prey (skip a perched/sleeping
+    // one, up its tree). A spear bites much deeper than a rock.
     if(!hit) gorillaMeshes.forEach(G=>{
       if(G.state!=='perched' && G.state!=='sleeping' && r.mesh.position.distanceTo(G.pos) < 2.0){
-        G.health -= 8; G.flashTimer = 0.25;
-        hit = true; showKillfeed('🪨 Rock staggers the gorilla');
+        G.health -= 8*m; G.flashTimer = 0.25;
+        hit = true; showKillfeed(r.spear ? '🗡️ Spear bites the gorilla' : '🪨 Rock staggers the gorilla');
       }
     });
 
