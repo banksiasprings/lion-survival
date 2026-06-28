@@ -153,10 +153,10 @@ not flavour.
 - **All animals reheal at each day↔night turn** (`healAllAnimals` in `updateDayNight`).
 - **Every animal flees when about to die** (< ~25 % HP, runs from the nearest threat): prey (`flee`),
   rhino (drops target & bolts), lion (`flee_hurt` state), gorilla (`fleeing` state).
-- **Spawn cadences:** **2 lions every day & every night** (at each day↔night turn, cap 12 — replaces the
-  old timer); **gorillas every 3–4 days** (`dn.nextGorillaDay`, randomised; `GOR.SPAWN_EVERY` is legacy);
-  **rhinos every 2–5 days** (`dn.nextRhinoDay`, `RHINO.MAX 3`). Lions, the gorilla and rhinos all show on
-  the minimap.
+- **Spawn cadence — a daily wave** (`spawnDailyWave`, fired at each dawn `dn.day++` and once at reset for
+  day 1): **3 lions, 2 gorillas, 1 rhino**, each up to its cap (lions 14, `GOR.MAX 5`, `RHINO.MAX 5`),
+  spawned player-relative (r 55–95). The old per-flip / per-N-day cadences are gone. Lions, the gorilla
+  and rhinos all show on the minimap.
 - **Gorilla is a brute now** (batch 2): a grounded one **SMACKS** the player for **half the health bar**
   (`GOR.SMACK_DMG 50`) on a `SMACK_CD` cooldown with knockback + a brief daze — one big blow, not the old
   continuous `MAUL_DPS` grind. **`PURSUE_RANGE 26 → 40`** so it notices/hunts from far off. Counterplay:

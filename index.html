@@ -2123,7 +2123,7 @@ function eatNearbyCarcass(){
 //
 // All numeric tunings live in GOR so they're tweakable in one place.
 const GOR = {
-  MAX:           2,     // hard cap on simultaneous gorillas
+  MAX:           5,     // hard cap on simultaneous gorillas (daily wave adds 2/day toward this)
   SPAWN_EVERY:   2,     // (legacy) — cadence is now randomised 3-4 days at the spawn site
   FIRST_SPAWN_T: 22,    // sec into the game the FIRST gorilla arrives (then every 3-4 days)
 
@@ -2507,15 +2507,7 @@ function wallBlockingPath(G, tx, tz){
 function updateGorillas(dt){
   if(gameState!=='playing') return;
 
-  // ---- spawn: the FIRST gorilla arrives early so it's a present, testable
-  //      threat; subsequent ones follow an every-3-4-days cadence. ----
-  if(gorillaMeshes.length < GOR.MAX){
-    if(!dn.firstGorilla){
-      if(elapsed > GOR.FIRST_SPAWN_T){ spawnGorilla(); dn.firstGorilla = true; dn.nextGorillaDay = dn.day + 3 + (Math.random()*2|0); }
-    } else if(dn.day >= dn.nextGorillaDay){
-      spawnGorilla(); dn.nextGorillaDay += 3 + (Math.random()*2|0);
-    }
-  }
+  // (Gorillas now arrive in the daily dawn wave — see spawnDailyWave.)
 
   const isNight = !dn.isDay;
   const shelter = playerShelterTree();   // the player's tree hideout, or null
@@ -2798,7 +2790,7 @@ function updateGorillas(dt){
 // it never hits from behind. Poor senses (grass/crouch hide you, stealth.visMul),
 // gets stunned by rocks/spears, and is BLOCKED by walls (no smashing through).
 const RHINO = {
-  MAX: 3,
+  MAX: 5,
   HEALTH: 220,            // tankier than the gorilla (160) — ~14 spears
   SPEED_ROAM: 3.0,        // slow amble
   SPEED_CHARGE: 15,       // keeps charging its target at this speed
@@ -2954,10 +2946,7 @@ function rhinoSmack(R){
 
 function updateRhinos(dt){
   if(gameState!=='playing') return;
-  // a new rhino wanders in every 2-5 in-game days (up to the cap)
-  if(dn.day >= dn.nextRhinoDay && rhinoMeshes.length < RHINO.MAX){
-    spawnRhino(); dn.nextRhinoDay = dn.day + 2 + (Math.random()*4|0);
-  }
+  // (Rhinos now arrive in the daily dawn wave — see spawnDailyWave.)
 
   rhinoMeshes.forEach(R=>{
     R.smackCd=Math.max(0,R.smackCd-dt); R.aggroTimer=Math.max(0,R.aggroTimer-dt); R.slowT=Math.max(0,R.slowT-dt);
@@ -3470,6 +3459,15 @@ function dnState(t){
   return lerpSky(SKY.night, SKY.dawn, (t-(CYCLE-12))/12);                    // pre-dawn
 }
 
+// The daily wave: each new day brings 3 fresh lions, 2 gorillas and 1 rhino
+// (each up to its population cap). Spawns are player-relative, so they move in
+// from just out of sight wherever you are on the big map.
+function spawnDailyWave(){
+  for(let i=0;i<3 && lionMeshes.length    < 14;       i++) spawnLion(Math.random()<0.75?'lioness':'male');
+  for(let i=0;i<2 && gorillaMeshes.length < GOR.MAX;  i++) spawnGorilla();
+  for(let i=0;i<1 && rhinoMeshes.length   < RHINO.MAX;i++) spawnRhino();
+}
+
 // At each day↔night turn every animal recovers to full health (the herds and
 // predators heal up between rounds).
 function healAllAnimals(){
@@ -3501,12 +3499,12 @@ function updateDayNight(dt){
   if(dustSys){ dustSys.mat.opacity = 0.1 + s.light*0.32; dustSys.mat.color.copy(s.hor).lerp(_CW, 0.3); }
 
   dn.isDay = dn.time < HALF_CYCLE;
-  if(dn.isDay !== wasDay){                         // day↔night turn
-    healAllAnimals();                              // every animal reheals
-    for(let i=0;i<2 && lionMeshes.length<12;i++)   // and 2 fresh lions arrive every day & night
-      spawnLion(Math.random()<0.75 ? 'lioness' : 'male');
+  if(dn.isDay !== wasDay){ healAllAnimals(); }     // day↔night turn → every animal reheals
+  if(dn.isDay && !wasDay){                          // DAWN → a new day
+    dn.day++;
+    spawnDailyWave();                               // 3 lions, 2 gorillas, 1 rhino
+    showKillfeed('🌅 Day '+dn.day+' — fresh predators move in');
   }
-  if(dn.isDay && !wasDay){ dn.day++; showKillfeed('🌅 Day '+dn.day+' — the wildlife has recovered'); }
 }
 
 // =====================================================================
@@ -3907,8 +3905,7 @@ function resetGame(){
   prideAlert.timer = 0;
   spawnPride();
   spawnHerds();              // populate the savanna with prey (Phase 6)
-  spawnRhino(); spawnRhino(); // a couple of roaming rhinos
-  // (the apex gorilla self-spawns ~22s in via updateGorillas, then every 2 days)
+  spawnDailyWave();          // day-1 predators: +3 lions, +2 gorillas, +1 rhino (then again each dawn)
 
   gameState = 'playing';
   document.getElementById('overlay').style.display='none';
