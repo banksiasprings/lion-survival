@@ -78,8 +78,9 @@ not flavour.
       stillness slash visibility, running is loud; lions hidden in grass sink + drop off radar;
       wind scent extends downwind detection; HIDDEN/EXPOSED + spotted-growl + rustle cues)
 - [x] Phase 4 — grappling hook to trees (aim-cone target on climbable acacia/baobab/marula →
-      reel up to a branch perch; safe from lions + foliage concealment; grip-stamina drains to
-      force a drop; Space/G/RMB drop; drop-attack deals damage+stun. Note: target via aim cone,
+      reel up to a branch perch; safe from lions + foliage concealment; staying perched costs no
+      stamina (and regens) so you can wait out any threat; Space/G/RMB drop; drop-attack deals
+      damage+stun. Note: target via aim cone,
       NOT geometry raycast — LOD trees don't recurse in raycast.)
 - [x] Phase 5 — atmosphere picks (3): **watering hole** (focal landmark, grass-cleared, lions
       gravitate there to drink/ambush, shown on minimap); **distant night roars** (atmospheric +
@@ -120,6 +121,20 @@ not flavour.
       so a perched gorilla is two burning eyes in the canopy. Eyes/halos are `userData.noFlash`;
       the hit-flash moved to `.traverse` and skips `noFlash` so the body flashes white while the
       eyes keep burning. Scale 1.36 (`dossiers/gorilla_render_2026-06-17.md`).
+
+## Tweaks (2026-06-28) — `dossiers/tweaks_2026-06-28.md`
+- **Spear** = toolbar slot **6** (`throwSpear`/`buildSpearMesh`): thrown like a rock (LMB while slot 6
+  is held) but **×3 damage** (`mult` on the thrown projectile, shared `thrownRocks` loop). Crafted on
+  the throw from **2 wood + 1 rock** — no stored count.
+- **Rock cap 5 → 10** (`doCollect`).
+- **Perching costs no stamina** (`perchDrain: 0`, drop-on-empty removed) and stamina now regens while
+  perched — a tree is a safe place to wait/rest.
+- **Grass/crouch now hide a GROUNDED player from the gorilla** (`noticesPlayer` scaled by
+  `stealth.visMul`) **and from prey** (herd flee-check scaled by `stealth.visMul`) — the same stealth
+  signal the lions already used. A treed player is still the gorilla's exception (it always sees that).
+- **Calmer prey roam more**: graze walk speed `0.16× → 0.42×`, looser cohesion, ~30% head-down pauses,
+  so an unthreatened herd drifts across the map instead of standing still.
+- Removed the gorilla's protruding nostril box (read as a "cigarette"). 28 → 27 meshes.
 
 ## Food chain (Phase 6) — quick reference
 prey graze in herds → flee any predator within species flee-dist → lions hunt the weak/slow
