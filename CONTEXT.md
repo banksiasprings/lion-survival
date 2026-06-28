@@ -14,7 +14,12 @@ Run locally: `python3 -m http.server 8911` (see `.claude/launch.json`) → open 
   (AmbientLight) are lerped each frame in `updateDayNight()`. New sky/lighting must hook here.
 - **Game loop:** `animate()` calls the `update*(dt)` functions in order, then renders. `dt` is
   clamped to 0.05.
-- **World:** `WORLD = 100`, `HALF = 50`. Ground height = `terrainY(x,z)`. Place everything on it.
+- **World:** `WORLD = 500`, `HALF = 250` (5× the original 100×100 — expanded 2026-06-28). Ground height
+  = `terrainY(x,z)`. Place scatter within `±MAPR` (`HALF-6`); player is contained by the boundary bounce
+  at `HALF-1`. Camera far `1300`, skydome r900, hills r520, fog ×`FOG_SCALE` (0.3) so it reads to the
+  horizon. Content scaled with the map (trees ×16, grass 45k + 200 hide-clumps, rocks 60+75, 3× herds);
+  lion/gorilla/rhino spawns are **player-relative** (r 55–95) so they're encounterable anywhere; the
+  minimap is a fixed local radar (~±75 m) rather than the whole world.
 
 ## Day/night clock
 `CYCLE = 240s` (4 min). `dn.time` 0..240, 0 = dawn. In-game hour = `gameHour()` maps the cycle to a

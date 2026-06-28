@@ -100,7 +100,9 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
 //  GLOBALS
 // =====================================================================
 let scene, camera, renderer, clock;
-const WORLD = 100, HALF = 50;
+const WORLD = 500, HALF = 250;     // 5× the original 100×100 savanna
+const MAPR = HALF - 6;             // scatter-placement margin (content spreads within ±MAPR)
+const FOG_SCALE = 0.30;            // thinner fog so the bigger map reads to the horizon
 
 // Input
 let keys = {};
@@ -321,8 +323,8 @@ function makeSoftDot(){
 // =====================================================================
 function initScene(){
   scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x87ceeb, 0.018);
-  camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.05, 300);
+  scene.fog = new THREE.FogExp2(0x87ceeb, 0.018*FOG_SCALE);
+  camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.05, 1300);
   renderer = new THREE.WebGLRenderer({antialias:true});
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));
   renderer.setSize(innerWidth, innerHeight);
@@ -418,7 +420,7 @@ function probeShadowSupport(){
 //  TERRAIN
 // =====================================================================
 function createTerrain(){
-  const geo = new THREE.PlaneGeometry(WORLD, WORLD, 40, 40);
+  const geo = new THREE.PlaneGeometry(WORLD, WORLD, 200, 200);
   geo.rotateX(-Math.PI/2);
   const pos = geo.attributes.position;
   for(let i=0;i<pos.count;i++){
@@ -466,7 +468,7 @@ function createSavanna(){
 // A watering hole — the savanna's focal point. Animals (and the player) are
 // drawn here; lions drift in to drink and lie in ambush, especially at dusk.
 function createWateringHole(){
-  const x = rand(-30,30), z = rand(-30,30), r = rand(6,8);
+  const x = rand(-HALF*0.5, HALF*0.5), z = rand(-HALF*0.5, HALF*0.5), r = rand(9,13);
   const y = terrainY(x,z);
   const grp = new THREE.Group(); grp.position.set(x, y, z);
   // muddy/sandy shore ring (just above the ground plane so it's not occluded)
@@ -487,9 +489,9 @@ function createWateringHole(){
 function generateTallGrassClumps(){
   tallGrassClumps.length = 0;
   let attempts = 0;
-  while(tallGrassClumps.length < 26 && attempts < 500){
+  while(tallGrassClumps.length < 200 && attempts < 12000){
     attempts++;
-    const x = rand(-44,44), z = rand(-44,44);
+    const x = rand(-MAPR,MAPR), z = rand(-MAPR,MAPR);
     if(tallGrassClumps.some(c=>Math.hypot(c.x-x,c.z-z) < 7)) continue;
     tallGrassClumps.push({ x, z, r: rand(3.5,6.5) });
   }
@@ -539,7 +541,7 @@ const GRASS_FRAG = `
   }`;
 
 function createGrass(){
-  const COUNT = 9000;
+  const COUNT = 45000;
   const base = new THREE.InstancedBufferGeometry();
   base.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
     -0.5,0,0,  0.5,0,0,  -0.12,1,0,  0.12,1,0
@@ -597,7 +599,7 @@ function createGrass(){
 // Gradient sky dome: deep-blue zenith → warm tan horizon (savanna haze).
 // Colours are uniforms the day/night cycle drives.
 function createSkyDome(){
-  const geo = new THREE.SphereGeometry(260, 24, 16);
+  const geo = new THREE.SphereGeometry(900, 32, 20);
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite:false, fog:false,
     uniforms:{ uTop:{value:new THREE.Color(0x2e6fc4)}, uBottom:{value:new THREE.Color(0xd8c9a8)} },
@@ -619,12 +621,12 @@ function createSkyDome(){
 // Distant rolling hills ringing the map. fog:false so they read as a constant
 // hazy silhouette on the horizon (they sit at R=150, well beyond the boundary).
 function createDistantHills(){
-  const R=150, segs=84, pos=[], idx=[]; let b=0;
+  const R=520, segs=120, pos=[], idx=[]; let b=0;
   for(let i=0;i<segs;i++){
     const a0=(i/segs)*Math.PI*2, a1=((i+1)/segs)*Math.PI*2;
-    const h0=7 + (Math.sin(i*0.7)+Math.sin(i*0.23))*4 + Math.random()*3;
-    const h1=7 + (Math.sin((i+1)*0.7)+Math.sin((i+1)*0.23))*4 + Math.random()*3;
-    pos.push(Math.cos(a0)*R,-3,Math.sin(a0)*R, Math.cos(a1)*R,-3,Math.sin(a1)*R,
+    const h0=22 + (Math.sin(i*0.7)+Math.sin(i*0.23))*12 + Math.random()*9;
+    const h1=22 + (Math.sin((i+1)*0.7)+Math.sin((i+1)*0.23))*12 + Math.random()*9;
+    pos.push(Math.cos(a0)*R,-8,Math.sin(a0)*R, Math.cos(a1)*R,-8,Math.sin(a1)*R,
              Math.cos(a0)*R,h0,Math.sin(a0)*R, Math.cos(a1)*R,h1,Math.sin(a1)*R);
     idx.push(b,b+1,b+2, b+2,b+1,b+3); b+=4;
   }
@@ -925,7 +927,7 @@ function createTrees(){
   const W=[['acacia',8,makeAcacia,1],['marula',5,makeMarula,1],['baobab',2,makeBaobab,1],
            ['sausage',3,makeSausage,1],['datepalm',3,makeDatePalm,1],['combretum',7,makeCombretum,1],
            ['thornbush',8,makeThornBush,0],['grasstuft',6,makeGrassTuft,0],['lowscrub',6,makeLowScrub,0]];
-  W.forEach(([name,w,fn,big])=>{ for(let i=0;i<w;i++) bag.push({name,fn,big}); });
+  W.forEach(([name,w,fn,big])=>{ for(let i=0;i<w*16;i++) bag.push({name,fn,big}); });  // 5× map → ~16× the trees
   // shuffle
   for(let i=bag.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; [bag[i],bag[j]]=[bag[j],bag[i]]; }
 
@@ -934,7 +936,7 @@ function createTrees(){
     let x,z,ok=false,att=0;
     const spacing=item.big?6:3.8;
     while(att++<40 && !ok){
-      x=rand(-43,43); z=rand(-43,43);
+      x=rand(-MAPR,MAPR); z=rand(-MAPR,MAPR);
       ok = !placed.some(p=>Math.hypot(p[0]-x,p[1]-z)<spacing)
         && !(wateringHole && Math.hypot(x-wateringHole.x,z-wateringHole.z)<wateringHole.r+2);
     }
@@ -974,9 +976,9 @@ function noisyRock(r, detail, jag){
 // Small pickup pebbles (the throwable-rock source). Keeps the rockSpawns
 // contract: {mesh, pos, available, cooldown}; pickup hides mesh.
 function createRocks(){
-  for(let i=0;i<10;i++){
+  for(let i=0;i<60;i++){
     let x,z,attempts=0;
-    do{ x=rand(-44,44); z=rand(-44,44); attempts++; }
+    do{ x=rand(-MAPR,MAPR); z=rand(-MAPR,MAPR); attempts++; }
     while(attempts<30 && treeObjects.some(t=>t.pos.distanceTo(v3(x,0,z))<4));
     const y=terrainY(x,z), r=rand(0.28,0.42);
     const mesh=new THREE.Mesh(noisyRock(r,0,0.25), rockMat());
@@ -993,10 +995,10 @@ function createRocks(){
 function createRockFormations(){
   const placed=[];
   const TYPES=['boulder','flat','standing','pebbles','outcrop'];
-  for(let i=0;i<15;i++){
+  for(let i=0;i<75;i++){
     let x,z,ok=false,att=0;
     while(att++<40 && !ok){
-      x=rand(-44,44); z=rand(-44,44);
+      x=rand(-MAPR,MAPR); z=rand(-MAPR,MAPR);
       ok = !placed.some(p=>Math.hypot(p[0]-x,p[1]-z)<5)
         && !treeObjects.some(t=>t.pos.distanceTo(v3(x,0,z))<3.5)
         && !(wateringHole && Math.hypot(x-wateringHole.x,z-wateringHole.z)<wateringHole.r+2)
@@ -1457,8 +1459,11 @@ function makeLion(x, z, sex){
 
 // Spawn a wandering lioness recruit from off at the map edge.
 function spawnLion(sex){
-  const angle = rand(0, Math.PI*2), r = rand(36,48);
-  makeLion(Math.cos(angle)*r, Math.sin(angle)*r, sex || 'lioness');
+  // spawn just out of sight AROUND the player (the map is large) so they walk in
+  const a = rand(0, Math.PI*2), r = rand(55,95);
+  const x = clamp(player.pos.x + Math.cos(a)*r, -MAPR, MAPR);
+  const z = clamp(player.pos.z + Math.sin(a)*r, -MAPR, MAPR);
+  makeLion(x, z, sex || 'lioness');
   showKillfeed('🦁 A lion joins the pride');
 }
 
@@ -1899,14 +1904,15 @@ function makePrey(key,x,z,herdId){
 }
 
 function spawnHerds(){
-  const plan = ['zebra','wildebeest','gazelle','impala','warthog','kudu','impala','gazelle'];
+  const base = ['zebra','wildebeest','gazelle','impala','warthog','kudu','impala','gazelle'];
+  const plan = [...base, ...base, ...base];   // 5× map → ~3× the herds, spread across it
   plan.forEach((key,hi)=>{
     const s=SPECIES[key];
     let cx,cz;
-    if(hi%3===0 && wateringHole){ const a=rand(0,6.28), r=rand(11,22); cx=clamp(wateringHole.x+Math.cos(a)*r,-44,44); cz=clamp(wateringHole.z+Math.sin(a)*r,-44,44); }
-    else { cx=rand(-42,42); cz=rand(-42,42); }
+    if(hi%3===0 && wateringHole){ const a=rand(0,6.28), r=rand(11,22); cx=clamp(wateringHole.x+Math.cos(a)*r,-MAPR,MAPR); cz=clamp(wateringHole.z+Math.sin(a)*r,-MAPR,MAPR); }
+    else { cx=rand(-MAPR,MAPR); cz=rand(-MAPR,MAPR); }
     const n=s.herd[0] + (Math.random()*(s.herd[1]-s.herd[0]+1)|0);
-    for(let i=0;i<n;i++) makePrey(key, clamp(cx+rand(-5,5),-46,46), clamp(cz+rand(-5,5),-46,46), 'h'+hi);
+    for(let i=0;i<n;i++) makePrey(key, clamp(cx+rand(-5,5),-MAPR,MAPR), clamp(cz+rand(-5,5),-MAPR,MAPR), 'h'+hi);
   });
 }
 
@@ -1991,7 +1997,7 @@ function updatePrey(dt){
     if(s.dust && P.state==='flee' && Math.random()<dt*3.5) spawnDustPuff(P.pos);
 
     P.pos.addScaledVector(dir, speed*dt);
-    P.pos.x=clamp(P.pos.x,-47,47); P.pos.z=clamp(P.pos.z,-47,47);
+    P.pos.x=clamp(P.pos.x,-(HALF-1),HALF-1); P.pos.z=clamp(P.pos.z,-(HALF-1),HALF-1);
     collideWalls(P.pos, 0.7);                       // don't run through walls
     P.pos.y=terrainY(P.pos.x,P.pos.z);
     P.mesh.position.set(P.pos.x, P.pos.y+hopY, P.pos.z);
@@ -2004,11 +2010,11 @@ function updatePrey(dt){
   }}
 
   // keep the ecosystem stocked
-  if(preyMeshes.length < 9){
+  if(preyMeshes.length < 28){
     const key=SPECIES_KEYS[(Math.random()*SPECIES_KEYS.length)|0];
-    const a=rand(0,6.28), x=clamp(player.pos.x+Math.cos(a)*46,-46,46), z=clamp(player.pos.z+Math.sin(a)*46,-46,46);
+    const a=rand(0,6.28), x=clamp(player.pos.x+Math.cos(a)*rand(50,80),-MAPR,MAPR), z=clamp(player.pos.z+Math.sin(a)*rand(50,80),-MAPR,MAPR);
     const n=SPECIES[key].herd[0];
-    for(let i=0;i<n;i++) makePrey(key, clamp(x+rand(-4,4),-46,46), clamp(z+rand(-4,4),-46,46), 'r'+(elapsed|0));
+    for(let i=0;i<n;i++) makePrey(key, clamp(x+rand(-4,4),-MAPR,MAPR), clamp(z+rand(-4,4),-MAPR,MAPR), 'r'+(elapsed|0));
   }
 }
 
@@ -2318,8 +2324,8 @@ function makeGorilla(x, z){
 
 // A gorilla arrives from a map edge, like a recruited lion.
 function spawnGorilla(){
-  const a = rand(0, Math.PI*2), r = rand(38, 46);
-  makeGorilla(Math.cos(a)*r, Math.sin(a)*r);
+  const a = rand(0, Math.PI*2), r = rand(55, 95);
+  makeGorilla(clamp(player.pos.x+Math.cos(a)*r,-MAPR,MAPR), clamp(player.pos.z+Math.sin(a)*r,-MAPR,MAPR));
   showKillfeed('🦍 A gorilla enters the valley');
   playSound('roar');
 }
@@ -2869,7 +2875,7 @@ function makeRhino(x, z){
   return R;
 }
 
-function spawnRhino(){ const a=rand(0,Math.PI*2), r=rand(38,46); makeRhino(Math.cos(a)*r, Math.sin(a)*r); }
+function spawnRhino(){ const a=rand(0,Math.PI*2), r=rand(55,95); makeRhino(clamp(player.pos.x+Math.cos(a)*r,-MAPR,MAPR), clamp(player.pos.z+Math.sin(a)*r,-MAPR,MAPR)); }
 
 // Nearest LIVE rhino to a point (for the lions' / gorilla's targeting), or null.
 function nearestRhino(pos, maxD){
@@ -3479,7 +3485,7 @@ function updateDayNight(dt){
   const s = dnState(dn.time);
 
   if(skyDome){ skyDome.mat.uniforms.uTop.value.copy(s.zen); skyDome.mat.uniforms.uBottom.value.copy(s.hor); }
-  scene.fog.color.copy(s.hor); scene.fog.density = s.fog;
+  scene.fog.color.copy(s.hor); scene.fog.density = s.fog * FOG_SCALE;
   renderer.setClearColor(s.hor, 1);
 
   const amb = scene.userData.ambient, sun = scene.userData.sun;
@@ -3709,7 +3715,7 @@ function drawMinimap(){
   if(!mmCtx) return;
   const C = 75; // centre
   const S = 150;
-  const scale = S / (WORLD * 0.7);
+  const scale = S / 150;   // fixed local radar (~±75 m around the player) — the map is too big to show whole
 
   mmCtx.clearRect(0,0,S,S);
   // Background
