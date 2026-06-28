@@ -1538,7 +1538,7 @@ function pickPreyTarget(L){
     const d=L.pos.distanceTo(P.pos); if(d>34) return;
     const s=SPECIES[P.species];
     let score = -d*0.5 - s.speed*0.35 + (P.maxHealth-P.health)*0.25;
-    const big = (P.species==='kudu'||P.species==='zebra'||P.species==='wildebeest');
+    const big = (P.species==='kudu'||P.species==='zebra'||P.species==='wildebeest'||P.species==='giraffe');
     score += (hunters>=2) ? (big? 8 : -2) : (big? -5 : 4);
     if(score>bestScore){ bestScore=score; best=P; }
   });
@@ -1828,6 +1828,7 @@ const SPECIES = {
   impala:    { label:'impala',     size:0.82, color:0xb87b40, herd:[4,6], speed:17,   flee:19, hp:24, juke:0,   hop:1, neck:0.5,  horns:'lyre',                    food:38, dust:0 },
   warthog:   { label:'warthog',    size:0.58, color:0x53493f, herd:[1,3], speed:15,   flee:11, hp:30, juke:0,   hop:0, neck:0.22, horns:null,      tusks:true, low:true, counter:14, food:34, dust:0 },
   kudu:      { label:'kudu',       size:1.18, color:0x8c7c66, herd:[1,2], speed:11,   flee:14, hp:72, juke:0,   hop:0, neck:0.9,  horns:'spiral',  stripeThin:true, food:70, dust:0 },
+  giraffe:   { label:'giraffe',    size:1.6,  color:0xc79a52, herd:[2,4], speed:18,   flee:22, hp:40, juke:0,   hop:0, neck:2.2,  horns:null,      food:78, dust:0, custom:'giraffe' },
 };
 const SPECIES_KEYS = Object.keys(SPECIES);
 
@@ -1889,8 +1890,55 @@ function makeHerbivore(key){
   return { group:g, legs, bodyY, legLen };
 }
 
+// Giraffe — too tall/long-necked for the generic herbivore builder, so it gets its
+// own mesh. Returns the same {group, legs, bodyY, legLen} contract so the prey loop
+// (leg gait, flee, etc.) drives it like any other herbivore.
+function makeGiraffe(){
+  const g=new THREE.Group();
+  const coat = lmat(jcol(0xc79a52,0.05));   // tan coat
+  const pale = lmat(jcol(0xe3d6b0,0.04));   // pale lower legs / muzzle
+  const spot = lmat(jcol(0x8a5a2a,0.05));   // patches
+  const horn = lmat(0x5b4a32);
+  const dark = lmat(0x141014);
+  const legLen=1.7, bw=0.72, bh=0.8, bl=1.55, bodyY=legLen+bh*0.5;
+  // body + sloped hindquarters (giraffe back drops toward the rear)
+  const body=new THREE.Mesh(new THREE.BoxGeometry(bw,bh,bl), coat); body.position.y=bodyY; body.castShadow=true; g.add(body);
+  const rump=new THREE.Mesh(new THREE.BoxGeometry(bw*0.96,bh*0.78,bl*0.42), coat); rump.position.set(0,bodyY-0.13,-bl*0.42); g.add(rump);
+  // long neck — up and slightly forward
+  const neckLen=2.1, th=0.38, c=Math.cos(th), sn=Math.sin(th);
+  const nbY=bodyY+bh*0.32, nbZ=bl*0.42;
+  const neck=new THREE.Mesh(new THREE.BoxGeometry(0.34,neckLen,0.40), coat);
+  neck.position.set(0, nbY+c*neckLen*0.5, nbZ+sn*neckLen*0.5); neck.rotation.x=th; neck.castShadow=true; g.add(neck);
+  const tipY=nbY+c*neckLen, tipZ=nbZ+sn*neckLen;
+  // head, muzzle, ossicones, ears, eyes
+  const head=new THREE.Mesh(new THREE.BoxGeometry(0.38,0.42,0.52), coat); head.position.set(0,tipY+0.05,tipZ+0.12); head.castShadow=true; g.add(head);
+  const muz=new THREE.Mesh(new THREE.BoxGeometry(0.30,0.28,0.32), pale); muz.position.set(0,tipY-0.02,tipZ+0.42); g.add(muz);
+  [-1,1].forEach(d=>{
+    const oss=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,0.26,5), horn); oss.position.set(d*0.12,tipY+0.34,tipZ+0.04); g.add(oss);
+    const knob=new THREE.Mesh(new THREE.SphereGeometry(0.08,6,5), spot); knob.position.set(d*0.12,tipY+0.49,tipZ+0.04); g.add(knob);
+    const ear=new THREE.Mesh(new THREE.ConeGeometry(0.09,0.22,4), coat); ear.position.set(d*0.27,tipY+0.22,tipZ-0.02); ear.rotation.z=d*0.7; g.add(ear);
+    const eye=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.08,0.05), dark); eye.position.set(d*0.16,tipY+0.08,tipZ+0.27); g.add(eye);
+  });
+  // long legs (pale), splayed at the corners
+  const legs=[]; const lg=new THREE.CylinderGeometry(0.09,0.07,legLen,6);
+  [[-bw*0.42,0.62],[bw*0.42,0.62],[-bw*0.42,-0.62],[bw*0.42,-0.62]].forEach(([lx,lzf])=>{
+    const leg=new THREE.Mesh(lg, pale); leg.position.set(lx, legLen/2, lzf*bl*0.5); leg.castShadow=true; g.add(leg); legs.push(leg);
+  });
+  // tail with a dark tuft
+  const tail=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,0.7,4), coat); tail.position.set(0,bodyY-0.1,-bl*0.5-0.05); tail.rotation.x=0.5; g.add(tail);
+  const tuft=new THREE.Mesh(new THREE.SphereGeometry(0.07,5,4), dark); tuft.position.set(0,bodyY-0.42,-bl*0.5-0.32); g.add(tuft);
+  // patches — the spotted coat, scattered down both flanks and the neck
+  const pts=[[bodyY+0.22,0.35],[bodyY+0.04,-0.05],[bodyY+0.24,-0.45],[bodyY-0.1,0.15],
+             [nbY+c*0.7,nbZ+sn*0.7],[nbY+c*1.3,nbZ+sn*1.3],[nbY+c*1.8,nbZ+sn*1.8]];
+  pts.forEach(([py,pz])=>{ [-1,1].forEach(d=>{
+    const p=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.17,0.15), spot); p.position.set(d*0.30, py, pz); g.add(p);
+  }); });
+  g.children.forEach(c2=>{ if(c2.isMesh) c2.userData.origMat=c2.material; });
+  return { group:g, legs, bodyY, legLen };
+}
+
 function makePrey(key,x,z,herdId){
-  const s=SPECIES[key], built=makeHerbivore(key), ty=terrainY(x,z);
+  const s=SPECIES[key], built=(s.custom==='giraffe'?makeGiraffe():makeHerbivore(key)), ty=terrainY(x,z);
   built.group.position.set(x,ty,z); built.group.rotation.y=rand(0,6.28); built.group.name='prey';
   scene.add(built.group);
   const P={ mesh:built.group, legs:built.legs, legLen:built.legLen, species:key, label:s.label,
@@ -1904,7 +1952,7 @@ function makePrey(key,x,z,herdId){
 }
 
 function spawnHerds(){
-  const base = ['zebra','wildebeest','gazelle','impala','warthog','kudu','impala','gazelle'];
+  const base = ['zebra','wildebeest','gazelle','impala','warthog','kudu','impala','gazelle','giraffe'];
   const plan = [...base, ...base, ...base];   // 5× map → ~3× the herds, spread across it
   plan.forEach((key,hi)=>{
     const s=SPECIES[key];

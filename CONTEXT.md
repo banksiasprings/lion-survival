@@ -177,6 +177,9 @@ prey graze in herds → flee any predator within species flee-dist → lions hun
 (fast gazelle/impala usually escape — realistic) → kill spawns a carcass + 3 vultures → player
 can **hunt ahead of the pride** (sneak+pounce, the stealthy play) or **scavenge lion kills**
 (faster but the guarding pride attacks). Player hunger must be topped up by eating; lions
-**cannot** be eaten. Per-species params live in the `SPECIES` table.
+**cannot** be eaten. Per-species params live in the `SPECIES` table. **7 species** now — the 6 above
+plus the **giraffe** (`SPECIES.giraffe`, `custom:'giraffe'` → dedicated tall `makeGiraffe()` mesh; hp 40
+≈ a lion, speed 18 so it **outruns even a sprinting player** (16), bolts when hit or threatened like any
+prey). Spawns in the herd plan.
 
 Each phase is an independent commit so it can be iterated in isolation.
