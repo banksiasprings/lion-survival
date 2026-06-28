@@ -124,8 +124,13 @@ not flavour.
 
 ## Tweaks (2026-06-28) — `dossiers/tweaks_2026-06-28.md`
 - **Spear** = toolbar slot **6** (`throwSpear`/`buildSpearMesh`): thrown like a rock (LMB while slot 6
-  is held) but **×3 damage** (`mult` on the thrown projectile, shared `thrownRocks` loop). Crafted on
+  is held) but **×5 damage** (`mult` on the thrown projectile, shared `thrownRocks` loop). Crafted on
   the throw from **2 wood + 1 rock** — no stored count.
+- **Gorilla is a brute now** (batch 2): a grounded one **SMACKS** the player for **half the health bar**
+  (`GOR.SMACK_DMG 50`) on a `SMACK_CD` cooldown with knockback + a brief daze — one big blow, not the old
+  continuous `MAUL_DPS` grind. **`PURSUE_RANGE 26 → 40`** so it notices/hunts from far off. Counterplay:
+  **rocks/spears now STUN it** (`GOR.ROCK_STUN`/`SPEAR_STUN`, new `G.stunTimer`) — a dazed gorilla freezes
+  (no smack/swipe/grab/chase) so you can flee, climb, or pile on.
 - **Rock cap 5 → 10** (`doCollect`).
 - **Perching costs no stamina** (`perchDrain: 0`, drop-on-empty removed) and stamina now regens while
   perched — a tree is a safe place to wait/rest.
