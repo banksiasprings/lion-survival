@@ -85,7 +85,7 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
   <div style="font-size:12px;opacity:0.65;line-height:1.9;text-align:center">
     WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hide in grass)<br>
     1/G Grapple → tree (LMB fire · RMB/Space drop · safe from lions while perched, no stamina cost) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe &nbsp;|&nbsp; 6 Spear<br>
-    Q Pounce (hunt prey — ambush from grass for ×3) &nbsp;|&nbsp; E Eat kill / Collect &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; 6 + LMB Throw Spear (2🪵+1🪨, ×3 dmg) &nbsp;|&nbsp; T Craft Torch &nbsp;|&nbsp; LMB+Axe Chop Wall<br>
+    Q Pounce (hunt prey — ambush from grass for ×3) &nbsp;|&nbsp; E Eat kill / Collect &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; 6 + LMB Throw Spear (2🪵+1🪨, ×5 dmg) &nbsp;|&nbsp; T Craft Torch &nbsp;|&nbsp; LMB+Axe Chop Wall<br>
     <span style="opacity:0.8">Watch your 🍖 hunger — eat prey you hunt or scavenge lion kills (they'll fight you for it).</span>
   </div>
   <button id="start-btn">▶ START GAME</button>
@@ -1299,15 +1299,30 @@ function updateHealth(dt){
       if(d < 6) veryNear = true;
     });
   }
-  // A grounded gorilla that's reached the player mauls them (the tree-grab
-  // handles treed players). Skip when it's up a tree (perched/sleeping) or
-  // mid tree-grab wind-up.
+  // A grounded gorilla that's reached the player SMACKS them — one huge blow
+  // (half the health bar) on a cooldown, with knockback + a brief daze, rather
+  // than a continuous grind. Skip a treed/sleeping one (tree-grab handles treed
+  // players) or one that's dazed by a rock.
   if(!player.inTree){
     gorillaMeshes.forEach(G=>{
+      G.smackCd = Math.max(0, (G.smackCd||0) - dt);
       if(G.state==='perched' || G.state==='sleeping' || G.state==='treegrab') return;
       const d = G.pos.distanceTo(player.pos);
-      if(d < GOR.MAUL_RANGE){ player.health -= GOR.MAUL_DPS * dt; nearLion = true; }
       if(d < 7) veryNear = true;
+      if(d < GOR.MAUL_RANGE && (G.stunTimer||0) <= 0){
+        nearLion = true;                                   // in his reach → no regen
+        if(G.smackCd <= 0){
+          player.health -= GOR.SMACK_DMG;
+          G.smackCd = GOR.SMACK_CD;
+          player.stunTimer = Math.max(player.stunTimer||0, GOR.SMACK_STUN);
+          const ax = player.pos.x - G.pos.x, az = player.pos.z - G.pos.z, al = Math.hypot(ax,az)||1;
+          player.knockback.x = (ax/al)*GOR.SMACK_KB;
+          player.knockback.z = (az/al)*GOR.SMACK_KB;
+          shakeTime = Math.max(shakeTime, 0.45); shakeAmt = 0.010;
+          playSound('spotted');
+          showKillfeed('🦍 The gorilla smacks you across the dirt!');
+        }
+      }
     });
   }
   player.inDanger = veryNear;
@@ -2095,9 +2110,13 @@ const GOR = {
   // --- player pursuit (gorilla actively hunts the player, smashing through) ---
   SEES_TREED_PLAYER: true, // EXCEPTION: the gorilla (and only the gorilla) can see a
                            // tree-sheltered player. Lions stay blind to treed players.
-  PURSUE_RANGE:  26,    // notices & advances on a player (treed or grounded) within this
-  MAUL_RANGE:    2.2,   // contact range at which a grounded player takes damage
-  MAUL_DPS:      18,    // damage/sec while a grounded player is in the gorilla's grip
+  PURSUE_RANGE:  40,    // notices & advances on a player from far off (treed or grounded)
+  MAUL_RANGE:    2.4,   // contact range at which a grounded player gets smacked
+  // --- the smack: one devastating blow, not a continuous grind ---
+  SMACK_DMG:     50,    // half the player's health bar in a single hit — he's brutally strong
+  SMACK_CD:      1.7,   // sec between smacks (the window to flee / climb / rock him)
+  SMACK_STUN:    0.6,   // sec the player is dazed after a smack
+  SMACK_KB:      15,    // knockback impulse — flung across the dirt
   PATH_SMASH_DOT: 0.4,  // how "ahead" a wall must be (cos angle to the aim) to smash through
 
   TURN:          7,     // heading-lerp rate (rad/s-ish)
@@ -2106,6 +2125,8 @@ const GOR = {
   WAKE_DETECT:   16,    // a sleeping gorilla wakes (→ perched) inside this
   SLEEP_AFTER:   7,     // sec perched with no lion near → doze off (sleeping)
   LION_BITE_DPS: 7,     // dps each lion pressed against a grounded gorilla deals back
+  ROCK_STUN:     1.5,   // sec a thrown rock dazes the gorilla (your counter to a brute)
+  SPEAR_STUN:    2.8,   // a spear stuns it longer/harder than a rock
 
   // --- retaliation: a lion that draws blood gets hunted down ---
   RETALIATE_WINDOW: 4,  // sec after a bite the gorilla stays locked onto that attacker
@@ -2260,7 +2281,8 @@ function makeGorilla(x, z){
     target: null,                  // current lion (engaging) or wall mesh (smashing)
     actionTimer: 0,                // wind-up / recovery clock for the current action
     idleTimer: 0,                  // time perched with nothing to do (→ sleeping)
-    swipeCd: 0, grabCd: 0, smashCd: 0,
+    swipeCd: 0, grabCd: 0, smashCd: 0, smackCd: 0,
+    stunTimer: 0,                  // dazed by a thrown rock/spear — frozen while > 0
     swung: false,                  // has the in-progress swipe already connected
     lastDamagedBy: null,           // the lion that most recently bit it (retaliation)
     lastDamageTime: -999,          // elapsed-clock stamp of that bite
@@ -2484,6 +2506,16 @@ function updateGorillas(dt){
       G.flashTimer -= dt;
       const f = G.flashTimer > 0;
       G.mesh.traverse(c=>{ if(c.isMesh && !c.userData.noFlash) c.material = f ? FLASH_MAT : c.userData.origMat; });
+    }
+
+    // STUNNED by a thrown rock/spear — the player's counter to a brute. Frozen in
+    // place (can't smack, swipe, grab or chase) until it shakes it off; lions can
+    // pile on while it's dazed.
+    if((G.stunTimer||0) > 0){
+      G.stunTimer -= dt;
+      G.pos.y = terrainY(G.pos.x, G.pos.z); G.mesh.position.copy(G.pos);
+      animateGorilla(G, dt, 0);
+      return;
     }
 
     const gpos = G.pos, ppos = player.pos;
@@ -2970,7 +3002,7 @@ function throwSpear(){
   mesh.position.copy(camera.position);
   mesh.lookAt(mesh.position.clone().add(dir));          // tip leads (object's -Z faces the throw)
   scene.add(mesh);
-  thrownRocks.push({ mesh, vel:dir.clone().multiplyScalar(52), dist:0, mult:3, spear:true });
+  thrownRocks.push({ mesh, vel:dir.clone().multiplyScalar(52), dist:0, mult:5, spear:true });
   playSound('throw');
 }
 
@@ -3007,7 +3039,8 @@ function updateThrownRocks(dt){
     if(!hit) gorillaMeshes.forEach(G=>{
       if(G.state!=='perched' && G.state!=='sleeping' && r.mesh.position.distanceTo(G.pos) < 2.0){
         G.health -= 8*m; G.flashTimer = 0.25;
-        hit = true; showKillfeed(r.spear ? '🗡️ Spear bites the gorilla' : '🪨 Rock staggers the gorilla');
+        G.stunTimer = Math.max(G.stunTimer||0, r.spear ? GOR.SPEAR_STUN : GOR.ROCK_STUN);  // daze the brute
+        hit = true; showKillfeed(r.spear ? '🗡️ Spear staggers the gorilla!' : '🪨 Rock dazes the gorilla!');
       }
     });
 
