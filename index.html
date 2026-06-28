@@ -136,6 +136,7 @@ let preyMeshes  = [];   // Phase 6: herbivores
 let carcasses   = [];   // Phase 6: edible kills (prey) — food for player & lions
 let vultures    = [];   // Phase 6: circling birds over fresh kills
 let gorillaMeshes = [];   // Phase 6/7: advanced apex gorilla — FSM sleeping|perched|roaming|engaging|smashing|treegrab
+let rhinoMeshes = [];     // neutral megafauna — roams, charges only when provoked
 
 // Savanna environment (Phase 1) — also feeds stealth (Phase 3) & grapple (Phase 4)
 let wind = { angle: rand(0, Math.PI*2), dirX: 0, dirZ: 0, speed: 0.55, time: 0 };
@@ -2744,6 +2745,172 @@ function updateGorillas(dt){
 }
 
 // =====================================================================
+//  RHINO  (neutral megafauna — roams, ignores you, but charges if provoked)
+// =====================================================================
+// A big, slow, very tanky grazer that mostly minds its own business. Poor
+// senses (you can stroll past, especially in grass), but ATTACK it — a thrown
+// rock or spear — and it knows exactly where you are: it shakes off the hit and
+// makes one committed straight-line CHARGE at that spot, goring anything there.
+// Gets stunned by rocks/spears, is BLOCKED by walls (no smashing through like the
+// gorilla), and is fooled by grass/crouch (stealth.visMul).
+const RHINO = {
+  MAX: 2,
+  HEALTH: 220,            // tankier than the gorilla (160)
+  SPEED_ROAM: 3.0,        // slow amble
+  SPEED_CHARGE: 16,       // a fast, scary charge
+  SENSE_RANGE: 7,         // poor passive sense of a nearby player (× stealth.visMul)
+  CHARGE_RANGE_MAX: 34,   // a charge gives up after this distance
+  CHARGE_HIT: 2.4,        // contact range that gores the player
+  CHARGE_DMG: 35,
+  CHARGE_KB: 18,
+  CHARGE_STUN: 0.7,       // player daze on a goring
+  CHARGE_CD: 2.5,         // after a charge it won't re-charge from passive sense for this long
+  TURN: 4, TURN_CHARGE: 1.4,
+  ROCK_STUN: 1.2, SPEAR_STUN: 2.2,
+  ROCK_DMG: 8, SPEAR_DMG: 16,   // 220 hp ≈ 14 spears / 28 rocks to down
+  BODY_R: 1.1,            // wall-collision radius (can't pass through walls)
+};
+
+function makeRhino(x, z){
+  const group = new THREE.Group();
+  const hide  = new THREE.MeshLambertMaterial({color:0x8a8a82}); // grey hide
+  const hide2 = new THREE.MeshLambertMaterial({color:0x6f6f68}); // shadowed legs/underside
+  const horn  = new THREE.MeshLambertMaterial({color:0xcfc8b6}); // pale horn
+  const dark  = new THREE.MeshLambertMaterial({color:0x17171a}); // eyes
+  const box = (w,h,d,mat,px,py,pz)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); m.position.set(px,py,pz); group.add(m); return m; };
+
+  // Body — long and low, with a shoulder hump.
+  box(1.30,1.20,3.00, hide, 0,1.50, 0.00);
+  box(1.24,0.55,1.10, hide, 0,2.05, 0.40);          // shoulder hump
+  // Head, lowered and forward (head-down posture).
+  box(0.92,0.85,1.00, hide, 0,1.28, 1.70);          // head
+  box(0.70,0.66,0.72, hide, 0,1.06, 2.28);          // snout
+  box(0.16,0.12,0.10, dark, -0.40,1.50,1.96);       // eyes
+  box(0.16,0.12,0.10, dark,  0.40,1.50,1.96);
+  // Two horns on the snout (the rhino signature).
+  const h1 = new THREE.Mesh(new THREE.ConeGeometry(0.23,0.90,6), horn); h1.position.set(0,1.55,2.55); h1.rotation.x=-0.45; group.add(h1);
+  const h2 = new THREE.Mesh(new THREE.ConeGeometry(0.15,0.42,6), horn); h2.position.set(0,1.66,2.02); h2.rotation.x=-0.30; group.add(h2);
+  // Ears.
+  [[-0.34,2.00,1.46],[0.34,2.00,1.46]].forEach(([ex,ey,ez])=>{ const e=new THREE.Mesh(new THREE.ConeGeometry(0.12,0.22,5),hide); e.position.set(ex,ey,ez); group.add(e); });
+  // Tail.
+  const tail=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.04,0.7,5), hide2); tail.position.set(0,1.30,-1.6); tail.rotation.x=0.5; group.add(tail);
+
+  // Four stout legs on hip pivots (geometry translated so rotation.x swings from the top).
+  const legG = new THREE.CylinderGeometry(0.20,0.24,1.0,7); legG.translate(0,-0.5,0);
+  const legs=[];
+  [[-0.55,1.05,1.00],[0.55,1.05,1.00],[-0.55,1.05,-1.05],[0.55,1.05,-1.05]].forEach(([lx,ly,lz])=>{
+    const l=new THREE.Mesh(legG, hide2); l.position.set(lx,ly,lz); group.add(l); legs.push(l);
+  });
+
+  group.children.forEach(c=>{ if(c.isMesh) c.userData.origMat = c.material; });
+  const ty = terrainY(x,z);
+  group.position.set(x,ty,z); group.scale.setScalar(1.1); group.castShadow=true; group.name='rhino';
+  scene.add(group);
+
+  const R = {
+    mesh:group, legs, pos:new THREE.Vector3(x,ty,z),
+    health:RHINO.HEALTH, maxHealth:RHINO.HEALTH,
+    state:'roam', chargeTarget:null, chargeDist:0, hasHit:false, provoked:false,
+    chargeCd:0, stunTimer:0, flashTimer:0,
+    heading:rand(0,Math.PI*2),
+    wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
+    wanderTimer:rand(2,5), wanderPause:false, legPhase:Math.random()*Math.PI*2,
+  };
+  group.rotation.y = R.heading;
+  rhinoMeshes.push(R);
+  return R;
+}
+
+function spawnRhino(){ const a=rand(0,Math.PI*2), r=rand(38,46); makeRhino(Math.cos(a)*r, Math.sin(a)*r); }
+
+function animateRhino(R, dt, gait){
+  R.legPhase += dt*(3 + (gait||0)*3.5);
+  R.legs.forEach((l,i)=>{ l.rotation.x = Math.sin(R.legPhase + i*Math.PI/2) * (0.12 + (gait||0)*0.32); });
+}
+
+// Step toward (tx,tz): move, clamp to world, BLOCKED BY WALLS, drop to terrain,
+// smooth-face the heading. Returns true if a wall/edge stopped its progress.
+function rhinoStep(R, tx, tz, speed, dt, turn){
+  const bx=R.pos.x, bz=R.pos.z;
+  const dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
+  const dirx=d>0.001?dx/d:0, dirz=d>0.001?dz/d:0;
+  if(d>0.001){ const step=Math.min(speed*dt,d); R.pos.x+=dirx*step; R.pos.z+=dirz*step; }
+  R.pos.x=clamp(R.pos.x,-HALF+1,HALF-1); R.pos.z=clamp(R.pos.z,-HALF+1,HALF-1);
+  collideWalls(R.pos, RHINO.BODY_R);                 // can't pass through walls
+  R.pos.y=terrainY(R.pos.x,R.pos.z); R.mesh.position.copy(R.pos);
+  const a=Math.atan2(tx-bx, tz-bz); let dd=a-R.heading;
+  while(dd>Math.PI)dd-=Math.PI*2; while(dd<-Math.PI)dd+=Math.PI*2;
+  R.heading += dd*Math.min(1,(turn||RHINO.TURN)*dt); R.mesh.rotation.y=R.heading;
+  const progress=(R.pos.x-bx)*dirx + (R.pos.z-bz)*dirz;      // forward progress toward target
+  return progress < speed*dt*0.5;                            // blocked by a wall/edge?
+}
+
+function updateRhinos(dt){
+  if(gameState!=='playing') return;
+  if(rhinoMeshes.length < RHINO.MAX && Math.random() < dt*0.06) spawnRhino();   // slow restock
+
+  rhinoMeshes.forEach(R=>{
+    R.chargeCd = Math.max(0, R.chargeCd - dt);
+    if(R.flashTimer>0){ R.flashTimer-=dt; const f=R.flashTimer>0; R.mesh.children.forEach(c=>{ if(c.isMesh) c.material=f?FLASH_MAT:c.userData.origMat; }); }
+
+    // STUNNED by a rock/spear — frozen (the hit lands before it can charge).
+    if((R.stunTimer||0)>0){ R.stunTimer-=dt; R.pos.y=terrainY(R.pos.x,R.pos.z); R.mesh.position.copy(R.pos); animateRhino(R,dt,0); return; }
+
+    // Provoked by an attack → begin one committed charge at the remembered spot.
+    if(R.provoked && R.state!=='charge'){ R.state='charge'; R.provoked=false; R.chargeDist=0; R.hasHit=false; if(!R.chargeTarget) R.chargeTarget=new THREE.Vector3(player.pos.x,0,player.pos.z); }
+
+    if(R.state==='charge'){
+      const t = R.chargeTarget || player.pos;
+      const blocked = rhinoStep(R, t.x, t.z, RHINO.SPEED_CHARGE, dt, RHINO.TURN_CHARGE);
+      R.chargeDist += RHINO.SPEED_CHARGE*dt;
+      animateRhino(R, dt, 1.6);
+      if(!player.inTree && !R.hasHit){
+        const dp=Math.hypot(player.pos.x-R.pos.x, player.pos.z-R.pos.z);
+        if(dp < RHINO.CHARGE_HIT){
+          player.health -= RHINO.CHARGE_DMG;
+          player.stunTimer = Math.max(player.stunTimer||0, RHINO.CHARGE_STUN);
+          const ax=player.pos.x-R.pos.x, az=player.pos.z-R.pos.z, al=Math.hypot(ax,az)||1;
+          player.knockback.x=(ax/al)*RHINO.CHARGE_KB; player.knockback.z=(az/al)*RHINO.CHARGE_KB;
+          shakeTime=Math.max(shakeTime,0.40); shakeAmt=0.009; playSound('spotted');
+          showKillfeed('🦏 The rhino gores you!');
+          R.hasHit=true;
+        }
+      }
+      const reached = Math.hypot(t.x-R.pos.x, t.z-R.pos.z) < 1.6;
+      if(R.hasHit || reached || blocked || R.chargeDist > RHINO.CHARGE_RANGE_MAX){
+        R.state='roam'; R.chargeCd=RHINO.CHARGE_CD; R.hasHit=false; R.chargeTarget=null; R.wanderTimer=rand(1,3);
+      }
+      return;
+    }
+
+    // ROAM — amble around with occasional head-down pauses; mostly oblivious.
+    R.wanderTimer-=dt;
+    if(R.wanderTimer<0){ R.wanderPause=Math.random()<0.35; if(!R.wanderPause) R.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); R.wanderTimer=R.wanderPause?rand(1.5,3):rand(3,6); }
+    if(Math.hypot(R.pos.x,R.pos.z) > HALF-6) R.wanderDir.set(-R.pos.x,0,-R.pos.z).normalize();
+    if(R.wanderPause){ R.pos.y=terrainY(R.pos.x,R.pos.z); R.mesh.position.copy(R.pos); animateRhino(R,dt,0); }
+    else { rhinoStep(R, R.pos.x+R.wanderDir.x*8, R.pos.z+R.wanderDir.z*8, RHINO.SPEED_ROAM, dt, RHINO.TURN); animateRhino(R,dt,0.7); }
+
+    // Poor passive sense: only an exposed player who strays close sets it off
+    // (grass/crouch shrink the range). After a charge it stays calm for CHARGE_CD.
+    if(R.chargeCd<=0 && !player.inTree){
+      const dp=Math.hypot(player.pos.x-R.pos.x, player.pos.z-R.pos.z);
+      if(dp < RHINO.SENSE_RANGE * stealth.visMul){
+        R.state='charge'; R.chargeDist=0; R.hasHit=false; R.chargeTarget=new THREE.Vector3(player.pos.x,0,player.pos.z);
+      }
+    }
+  });
+
+  // Downed rhino → a big edible carcass (and free the VRAM).
+  for(let i=rhinoMeshes.length-1;i>=0;i--){
+    if(rhinoMeshes[i].health<=0){
+      spawnCarcass(rhinoMeshes[i].pos.clone(), 90, null);
+      killObj(rhinoMeshes[i].mesh); rhinoMeshes.splice(i,1);
+      showKillfeed('🦏 The rhino is down!');
+    }
+  }
+}
+
+// =====================================================================
 //  GRAPPLE
 // =====================================================================
 function drawGrappleLine(pt){
@@ -3056,6 +3223,17 @@ function updateThrownRocks(dt){
         G.flashTimer = 0.25;
         G.stunTimer = Math.max(G.stunTimer||0, r.spear ? GOR.SPEAR_STUN : GOR.ROCK_STUN);  // daze the brute
         hit = true; showKillfeed(r.spear ? '🗡️ Spear staggers the gorilla!' : '🪨 Rock dazes the gorilla!');
+      }
+    });
+    // The rhino: tanky, takes many throws — and being hit reveals you exactly, so
+    // it gets dazed, then makes one committed charge at where you were.
+    if(!hit) rhinoMeshes.forEach(R=>{
+      if(r.mesh.position.distanceTo(R.pos) < 2.2){
+        R.health -= r.spear ? RHINO.SPEAR_DMG : RHINO.ROCK_DMG;
+        R.flashTimer = 0.25;
+        R.stunTimer = Math.max(R.stunTimer||0, r.spear ? RHINO.SPEAR_STUN : RHINO.ROCK_STUN);
+        R.provoked = true; R.chargeTarget = new THREE.Vector3(player.pos.x, 0, player.pos.z);
+        hit = true; showKillfeed(R.health<=0 ? (r.spear?'🗡️':'🪨')+' The rhino is down!' : '🦏 The rhino wheels to charge!');
       }
     });
 
@@ -3519,6 +3697,7 @@ function resetGame(){
   [...thrownRocks].forEach(r=>killObj(r.mesh));
   [...preyMeshes].forEach(P=>killObj(P.mesh));
   [...gorillaMeshes].forEach(G=>killObj(G.mesh));
+  [...rhinoMeshes].forEach(R=>killObj(R.mesh));
   [...carcasses].forEach(c=>{ removeVultures(c); killObj(c.mesh); });
   [..._dustPuffs].forEach(d=>killObj(d.mesh));
   if(grapple.line){ killObj(grapple.line); }
@@ -3534,6 +3713,7 @@ function resetGame(){
   carcasses.length  = 0;
   vultures.length   = 0;
   gorillaMeshes.length = 0;
+  rhinoMeshes.length = 0;
   _dustPuffs.length = 0;
 
   grapple   = { active:false, point:null, line:null, mode:null, perch:null, tree:null };
@@ -3569,6 +3749,7 @@ function resetGame(){
   prideAlert.timer = 0;
   spawnPride();
   spawnHerds();              // populate the savanna with prey (Phase 6)
+  spawnRhino(); spawnRhino(); // a couple of roaming rhinos
   // (the apex gorilla self-spawns ~22s in via updateGorillas, then every 2 days)
 
   gameState = 'playing';
@@ -3595,6 +3776,7 @@ function animate(){
   updateLions(dt);
   updatePrey(dt);             // herbivores: graze / herd / flee (Phase 6)
   updateGorillas(dt);         // territorial gorilla (Phase 7)
+  updateRhinos(dt);           // neutral rhinos — roam, charge when provoked
   updateCarcasses(dt);
   updateVultures(dt);
   updateDustPuffs(dt);

@@ -131,6 +131,12 @@ not flavour.
 - **Pounce** (`Q`) buffed: `pounceRange 3.6 → 9` (long lunge), `pounceDamage 18 → 54` (3×); a hidden
   grass ambush still adds ×3 on top (≈162 — one-shots anything). Lets you leap on prey that hold still
   because grass hides you.
+- **Rhino** (new neutral megafauna — `RHINO` config / `rhinoMeshes[]` / `makeRhino`/`updateRhinos`,
+  2 spawn at reset): roams and ignores you (poor passive sense, `SENSE_RANGE 7 × stealth.visMul` so grass
+  hides you). **Attack it (rock/spear)** → it's briefly stunned, then makes ONE committed straight-line
+  **charge** at the spot you hit it from (`CHARGE_DMG 35` + knockback). Very tanky (**220 hp**, ~14
+  spears), **blocked by walls** (`collideWalls`, can't smash like the gorilla), stunned by rocks/spears.
+  Killing one drops a big edible carcass.
 - **Gorilla is a brute now** (batch 2): a grounded one **SMACKS** the player for **half the health bar**
   (`GOR.SMACK_DMG 50`) on a `SMACK_CD` cooldown with knockback + a brief daze — one big blow, not the old
   continuous `MAUL_DPS` grind. **`PURSUE_RANGE 26 → 40`** so it notices/hunts from far off. Counterplay:
