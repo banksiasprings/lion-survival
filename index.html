@@ -1829,7 +1829,7 @@ const SPECIES = {
   warthog:   { label:'warthog',    size:0.58, color:0x53493f, herd:[1,3], speed:15,   flee:11, hp:30, juke:0,   hop:0, neck:0.22, horns:null,      tusks:true, low:true, counter:14, food:34, dust:0 },
   kudu:      { label:'kudu',       size:1.18, color:0x8c7c66, herd:[1,2], speed:11,   flee:14, hp:72, juke:0,   hop:0, neck:0.9,  horns:'spiral',  stripeThin:true, food:70, dust:0 },
   giraffe:   { label:'giraffe',    size:1.6,  color:0xc79a52, herd:[2,4], speed:18,   flee:22, hp:40, juke:0,   hop:0, neck:2.2,  horns:null,      food:78, dust:0, custom:'giraffe' },
-  elephant:  { label:'elephant',   size:2.0,  color:0x8d8d88, herd:[1,3], speed:11,   flee:18, hp:90, juke:0,   hop:0, neck:0.6,  horns:null,      food:120, dust:1, custom:'elephant' },
+  elephant:  { label:'elephant',   size:2.0,  color:0x8d8d88, herd:[1,3], speed:11,   flee:18, hp:300, juke:0,  hop:0, neck:0.6,  horns:null,      food:150, dust:1, custom:'elephant', smash:true },
 };
 const SPECIES_KEYS = Object.keys(SPECIES);
 
@@ -1862,6 +1862,20 @@ function giraffeTex(){
     g.closePath(); g.fill();
   }
   const t=new THREE.CanvasTexture(cv); t.wrapS=t.wrapT=THREE.RepeatWrapping; return _giraffeTex=t;
+}
+
+// Wrinkled mottled grey elephant hide.
+let _eleTex=null;
+function elephantTex(){
+  if(_eleTex) return _eleTex;
+  const S=64, cv=document.createElement('canvas'); cv.width=cv.height=S; const g=cv.getContext('2d');
+  g.fillStyle='#8d8d88'; g.fillRect(0,0,S,S);
+  g.strokeStyle='rgba(92,92,88,0.45)'; g.lineWidth=1;
+  for(let i=0;i<20;i++){ const y=Math.random()*S; g.beginPath(); g.moveTo(0,y);
+    for(let x=0;x<=S;x+=8) g.lineTo(x, y+(Math.random()*4-2)); g.stroke(); }     // horizontal wrinkles
+  g.fillStyle='rgba(78,78,74,0.30)';
+  for(let i=0;i<16;i++){ g.beginPath(); g.arc(Math.random()*S, Math.random()*S, 1.5+Math.random()*3, 0, 6.28); g.fill(); }  // mottling
+  const t=new THREE.CanvasTexture(cv); t.wrapS=t.wrapT=THREE.RepeatWrapping; return _eleTex=t;
 }
 
 function addHorns(g, type, sc, hy, hz, col){
@@ -1970,37 +1984,48 @@ function makeGiraffe(){
 // contract so the prey loop drives it (it lumbers off when threatened/hit).
 function makeElephant(){
   const g=new THREE.Group();
-  const hide = lmat(jcol(0x8d8d88,0.04));   // grey
-  const hide2= lmat(jcol(0x6f6f6b,0.04));   // shadowed (ears/feet/underside)
+  const hide = new THREE.MeshLambertMaterial({map:elephantTex()});  // wrinkled grey hide
+  const hide2= lmat(jcol(0x73736e,0.03));   // shadowed (ear backs / feet / belly)
+  const inner= lmat(jcol(0x5a4a44,0.03));   // ear inner / mouth (warm grey)
   const tuskM= lmat(0xe8e0cf);
+  const nailM= lmat(0xd8d2c4);
   const dark = lmat(0x141014);
-  const legLen=1.5, bw=1.3, bh=1.5, bl=2.5, bodyY=legLen+bh*0.5;
-  // bulky body + domed back
+  const legLen=1.5, bw=1.35, bh=1.55, bl=2.6, bodyY=legLen+bh*0.5;
+  // bulky body — rounded back, slightly narrower belly, big shoulders
   const body=new THREE.Mesh(new THREE.BoxGeometry(bw,bh,bl), hide); body.position.y=bodyY; body.castShadow=true; g.add(body);
-  const back=new THREE.Mesh(new THREE.BoxGeometry(bw*0.92,bh*0.42,bl*0.82), hide); back.position.set(0,bodyY+bh*0.46,0); g.add(back);
-  // head + domed crown
-  const headZ=bl*0.5+0.18, headY=bodyY+bh*0.22;
-  const head=new THREE.Mesh(new THREE.BoxGeometry(bw*0.82,bh*0.82,0.82), hide); head.position.set(0,headY,headZ); head.castShadow=true; g.add(head);
-  const dome=new THREE.Mesh(new THREE.BoxGeometry(bw*0.6,0.5,0.62), hide); dome.position.set(0,headY+bh*0.45,headZ-0.06); g.add(dome);
-  // big flat ears, angled outward
-  [-1,1].forEach(d=>{ const ear=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.05,0.95), hide2); ear.position.set(d*bw*0.45, headY+0.08, headZ-0.22); ear.rotation.y=d*0.5; ear.rotation.z=d*0.12; g.add(ear); });
-  // trunk — tapering segments curving down & forward
-  let cy=headY-0.05, cz=headZ+0.5;
-  for(let i=0;i<4;i++){ const r=0.26-i*0.045; const seg=new THREE.Mesh(new THREE.CylinderGeometry(r,r-0.03,0.5,6), hide);
-    cy-=0.34; cz+=0.05; seg.position.set(0,cy,cz); seg.rotation.x=0.55+i*0.18; g.add(seg); }
-  // tusks
-  [-1,1].forEach(d=>{ const t=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.09,0.85,6), tuskM); t.position.set(d*0.24, headY-0.34, headZ+0.5); t.rotation.x=1.15; g.add(t); });
+  const back=new THREE.Mesh(new THREE.BoxGeometry(bw*0.94,bh*0.46,bl*0.84), hide); back.position.set(0,bodyY+bh*0.45,-0.05); g.add(back);
+  const belly=new THREE.Mesh(new THREE.BoxGeometry(bw*0.88,bh*0.5,bl*0.9), hide2); belly.position.set(0,bodyY-bh*0.42,0); g.add(belly);
+  const shoulder=new THREE.Mesh(new THREE.BoxGeometry(bw*1.02,bh*0.7,bl*0.4), hide); shoulder.position.set(0,bodyY+0.1,bl*0.32); g.add(shoulder);
+  // head: blocky skull + domed forehead + heavy brow
+  const headZ=bl*0.5+0.22, headY=bodyY+bh*0.2;
+  const head=new THREE.Mesh(new THREE.BoxGeometry(bw*0.78,bh*0.8,0.86), hide); head.position.set(0,headY,headZ); head.castShadow=true; g.add(head);
+  const dome=new THREE.Mesh(new THREE.BoxGeometry(bw*0.66,0.62,0.66), hide); dome.position.set(0,headY+bh*0.46,headZ-0.04); g.add(dome);
+  const brow=new THREE.Mesh(new THREE.BoxGeometry(bw*0.8,0.18,0.2), hide2); brow.position.set(0,headY+0.34,headZ+0.4); g.add(brow);
+  // BIG floppy two-tone ears — fan out and back, drooping a little
+  [-1,1].forEach(d=>{
+    const ear=new THREE.Mesh(new THREE.BoxGeometry(0.10,1.45,1.25), hide);
+    ear.position.set(d*bw*0.5, headY+0.05, headZ-0.3); ear.rotation.y=d*0.65; ear.rotation.z=d*0.18; ear.rotation.x=-0.12; ear.castShadow=true; g.add(ear);
+    const ein=new THREE.Mesh(new THREE.BoxGeometry(0.06,1.15,0.98), inner);
+    ein.position.set(d*(bw*0.5+0.06), headY+0.05, headZ-0.28); ein.rotation.copy(ear.rotation); g.add(ein);
+  });
+  // trunk — five tapering segments curling down then forward to the tip
+  let cy=headY+0.02, cz=headZ+0.5;
+  for(let i=0;i<5;i++){ const r=0.27-i*0.04; const seg=new THREE.Mesh(new THREE.CylinderGeometry(r,r-0.03,0.46,7), hide);
+    cy-=0.32; cz+=(i<3?0.05:0.16); seg.position.set(0,cy,cz); seg.rotation.x=0.55+i*0.16; g.add(seg); }
+  // tusks — curving cream
+  [-1,1].forEach(d=>{ const t=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.10,0.95,6), tuskM); t.position.set(d*0.26, headY-0.36, headZ+0.52); t.rotation.x=1.2; t.rotation.z=-d*0.12; g.add(t); });
   // eyes
-  [-1,1].forEach(d=>{ const e=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.1,0.06), dark); e.position.set(d*0.32, headY+0.14, headZ+0.38); g.add(e); });
-  // thick hip-pivot legs (swing via the prey loop) with broad feet
+  [-1,1].forEach(d=>{ const e=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.1,0.06), dark); e.position.set(d*0.33, headY+0.12, headZ+0.4); g.add(e); });
+  // thick hip-pivot legs (swing via the prey loop) with broad feet + pale toenails
   const legs=[];
-  const mkLeg=(lx,lz)=>{ const geo=new THREE.CylinderGeometry(0.26,0.30,legLen,7); geo.translate(0,-legLen/2,0);
+  const mkLeg=(lx,lz)=>{ const geo=new THREE.CylinderGeometry(0.27,0.32,legLen,8); geo.translate(0,-legLen/2,0);
     const leg=new THREE.Mesh(geo, hide); leg.position.set(lx, legLen, lz); leg.castShadow=true; g.add(leg); legs.push(leg);
-    const foot=new THREE.Mesh(new THREE.CylinderGeometry(0.31,0.28,0.16,7), hide2); foot.position.set(0,-legLen+0.08,0); leg.add(foot); };
-  mkLeg(-bw*0.34, bl*0.34); mkLeg(bw*0.34, bl*0.34); mkLeg(-bw*0.34,-bl*0.34); mkLeg(bw*0.34,-bl*0.34);
+    const foot=new THREE.Mesh(new THREE.CylinderGeometry(0.33,0.30,0.18,8), hide2); foot.position.set(0,-legLen+0.09,0); leg.add(foot);
+    for(let n=-1;n<=1;n++){ const nail=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.08,0.06), nailM); nail.position.set(n*0.12,-legLen+0.04,0.30); leg.add(nail); } };
+  mkLeg(-bw*0.34, bl*0.32); mkLeg(bw*0.34, bl*0.32); mkLeg(-bw*0.34,-bl*0.34); mkLeg(bw*0.34,-bl*0.34);
   // tail
-  const tail=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.04,0.9,5), hide); tail.position.set(0,bodyY-0.05,-bl*0.5-0.05); tail.rotation.x=0.4; g.add(tail);
-  const tuft=new THREE.Mesh(new THREE.SphereGeometry(0.09,5,4), dark); tuft.position.set(0,bodyY-0.55,-bl*0.5-0.2); g.add(tuft);
+  const tail=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.04,0.95,5), hide); tail.position.set(0,bodyY-0.05,-bl*0.5-0.05); tail.rotation.x=0.4; g.add(tail);
+  const tuft=new THREE.Mesh(new THREE.SphereGeometry(0.09,5,4), dark); tuft.position.set(0,bodyY-0.55,-bl*0.5-0.22); g.add(tuft);
   g.children.forEach(c=>{ if(c.isMesh) c.userData.origMat=c.material; });
   return { group:g, legs, bodyY, legLen };
 }
@@ -2118,6 +2143,17 @@ function updatePrey(dt){
     let hopY=0;
     if(s.hop && P.state==='flee'){ P.hopPhase+=dt*6.5; hopY=Math.max(0,Math.sin(P.hopPhase))*0.55*s.size; }
     if(s.dust && P.state==='flee' && Math.random()<dt*3.5) spawnDustPuff(P.pos);
+
+    // Big bulldozers (elephant) SMASH through walls in their path, like the gorilla.
+    if(s.smash){
+      P.smashCd = Math.max(0, (P.smashCd||0) - dt);
+      if(P.smashCd<=0 && speed>0.5 && dir.lengthSq()>0.01){
+        const wb = wallBlockingPath(P, P.pos.x+dir.x*6, P.pos.z+dir.z*6);
+        if(wb>=0){ const wp = removeWallAt(wb);
+          if(wp){ P.smashCd=0.8; playSound('place'); showKillfeed('🐘 An elephant smashed a wall');
+            if(wp.distanceTo(player.pos)<18){ shakeTime=Math.max(shakeTime,0.25); shakeAmt=0.006; } } }
+      }
+    }
 
     P.pos.addScaledVector(dir, speed*dt);
     P.pos.x=clamp(P.pos.x,-(HALF-1),HALF-1); P.pos.z=clamp(P.pos.z,-(HALF-1),HALF-1);
@@ -3455,7 +3491,7 @@ function updateThrownRocks(dt){
     // A spear one-shots most animals; the kudu takes two, the tall tough giraffe three; rocks wound.
     if(!hit) preyMeshes.forEach(P=>{
       if(r.mesh.position.distanceTo(P.pos) < 1.7){
-        P.health -= r.spear ? (P.species==='kudu' ? P.maxHealth/2 : P.species==='giraffe' ? P.maxHealth/3 : P.species==='elephant' ? P.maxHealth/4 : P.maxHealth) : 9*m;
+        P.health -= r.spear ? (P.species==='kudu' ? P.maxHealth/2 : P.species==='giraffe' ? P.maxHealth/3 : P.species==='elephant' ? P.maxHealth/15 : P.maxHealth) : 9*m;
         P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
         hit = true;
         showKillfeed(P.health<=0 ? ic+' Kill — '+P.label+'!' : ic+' Stunned the '+P.label);

@@ -183,9 +183,11 @@ plus two custom-mesh giants (`custom:` flag → dedicated builder + `makeHerbivo
 **hip-pivot legs that SWING** via the `s.custom` branch in `updatePrey`'s leg animation):
 - **giraffe** (`makeGiraffe`, reticulated `giraffeTex()` coat, mane, withers/rump slope, ossicones): hp 40
   ≈ a lion, speed 18 so it **outruns even a sprinting player** (16), **3 spears** to down.
-- **elephant** (`makeElephant`, domed head, big ears, curling trunk, tusks, thick legs): hp **90**
-  (tankiest prey), speed 11, **4 spears** to down, big carcass (food 120).
+- **elephant** (`makeElephant`, textured `elephantTex()` hide, domed forehead+brow, big two-tone floppy
+  ears, 5-seg curling trunk, tusks, toenails): hp **300** (tankiest by far), speed 11, **15 spears** to
+  down, big carcass (food 150). **SMASHES walls in its path** like the gorilla (`s.smash` flag →
+  `wallBlockingPath`/`removeWallAt` in `updatePrey`, on a cooldown) — it still flees when hit.
 
-Spear kill-counts (`updateThrownRocks` prey branch): kudu 2, giraffe 3, elephant 4, other prey 1.
+Spear kill-counts (`updateThrownRocks` prey branch): kudu 2, giraffe 3, elephant 15, other prey 1.
 
 Each phase is an independent commit so it can be iterated in isolation.
