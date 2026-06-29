@@ -81,7 +81,7 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
 <div id="overlay">
   <h1>🦁 LION SURVIVAL</h1>
   <p>Survive the savanna. Lions hunt hardest at dawn, dusk and through the night — rest in shade by day.<br>
-     Hide in tall grass, stay low and quiet, mind the wind, and grapple into a tree when the pride closes in.</p>
+     Crouch in tall grass to hide (standing in it, they still see you), stay quiet, mind the wind, and grapple into a tree when the pride closes in.</p>
   <div style="font-size:12px;opacity:0.65;line-height:1.9;text-align:center">
     WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hide in grass)<br>
     1/G Grapple → tree (LMB fire · RMB/Space drop · safe from lions while perched, no stamina cost) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe &nbsp;|&nbsp; 6 Spear<br>
@@ -1491,7 +1491,7 @@ function updateStealth(dt){
   // stillness slash it; sprinting (motion) pushes it back up.
   let visMul = 1;
   if(crouch)  visMul *= 0.55;
-  if(inGrass) visMul *= crouch ? 0.50 : 0.62;
+  if(inGrass && crouch) visMul *= 0.45;   // grass only hides you if you CROUCH in it — walking/standing in grass leaves you visible
   if(!moving) visMul *= 0.85;
   if(sprint)  visMul *= 1.2;
 
@@ -1509,7 +1509,7 @@ function updateStealth(dt){
 
   const detected = lionMeshes.some(L=>L.state==='chase');
   stealth.detected = detected;
-  const wellHidden = (inGrass && visMul < 0.45 && !detected) || (player.inTree && !detected);
+  const wellHidden = (inGrass && crouch && visMul < 0.45 && !detected) || (player.inTree && !detected);
   stealth.hidden = wellHidden;
 
   // Cues: a sharp growl + jolt the instant the pride first locks onto you.
@@ -1538,7 +1538,7 @@ function pickPreyTarget(L){
     const d=L.pos.distanceTo(P.pos); if(d>34) return;
     const s=SPECIES[P.species];
     let score = -d*0.5 - s.speed*0.35 + (P.maxHealth-P.health)*0.25;
-    const big = (P.species==='kudu'||P.species==='zebra'||P.species==='wildebeest'||P.species==='giraffe');
+    const big = (P.species==='kudu'||P.species==='zebra'||P.species==='wildebeest'||P.species==='giraffe'||P.species==='elephant');
     score += (hunters>=2) ? (big? 8 : -2) : (big? -5 : 4);
     if(score>bestScore){ bestScore=score; best=P; }
   });
@@ -1829,6 +1829,7 @@ const SPECIES = {
   warthog:   { label:'warthog',    size:0.58, color:0x53493f, herd:[1,3], speed:15,   flee:11, hp:30, juke:0,   hop:0, neck:0.22, horns:null,      tusks:true, low:true, counter:14, food:34, dust:0 },
   kudu:      { label:'kudu',       size:1.18, color:0x8c7c66, herd:[1,2], speed:11,   flee:14, hp:72, juke:0,   hop:0, neck:0.9,  horns:'spiral',  stripeThin:true, food:70, dust:0 },
   giraffe:   { label:'giraffe',    size:1.6,  color:0xc79a52, herd:[2,4], speed:18,   flee:22, hp:40, juke:0,   hop:0, neck:2.2,  horns:null,      food:78, dust:0, custom:'giraffe' },
+  elephant:  { label:'elephant',   size:2.0,  color:0x8d8d88, herd:[1,3], speed:11,   flee:18, hp:90, juke:0,   hop:0, neck:0.6,  horns:null,      food:120, dust:1, custom:'elephant' },
 };
 const SPECIES_KEYS = Object.keys(SPECIES);
 
@@ -1964,8 +1965,48 @@ function makeGiraffe(){
   return { group:g, legs, bodyY, legLen };
 }
 
+// Elephant — a huge, tanky grey grazer. Custom mesh (domed head, big ears, a
+// curling trunk, tusks, thick hip-pivot legs) returning the standard prey
+// contract so the prey loop drives it (it lumbers off when threatened/hit).
+function makeElephant(){
+  const g=new THREE.Group();
+  const hide = lmat(jcol(0x8d8d88,0.04));   // grey
+  const hide2= lmat(jcol(0x6f6f6b,0.04));   // shadowed (ears/feet/underside)
+  const tuskM= lmat(0xe8e0cf);
+  const dark = lmat(0x141014);
+  const legLen=1.5, bw=1.3, bh=1.5, bl=2.5, bodyY=legLen+bh*0.5;
+  // bulky body + domed back
+  const body=new THREE.Mesh(new THREE.BoxGeometry(bw,bh,bl), hide); body.position.y=bodyY; body.castShadow=true; g.add(body);
+  const back=new THREE.Mesh(new THREE.BoxGeometry(bw*0.92,bh*0.42,bl*0.82), hide); back.position.set(0,bodyY+bh*0.46,0); g.add(back);
+  // head + domed crown
+  const headZ=bl*0.5+0.18, headY=bodyY+bh*0.22;
+  const head=new THREE.Mesh(new THREE.BoxGeometry(bw*0.82,bh*0.82,0.82), hide); head.position.set(0,headY,headZ); head.castShadow=true; g.add(head);
+  const dome=new THREE.Mesh(new THREE.BoxGeometry(bw*0.6,0.5,0.62), hide); dome.position.set(0,headY+bh*0.45,headZ-0.06); g.add(dome);
+  // big flat ears, angled outward
+  [-1,1].forEach(d=>{ const ear=new THREE.Mesh(new THREE.BoxGeometry(0.12,1.05,0.95), hide2); ear.position.set(d*bw*0.45, headY+0.08, headZ-0.22); ear.rotation.y=d*0.5; ear.rotation.z=d*0.12; g.add(ear); });
+  // trunk — tapering segments curving down & forward
+  let cy=headY-0.05, cz=headZ+0.5;
+  for(let i=0;i<4;i++){ const r=0.26-i*0.045; const seg=new THREE.Mesh(new THREE.CylinderGeometry(r,r-0.03,0.5,6), hide);
+    cy-=0.34; cz+=0.05; seg.position.set(0,cy,cz); seg.rotation.x=0.55+i*0.18; g.add(seg); }
+  // tusks
+  [-1,1].forEach(d=>{ const t=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.09,0.85,6), tuskM); t.position.set(d*0.24, headY-0.34, headZ+0.5); t.rotation.x=1.15; g.add(t); });
+  // eyes
+  [-1,1].forEach(d=>{ const e=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.1,0.06), dark); e.position.set(d*0.32, headY+0.14, headZ+0.38); g.add(e); });
+  // thick hip-pivot legs (swing via the prey loop) with broad feet
+  const legs=[];
+  const mkLeg=(lx,lz)=>{ const geo=new THREE.CylinderGeometry(0.26,0.30,legLen,7); geo.translate(0,-legLen/2,0);
+    const leg=new THREE.Mesh(geo, hide); leg.position.set(lx, legLen, lz); leg.castShadow=true; g.add(leg); legs.push(leg);
+    const foot=new THREE.Mesh(new THREE.CylinderGeometry(0.31,0.28,0.16,7), hide2); foot.position.set(0,-legLen+0.08,0); leg.add(foot); };
+  mkLeg(-bw*0.34, bl*0.34); mkLeg(bw*0.34, bl*0.34); mkLeg(-bw*0.34,-bl*0.34); mkLeg(bw*0.34,-bl*0.34);
+  // tail
+  const tail=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.04,0.9,5), hide); tail.position.set(0,bodyY-0.05,-bl*0.5-0.05); tail.rotation.x=0.4; g.add(tail);
+  const tuft=new THREE.Mesh(new THREE.SphereGeometry(0.09,5,4), dark); tuft.position.set(0,bodyY-0.55,-bl*0.5-0.2); g.add(tuft);
+  g.children.forEach(c=>{ if(c.isMesh) c.userData.origMat=c.material; });
+  return { group:g, legs, bodyY, legLen };
+}
+
 function makePrey(key,x,z,herdId){
-  const s=SPECIES[key], built=(s.custom==='giraffe'?makeGiraffe():makeHerbivore(key)), ty=terrainY(x,z);
+  const s=SPECIES[key], built=(s.custom==='giraffe'?makeGiraffe():s.custom==='elephant'?makeElephant():makeHerbivore(key)), ty=terrainY(x,z);
   built.group.position.set(x,ty,z); built.group.rotation.y=rand(0,6.28); built.group.name='prey';
   scene.add(built.group);
   const P={ mesh:built.group, legs:built.legs, legLen:built.legLen, species:key, label:s.label,
@@ -1979,7 +2020,7 @@ function makePrey(key,x,z,herdId){
 }
 
 function spawnHerds(){
-  const base = ['zebra','wildebeest','gazelle','impala','warthog','kudu','impala','gazelle','giraffe'];
+  const base = ['zebra','wildebeest','gazelle','impala','warthog','kudu','impala','gazelle','giraffe','elephant'];
   const plan = [...base, ...base, ...base];   // 5× map → ~3× the herds, spread across it
   plan.forEach((key,hi)=>{
     const s=SPECIES[key];
@@ -2017,10 +2058,10 @@ function updatePrey(dt){
     const s=SPECIES[P.species];
     P.legPhase += dt*(3+(P._lastSpeed||0)*0.9);
     const legBase=P.legLen/2;
-    if(P.species==='giraffe'){
-      // hip-pivot legs SWING (a proper walk) — pacing gait (same-side legs together),
-      // amplitude scales with how fast it's actually moving so it's still when it stands.
-      const moving=(P._lastSpeed||0)>0.3, amp = moving ? (P.state==='flee'?0.6:0.32) : 0.03;
+    if(s.custom){
+      // custom meshes (giraffe, elephant) have hip-pivot legs that SWING (a proper
+      // walk) — pacing gait; amplitude scales with speed so they're still when stopped.
+      const moving=(P._lastSpeed||0)>0.3, amp = moving ? (P.state==='flee'?0.55:0.30) : 0.03;
       P.legs.forEach((leg,i)=>{ const off=(i===1||i===3)?Math.PI:0; leg.rotation.x = Math.sin(P.legPhase+off)*amp; });
     } else {
       P.legs.forEach((leg,i)=>{ leg.position.y = legBase + Math.sin(P.legPhase+i*Math.PI/2)*0.09*s.size*(P.state==='flee'?1.5:0.5); });
@@ -3414,7 +3455,7 @@ function updateThrownRocks(dt){
     // A spear one-shots most animals; the kudu takes two, the tall tough giraffe three; rocks wound.
     if(!hit) preyMeshes.forEach(P=>{
       if(r.mesh.position.distanceTo(P.pos) < 1.7){
-        P.health -= r.spear ? (P.species==='kudu' ? P.maxHealth/2 : P.species==='giraffe' ? P.maxHealth/3 : P.maxHealth) : 9*m;
+        P.health -= r.spear ? (P.species==='kudu' ? P.maxHealth/2 : P.species==='giraffe' ? P.maxHealth/3 : P.species==='elephant' ? P.maxHealth/4 : P.maxHealth) : 9*m;
         P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
         hit = true;
         showKillfeed(P.health<=0 ? ic+' Kill — '+P.label+'!' : ic+' Stunned the '+P.label);

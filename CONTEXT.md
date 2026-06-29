@@ -79,8 +79,9 @@ not flavour.
 - [x] Phase 2 — realistic lion AI (crepuscular/nocturnal activity curve `lionActivity()`,
       pride coordination via `prideAlert` broadcast + flank roles, lioness/male split,
       hunger→aggression cycle w/ feeding, midday shade-resting, honest signals HUD)
-- [x] Phase 3 — mutual stealth detection (`updateStealth` visual×audio model: grass+crouch+
-      stillness slash visibility, running is loud; lions hidden in grass sink + drop off radar;
+- [x] Phase 3 — mutual stealth detection (`updateStealth` visual×audio model: grass hides you **only
+      while crouching** (standing/walking in it leaves you visible), crouch + stillness further slash
+      visibility, running is loud; lions hidden in grass sink + drop off radar;
       wind scent extends downwind detection; HIDDEN/EXPOSED + spotted-growl + rustle cues)
 - [x] Phase 4 — grappling hook to trees (aim-cone target on climbable acacia/baobab/marula →
       reel up to a branch perch; safe from lions + foliage concealment; staying perched costs no
@@ -177,12 +178,14 @@ prey graze in herds → flee any predator within species flee-dist → lions hun
 (fast gazelle/impala usually escape — realistic) → kill spawns a carcass + 3 vultures → player
 can **hunt ahead of the pride** (sneak+pounce, the stealthy play) or **scavenge lion kills**
 (faster but the guarding pride attacks). Player hunger must be topped up by eating; lions
-**cannot** be eaten. Per-species params live in the `SPECIES` table. **7 species** now — the 6 above
-plus the **giraffe** (`SPECIES.giraffe`, `custom:'giraffe'` → dedicated tall `makeGiraffe()` mesh —
-reticulated `giraffeTex()` coat, mane, withers/rump slope, ossicones, **hip-pivot legs that SWING**
-(a pacing walk, branched in `updatePrey`'s leg animation); hp 40
-≈ a lion, speed 18 so it **outruns even a sprinting player** (16), bolts when hit or threatened like any
-prey, and takes **3 spears** to down (kudu 2, other prey 1 — sized in the `updateThrownRocks` prey
-branch). Spawns in the herd plan.
+**cannot** be eaten. Per-species params live in the `SPECIES` table. **8 species** now — the 6 base ones
+plus two custom-mesh giants (`custom:` flag → dedicated builder + `makeHerbivore` is skipped; both get
+**hip-pivot legs that SWING** via the `s.custom` branch in `updatePrey`'s leg animation):
+- **giraffe** (`makeGiraffe`, reticulated `giraffeTex()` coat, mane, withers/rump slope, ossicones): hp 40
+  ≈ a lion, speed 18 so it **outruns even a sprinting player** (16), **3 spears** to down.
+- **elephant** (`makeElephant`, domed head, big ears, curling trunk, tusks, thick legs): hp **90**
+  (tankiest prey), speed 11, **4 spears** to down, big carcass (food 120).
+
+Spear kill-counts (`updateThrownRocks` prey branch): kudu 2, giraffe 3, elephant 4, other prey 1.
 
 Each phase is an independent commit so it can be iterated in isolation.
