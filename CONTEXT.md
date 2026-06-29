@@ -184,9 +184,14 @@ plus two custom-mesh giants (`custom:` flag → dedicated builder + `makeHerbivo
 - **giraffe** (`makeGiraffe`, reticulated `giraffeTex()` coat, mane, withers/rump slope, ossicones): hp 40
   ≈ a lion, speed 18 so it **outruns even a sprinting player** (16), **3 spears** to down.
 - **elephant** (`makeElephant`, textured `elephantTex()` hide, domed forehead+brow, big two-tone floppy
-  ears, 5-seg curling trunk, tusks, toenails): hp **300** (tankiest by far), speed 11, **15 spears** to
-  down, big carcass (food 150). **SMASHES walls in its path** like the gorilla (`s.smash` flag →
-  `wallBlockingPath`/`removeWallAt` in `updatePrey`, on a cooldown) — it still flees when hit.
+  ears, 5-seg curling trunk, tusks, toenails): hp **300** (tankiest by far), **15 spears** to down, big
+  carcass (food 150). It lives in `preyMeshes` but **FIGHTS BACK like the rhino** rather than fleeing —
+  `fights:true` routes it to a dedicated combat branch in `updatePrey` (tuned by `ELE`): charges &
+  **tramples** the nearest threat (player 40 + knockback / lions·gorilla·rhino 26 + stun), homes on its
+  target, **SMASHES walls** in its path (`wallBlockingPath`/`removeWallAt`), is **stunned** by
+  rocks/spears, **enrages** for `ELE.RAGE_TIME` when hit (chases you even if you hide), and only **flees
+  below `ELE.FLEE_HP`**. Player counts as a target only when close & exposed (`stealth.visMul`) or while
+  it's enraged.
 
 Spear kill-counts (`updateThrownRocks` prey branch): kudu 2, giraffe 3, elephant 15, other prey 1.
 

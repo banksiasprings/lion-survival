@@ -1829,7 +1829,7 @@ const SPECIES = {
   warthog:   { label:'warthog',    size:0.58, color:0x53493f, herd:[1,3], speed:15,   flee:11, hp:30, juke:0,   hop:0, neck:0.22, horns:null,      tusks:true, low:true, counter:14, food:34, dust:0 },
   kudu:      { label:'kudu',       size:1.18, color:0x8c7c66, herd:[1,2], speed:11,   flee:14, hp:72, juke:0,   hop:0, neck:0.9,  horns:'spiral',  stripeThin:true, food:70, dust:0 },
   giraffe:   { label:'giraffe',    size:1.6,  color:0xc79a52, herd:[2,4], speed:18,   flee:22, hp:40, juke:0,   hop:0, neck:2.2,  horns:null,      food:78, dust:0, custom:'giraffe' },
-  elephant:  { label:'elephant',   size:2.0,  color:0x8d8d88, herd:[1,3], speed:11,   flee:18, hp:300, juke:0,  hop:0, neck:0.6,  horns:null,      food:150, dust:1, custom:'elephant', smash:true },
+  elephant:  { label:'elephant',   size:2.0,  color:0x8d8d88, herd:[1,2], speed:11,   flee:18, hp:300, juke:0,  hop:0, neck:0.6,  horns:null,      food:150, dust:1, custom:'elephant', fights:true },
 };
 const SPECIES_KEYS = Object.keys(SPECIES);
 
@@ -1979,9 +1979,22 @@ function makeGiraffe(){
   return { group:g, legs, bodyY, legLen };
 }
 
+// Elephant combat tuning — it FIGHTS BACK like the rhino (charges & tramples
+// rather than fleeing), only bolting when near death.
+const ELE = {
+  SPEED_ROAM: 3.5, SPEED_CHARGE: 13, SPEED_FLEE: 13,
+  AGGRO: 24,          // notices/charges a threat within this (player scaled by stealth.visMul)
+  MELEE: 3.6,         // trample reach
+  SMACK_CD: 1.4,      // sec between tramples
+  GORE_PLAYER: 40, KB: 18, PLAYER_STUN: 0.7,   // vs the player
+  GORE: 26, GORE_STUN: 1.0,                     // vs lions / gorilla / rhino
+  RAGE_TIME: 6,       // sec it stays enraged on you after you hit it (ignores stealth)
+  FLEE_HP: 0.20,      // below this it finally runs
+};
+
 // Elephant — a huge, tanky grey grazer. Custom mesh (domed head, big ears, a
 // curling trunk, tusks, thick hip-pivot legs) returning the standard prey
-// contract so the prey loop drives it (it lumbers off when threatened/hit).
+// contract so the prey loop drives it (combat handled by its own branch).
 function makeElephant(){
   const g=new THREE.Group();
   const hide = new THREE.MeshLambertMaterial({map:elephantTex()});  // wrinkled grey hide
@@ -2100,6 +2113,62 @@ function updatePrey(dt){
       return;
     }
 
+    // ---- ELEPHANT: a tank that FIGHTS BACK (charges & tramples) instead of fleeing ----
+    if(s.fights){
+      P.smackCd=Math.max(0,(P.smackCd||0)-dt); P.aggroT=Math.max(0,(P.aggroT||0)-dt); P.smashWallCd=Math.max(0,(P.smashWallCd||0)-dt);
+      const lowHp = P.health < P.maxHealth*ELE.FLEE_HP;
+      // pick the nearest reachable threat (entity, so we can gore it)
+      let tgt=null,tpos=null,tk=null,td=Infinity;
+      const see=(pos,ent,k)=>{ const d=Math.hypot(pos.x-P.pos.x,pos.z-P.pos.z); if(d<td){td=d;tpos=pos;tgt=ent;tk=k;} };
+      lionMeshes.forEach(L=>{ if(L.health>0) see(L.pos,L,'lion'); });
+      gorillaMeshes.forEach(G=>{ if(G.health>0&&G.state!=='perched'&&G.state!=='sleeping') see(G.pos,G,'gorilla'); });
+      rhinoMeshes.forEach(R=>{ if(R.health>0) see(R.pos,R,'rhino'); });
+      // the player counts when close & exposed (crouch/grass hide you) OR while it's enraged at you
+      if(!player.inTree){ const pd=Math.hypot(player.pos.x-P.pos.x,player.pos.z-P.pos.z);
+        if(P.aggroT>0 || pd < ELE.AGGRO*stealth.visMul) see(player.pos,player,'player'); }
+
+      let dir=new THREE.Vector3(), moving=false, spd=0;
+      if(lowHp && tgt){                                   // near death → run from the threat
+        dir.set(P.pos.x-tpos.x,0,P.pos.z-tpos.z); if(dir.lengthSq()<0.01) dir.copy(P.wanderDir); dir.normalize();
+        moving=true; spd=ELE.SPEED_FLEE; P.state='flee';
+      } else if(tgt && (td < ELE.AGGRO || (P.aggroT>0 && tk==='player'))){   // charge & trample
+        P.state='charge';
+        if(td > ELE.MELEE){ dir.set(tpos.x-P.pos.x,0,tpos.z-P.pos.z).normalize(); moving=true; spd=ELE.SPEED_CHARGE; }
+        else {                                            // in reach: face, then trample on cooldown
+          P.mesh.rotation.y = Math.atan2(tpos.x-P.pos.x, tpos.z-P.pos.z);
+          if(P.smackCd<=0){
+            if(tk==='player'){
+              player.health -= ELE.GORE_PLAYER; player.stunTimer=Math.max(player.stunTimer||0,ELE.PLAYER_STUN);
+              const ax=player.pos.x-P.pos.x,az=player.pos.z-P.pos.z,al=Math.hypot(ax,az)||1;
+              player.knockback.x=(ax/al)*ELE.KB; player.knockback.z=(az/al)*ELE.KB;
+              shakeTime=Math.max(shakeTime,0.5); shakeAmt=0.012; playSound('spotted'); showKillfeed('🐘 The elephant tramples you!');
+            } else { tgt.health-=ELE.GORE; tgt.flashTimer=0.25; tgt.stunTimer=Math.max(tgt.stunTimer||0,ELE.GORE_STUN);
+              if(tgt.health<=0) showKillfeed('🐘 The elephant tramples a '+tk); }
+            P.smackCd=ELE.SMACK_CD;
+          }
+        }
+      } else {                                            // no threat → lumber around
+        P.grazeTimer-=dt;
+        if(P.grazeTimer<0){ P.grazePause=Math.random()<0.4; if(!P.grazePause) P.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); P.grazeTimer=P.grazePause?rand(1.5,3):rand(3,6); }
+        if(Math.hypot(P.pos.x,P.pos.z)>HALF-6) P.wanderDir.set(-P.pos.x,0,-P.pos.z).normalize();
+        if(!P.grazePause){ dir.copy(P.wanderDir); moving=true; spd=ELE.SPEED_ROAM; }
+        P.state='graze';
+      }
+      P._lastSpeed=spd;
+      // SMASH walls in its path (like the gorilla)
+      if(moving && dir.lengthSq()>0.01 && P.smashWallCd<=0){
+        const wb=wallBlockingPath(P, P.pos.x+dir.x*6, P.pos.z+dir.z*6);
+        if(wb>=0){ const wp=removeWallAt(wb); if(wp){ P.smashWallCd=0.8; playSound('place'); showKillfeed('🐘 An elephant smashed a wall');
+          if(wp.distanceTo(player.pos)<18){ shakeTime=Math.max(shakeTime,0.25); shakeAmt=0.006; } } }
+      }
+      P.pos.addScaledVector(dir, spd*dt);
+      P.pos.x=clamp(P.pos.x,-(HALF-1),HALF-1); P.pos.z=clamp(P.pos.z,-(HALF-1),HALF-1);
+      collideWalls(P.pos,0.9);
+      P.pos.y=terrainY(P.pos.x,P.pos.z); P.mesh.position.set(P.pos.x,P.pos.y,P.pos.z);
+      if(moving && dir.lengthSq()>0.001) P.mesh.rotation.y=Math.atan2(dir.x,dir.z);
+      return;
+    }
+
     // nearest predator (lion, gorilla, or player) — prey flee all of them
     let threat=null, td=Infinity;
     lionMeshes.forEach(L=>{ const d=L.pos.distanceTo(P.pos); if(d<td){td=d;threat=L.pos;} });
@@ -2143,17 +2212,6 @@ function updatePrey(dt){
     let hopY=0;
     if(s.hop && P.state==='flee'){ P.hopPhase+=dt*6.5; hopY=Math.max(0,Math.sin(P.hopPhase))*0.55*s.size; }
     if(s.dust && P.state==='flee' && Math.random()<dt*3.5) spawnDustPuff(P.pos);
-
-    // Big bulldozers (elephant) SMASH through walls in their path, like the gorilla.
-    if(s.smash){
-      P.smashCd = Math.max(0, (P.smashCd||0) - dt);
-      if(P.smashCd<=0 && speed>0.5 && dir.lengthSq()>0.01){
-        const wb = wallBlockingPath(P, P.pos.x+dir.x*6, P.pos.z+dir.z*6);
-        if(wb>=0){ const wp = removeWallAt(wb);
-          if(wp){ P.smashCd=0.8; playSound('place'); showKillfeed('🐘 An elephant smashed a wall');
-            if(wp.distanceTo(player.pos)<18){ shakeTime=Math.max(shakeTime,0.25); shakeAmt=0.006; } } }
-      }
-    }
 
     P.pos.addScaledVector(dir, speed*dt);
     P.pos.x=clamp(P.pos.x,-(HALF-1),HALF-1); P.pos.z=clamp(P.pos.z,-(HALF-1),HALF-1);
@@ -3493,8 +3551,9 @@ function updateThrownRocks(dt){
       if(r.mesh.position.distanceTo(P.pos) < 1.7){
         P.health -= r.spear ? (P.species==='kudu' ? P.maxHealth/2 : P.species==='giraffe' ? P.maxHealth/3 : P.species==='elephant' ? P.maxHealth/15 : P.maxHealth) : 9*m;
         P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
+        if(P.species==='elephant') P.aggroT = ELE.RAGE_TIME;   // hitting it enrages it → it charges you
         hit = true;
-        showKillfeed(P.health<=0 ? ic+' Kill — '+P.label+'!' : ic+' Stunned the '+P.label);
+        showKillfeed(P.health<=0 ? ic+' Kill — '+P.label+'!' : (P.species==='elephant' ? '🐘 The elephant turns on you!' : ic+' Stunned the '+P.label));
       }
     });
     // They chip the gorilla too — far tankier than prey (skip a perched/sleeping
