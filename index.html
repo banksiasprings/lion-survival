@@ -1983,10 +1983,10 @@ function makeGiraffe(){
 // rather than fleeing), only bolting when near death.
 const ELE = {
   SPEED_ROAM: 3.5, SPEED_CHARGE: 13, SPEED_FLEE: 13,
-  AGGRO: 24,          // notices/charges a threat within this (player scaled by stealth.visMul)
-  MELEE: 3.6,         // trample reach
+  AGGRO: 26,          // notices/charges a threat within this (player scaled by stealth.visMul)
+  MELEE: 5.0,         // trample reach (it's a huge bull)
   SMACK_CD: 1.4,      // sec between tramples
-  GORE_PLAYER: 40, KB: 18, PLAYER_STUN: 0.7,   // vs the player
+  GORE_PLAYER: 50, KB: 22, PLAYER_STUN: 0.8,   // vs the player
   GORE: 26, GORE_STUN: 1.0,                     // vs lions / gorilla / rhino
   RAGE_TIME: 6,       // sec it stays enraged on you after you hit it (ignores stealth)
   FLEE_HP: 0.20,      // below this it finally runs
@@ -2012,21 +2012,24 @@ function makeElephant(){
   // head: blocky skull + domed forehead + heavy brow
   const headZ=bl*0.5+0.22, headY=bodyY+bh*0.2;
   const head=new THREE.Mesh(new THREE.BoxGeometry(bw*0.78,bh*0.8,0.86), hide); head.position.set(0,headY,headZ); head.castShadow=true; g.add(head);
-  const dome=new THREE.Mesh(new THREE.BoxGeometry(bw*0.66,0.62,0.66), hide); dome.position.set(0,headY+bh*0.46,headZ-0.04); g.add(dome);
+  const dome=new THREE.Mesh(new THREE.BoxGeometry(bw*0.7,0.9,0.72), hide); dome.position.set(0,headY+bh*0.5,headZ-0.02); g.add(dome);
   const brow=new THREE.Mesh(new THREE.BoxGeometry(bw*0.8,0.18,0.2), hide2); brow.position.set(0,headY+0.34,headZ+0.4); g.add(brow);
   // BIG floppy two-tone ears — fan out and back, drooping a little
   [-1,1].forEach(d=>{
-    const ear=new THREE.Mesh(new THREE.BoxGeometry(0.10,1.45,1.25), hide);
-    ear.position.set(d*bw*0.5, headY+0.05, headZ-0.3); ear.rotation.y=d*0.65; ear.rotation.z=d*0.18; ear.rotation.x=-0.12; ear.castShadow=true; g.add(ear);
-    const ein=new THREE.Mesh(new THREE.BoxGeometry(0.06,1.15,0.98), inner);
-    ein.position.set(d*(bw*0.5+0.06), headY+0.05, headZ-0.28); ein.rotation.copy(ear.rotation); g.add(ein);
+    const ear=new THREE.Mesh(new THREE.BoxGeometry(0.12,2.05,1.75), hide);
+    ear.position.set(d*bw*0.52, headY+0.12, headZ-0.35); ear.rotation.y=d*0.72; ear.rotation.z=d*0.22; ear.rotation.x=-0.14; ear.castShadow=true; g.add(ear);
+    const ein=new THREE.Mesh(new THREE.BoxGeometry(0.07,1.68,1.44), inner);
+    ein.position.set(d*(bw*0.52+0.07), headY+0.12, headZ-0.33); ein.rotation.copy(ear.rotation); g.add(ein);
   });
-  // trunk — five tapering segments curling down then forward to the tip
-  let cy=headY+0.02, cz=headZ+0.5;
-  for(let i=0;i<5;i++){ const r=0.27-i*0.04; const seg=new THREE.Mesh(new THREE.CylinderGeometry(r,r-0.03,0.46,7), hide);
-    cy-=0.32; cz+=(i<3?0.05:0.16); seg.position.set(0,cy,cz); seg.rotation.x=0.55+i*0.16; g.add(seg); }
-  // tusks — curving cream
-  [-1,1].forEach(d=>{ const t=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.10,0.95,6), tuskM); t.position.set(d*0.26, headY-0.36, headZ+0.52); t.rotation.x=1.2; t.rotation.z=-d*0.12; g.add(t); });
+  // trunk — six thick tapering segments curling down then forward to the tip
+  let cy=headY+0.05, cz=headZ+0.55;
+  for(let i=0;i<6;i++){ const r=0.33-i*0.042; const seg=new THREE.Mesh(new THREE.CylinderGeometry(r,r-0.03,0.44,7), hide);
+    cy-=0.33; cz+=(i<3?0.06:0.19); seg.position.set(0,cy,cz); seg.rotation.x=0.52+i*0.15; g.add(seg); }
+  // tusks — big curving cream (base + upturned tip)
+  [-1,1].forEach(d=>{
+    const t=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.15,1.25,7), tuskM); t.position.set(d*0.30, headY-0.5, headZ+0.7); t.rotation.x=1.12; t.rotation.z=-d*0.13; g.add(t);
+    const tip=new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.08,0.8,7), tuskM); tip.position.set(d*0.38, headY-1.12, headZ+1.5); tip.rotation.x=0.5; tip.rotation.z=-d*0.17; g.add(tip);
+  });
   // eyes
   [-1,1].forEach(d=>{ const e=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.1,0.06), dark); e.position.set(d*0.33, headY+0.12, headZ+0.4); g.add(e); });
   // thick hip-pivot legs (swing via the prey loop) with broad feet + pale toenails
@@ -2039,6 +2042,7 @@ function makeElephant(){
   // tail
   const tail=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.04,0.95,5), hide); tail.position.set(0,bodyY-0.05,-bl*0.5-0.05); tail.rotation.x=0.4; g.add(tail);
   const tuft=new THREE.Mesh(new THREE.SphereGeometry(0.09,5,4), dark); tuft.position.set(0,bodyY-0.55,-bl*0.5-0.22); g.add(tuft);
+  g.scale.setScalar(1.55);                     // a towering bull — big and imposing
   g.children.forEach(c=>{ if(c.isMesh) c.userData.origMat=c.material; });
   return { group:g, legs, bodyY, legLen };
 }
@@ -2163,7 +2167,7 @@ function updatePrey(dt){
       }
       P.pos.addScaledVector(dir, spd*dt);
       P.pos.x=clamp(P.pos.x,-(HALF-1),HALF-1); P.pos.z=clamp(P.pos.z,-(HALF-1),HALF-1);
-      collideWalls(P.pos,0.9);
+      collideWalls(P.pos,1.4);
       P.pos.y=terrainY(P.pos.x,P.pos.z); P.mesh.position.set(P.pos.x,P.pos.y,P.pos.z);
       if(moving && dir.lengthSq()>0.001) P.mesh.rotation.y=Math.atan2(dir.x,dir.z);
       return;

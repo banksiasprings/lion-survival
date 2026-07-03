@@ -183,8 +183,9 @@ plus two custom-mesh giants (`custom:` flag → dedicated builder + `makeHerbivo
 **hip-pivot legs that SWING** via the `s.custom` branch in `updatePrey`'s leg animation):
 - **giraffe** (`makeGiraffe`, reticulated `giraffeTex()` coat, mane, withers/rump slope, ossicones): hp 40
   ≈ a lion, speed 18 so it **outruns even a sprinting player** (16), **3 spears** to down.
-- **elephant** (`makeElephant`, textured `elephantTex()` hide, domed forehead+brow, big two-tone floppy
-  ears, 5-seg curling trunk, tusks, toenails): hp **300** (tankiest by far), **15 spears** to down, big
+- **elephant** — a **towering bull** (`makeElephant`, `g.scale 1.55`, ~6u tall; textured `elephantTex()`
+  hide, tall domed forehead+brow, **huge** two-tone floppy ears, thick 6-seg curling trunk, **grand
+  curved tusks** (base + upturned tip), toenails): hp **300** (tankiest by far), **15 spears** to down, big
   carcass (food 150). It lives in `preyMeshes` but **FIGHTS BACK like the rhino** rather than fleeing —
   `fights:true` routes it to a dedicated combat branch in `updatePrey` (tuned by `ELE`): charges &
   **tramples** the nearest threat (player 40 + knockback / lions·gorilla·rhino 26 + stun), homes on its

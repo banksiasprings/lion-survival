@@ -45,16 +45,18 @@ def elephant():
     f+=box(bw*1.02,bh*0.7,bl*0.4,HIDE,0,bodyY+0.1,bl*0.32)
     headZ=bl*0.5+0.22;headY=bodyY+bh*0.2
     f+=box(bw*0.78,bh*0.8,0.86,HIDE,0,headY,headZ)
-    f+=box(bw*0.66,0.62,0.66,HIDE,0,headY+bh*0.46,headZ-0.04)
+    f+=box(bw*0.7,0.9,0.72,HIDE,0,headY+bh*0.5,headZ-0.02)          # tall domed forehead
     f+=box(bw*0.8,0.18,0.2,HIDE2,0,headY+0.34,headZ+0.4)
-    for d in(-1,1):                                   # big ears (axis-aligned approx of the rotated mesh)
-        f+=box(0.12,1.45,1.25,HIDE,d*bw*0.5,headY+0.05,headZ-0.3)
-        f+=box(0.06,1.15,0.98,INNER,d*(bw*0.5+0.08),headY+0.05,headZ-0.28)
-    cy=headY+0.02;cz=headZ+0.5
-    for i in range(5):
-        r=0.27-i*0.04;cy-=0.32;cz+=(0.05 if i<3 else 0.16)
-        f+=cyl(r,r-0.03,0.46,7,HIDE,0,cy,cz,0.55+i*0.16)
-    for d in(-1,1): f+=cyl(0.05,0.10,0.95,6,TUSK,d*0.26,headY-0.36,headZ+0.52,1.2)
+    for d in(-1,1):                                   # BIG ears (axis-aligned approx of the rotated mesh)
+        f+=box(0.12,2.05,1.75,HIDE,d*bw*0.52,headY+0.12,headZ-0.35)
+        f+=box(0.07,1.68,1.44,INNER,d*(bw*0.52+0.08),headY+0.12,headZ-0.33)
+    cy=headY+0.05;cz=headZ+0.55
+    for i in range(6):
+        r=0.33-i*0.042;cy-=0.33;cz+=(0.06 if i<3 else 0.19)
+        f+=cyl(r,r-0.03,0.44,7,HIDE,0,cy,cz,0.52+i*0.15)
+    for d in(-1,1):                                    # grand curved tusks (base + upturned tip)
+        f+=cyl(0.07,0.15,1.25,7,TUSK,d*0.30,headY-0.5,headZ+0.7,1.12)
+        f+=cyl(0.02,0.08,0.8,7,TUSK,d*0.38,headY-1.12,headZ+1.5,0.5)
     for d in(-1,1): f+=box(0.08,0.1,0.06,DARK,d*0.33,headY+0.12,headZ+0.4)
     def leg(lx,lz,a):
         ln=legLen;cx=lx;cyl_y=ln+(-math.cos(a))*ln/2;cz2=lz+(-math.sin(a))*ln/2
@@ -99,6 +101,6 @@ W,H,th=620,520,52;sheet=Image.new('RGB',(W,th+H),(24,24,28));d=ImageDraw.Draw(sh
 d.text((18,16),'Lion Survival — elephant (offline render of the actual makeElephant mesh)',font=font(17),fill=(241,196,15))
 panel=project(elephant(),W,H);dd=ImageDraw.Draw(panel)
 dd.rectangle([0,0,W-1,H-1],outline=(60,60,66),width=2);dd.rectangle([12,12,22,34],fill=(46,160,90))
-dd.text((30,12),'elephant · hp 300 · 15 spears · smashes walls · lumbers off when hit',font=font(13),fill=(20,20,20))
+dd.text((30,12),'elephant · big bull · hp 300 · 15 spears · charges, tramples & smashes walls',font=font(12),fill=(20,20,20))
 sheet.paste(panel,(0,th))
 out='/Users/openclaw/Documents/lion-survival/dossiers/elephant_render.png';sheet.save(out);print('wrote',out,sheet.size)
