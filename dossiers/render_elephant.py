@@ -54,9 +54,9 @@ def elephant():
     for i in range(6):
         r=0.33-i*0.042;cy-=0.33;cz+=(0.06 if i<3 else 0.19)
         f+=cyl(r,r-0.03,0.44,7,HIDE,0,cy,cz,0.52+i*0.15)
-    for d in(-1,1):                                    # grand curved tusks (base + upturned tip)
-        f+=cyl(0.07,0.15,1.25,7,TUSK,d*0.30,headY-0.5,headZ+0.7,1.12)
-        f+=cyl(0.02,0.08,0.8,7,TUSK,d*0.38,headY-1.12,headZ+1.5,0.5)
+    for d in(-1,1):                                    # long curved tusks (base + upturned tip)
+        f+=cyl(0.06,0.16,1.85,7,TUSK,d*0.31,headY-0.72,headZ+0.92,1.08)
+        f+=cyl(0.015,0.075,1.25,7,TUSK,d*0.44,headY-1.62,headZ+2.1,0.44)
     for d in(-1,1): f+=box(0.08,0.1,0.06,DARK,d*0.33,headY+0.12,headZ+0.4)
     def leg(lx,lz,a):
         ln=legLen;cx=lx;cyl_y=ln+(-math.cos(a))*ln/2;cz2=lz+(-math.sin(a))*ln/2

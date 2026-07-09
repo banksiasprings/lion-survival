@@ -184,7 +184,7 @@ plus two custom-mesh giants (`custom:` flag → dedicated builder + `makeHerbivo
 - **giraffe** (`makeGiraffe`, reticulated `giraffeTex()` coat, mane, withers/rump slope, ossicones): hp 40
   ≈ a lion, speed 18 so it **outruns even a sprinting player** (16), **3 spears** to down.
 - **elephant** — a **towering bull** (`makeElephant`, `g.scale 1.55`, ~6u tall; textured `elephantTex()`
-  hide, tall domed forehead+brow, **huge** two-tone floppy ears, thick 6-seg curling trunk, **grand
+  hide, tall domed forehead+brow, **huge** two-tone floppy ears, thick 6-seg curling trunk, **long
   curved tusks** (base + upturned tip), toenails): hp **300** (tankiest by far), **15 spears** to down, big
   carcass (food 150). It lives in `preyMeshes` but **FIGHTS BACK like the rhino** rather than fleeing —
   `fights:true` routes it to a dedicated combat branch in `updatePrey` (tuned by `ELE`): charges &
@@ -195,5 +195,17 @@ plus two custom-mesh giants (`custom:` flag → dedicated builder + `makeHerbivo
   it's enraged.
 
 Spear kill-counts (`updateThrownRocks` prey branch): kudu 2, giraffe 3, elephant 15, other prey 1.
+
+## Combat web & hitboxes (2026-06-28)
+- **Whole-body hitboxes.** Thrown rocks/spears used a tiny sphere at each animal's *feet*, so tall/big
+  animals were nearly unhittable. Now `setHitbox()` (called per spawn) measures each mesh's bounding
+  **cylinder** (`hitR` reach + `hitTop` height) and `projHit()` tests the whole body.
+- **Everything retaliates.** When the **elephant** tramples a **rhino** it charges back (`targetKind
+  'prey'` added to the rhino), a trampled **gorilla** engages it (its foe-scan + engage-validity now
+  include elephant-prey), and a trampled **lion** triggers the pride vendetta. The gorilla's swipe and
+  the rhino's gore also alert the pride when they hit a lion.
+- **Lion pride.** `prideThreat` — wounding **any** lion makes the **whole pride mob the attacker**
+  (player→chase, gorilla→fight_gorilla, rhino→fight_rhino, elephant→new `mob` state that bites it).
+  Lions also have **cohesion** now (drift toward the pride centroid in `wander`) so they stay a pack.
 
 Each phase is an independent commit so it can be iterated in isolation.

@@ -1371,6 +1371,13 @@ const UP = new THREE.Vector3(0,1,0);
 // "Spotted" broadcast: when any lion detects the player it stamps the player's
 // position here; nearby pride-mates converge on it (cooperative hunt). Decays.
 let prideAlert = { pos: new THREE.Vector3(), timer: 0 };
+// Pride vendetta: whenever something WOUNDS a lion, the whole pride turns on that
+// attacker (player / gorilla / rhino / elephant) and mobs it together.
+let prideThreat = { ent:null, kind:null, pos:new THREE.Vector3(), timer:0 };
+function alertPrideThreat(ent, kind, pos){
+  if(!ent) return;
+  prideThreat.ent=ent; prideThreat.kind=kind; prideThreat.pos.copy(pos); prideThreat.timer=12;
+}
 const HUNGER_RISE = 0.55;   // hunger/sec while not feeding (full ≈ <3 min)
 
 // Crepuscular/nocturnal activity 0..1 by in-game hour. Twin peaks at dawn(~6)
@@ -1453,7 +1460,7 @@ function makeLion(x, z, sex){
     flashTimer: 0,
     _detR: 0,                                 // last detection radius (HUD/minimap)
   };
-  lionMeshes.push(L);
+  setHitbox(L); lionMeshes.push(L);
   return L;
 }
 
@@ -1554,6 +1561,12 @@ function updateLions(dt){
   if(gameState!=='playing') return;
   const activity = lionActivity();
   if(prideAlert.timer > 0) prideAlert.timer -= dt;
+  if(prideThreat.timer > 0) prideThreat.timer -= dt;
+  // drop the vendetta once the target is dead/gone
+  if(prideThreat.ent && prideThreat.ent!==player && !(prideThreat.ent.health>0)) prideThreat.timer = 0;
+  // pride centroid (for cohesion — the pack stays together)
+  let _lcx=0,_lcz=0; lionMeshes.forEach(L=>{ _lcx+=L.pos.x; _lcz+=L.pos.z; });
+  const _ln=lionMeshes.length||1; _lcx/=_ln; _lcz/=_ln;
 
   // Assign flank roles among the current chasers so they encircle the player
   // (fan-out) rather than stacking on one point. Lurer #0 charges head-on;
@@ -1615,7 +1628,17 @@ function updateLions(dt){
 
     // ---- state transitions ----
     if(L.state!=='fleeing_fire'){
-      if(dist < detR){
+      // PRIDE VENDETTA (top priority): something wounded a pride-mate → all lions mob it.
+      const pt = (prideThreat.timer>0 && prideThreat.ent) ? prideThreat : null;
+      const ptOk = pt && (pt.kind!=='player' || !player.inTree)
+                      && (pt.kind!=='gorilla' || (pt.ent.state!=='perched' && pt.ent.state!=='sleeping'))
+                      && lpos.distanceTo(pt.ent.pos) < 60;
+      if(ptOk){
+        if(pt.kind==='player'){ L.state='chase'; prideAlert.pos.copy(ppos); prideAlert.timer=9; }
+        else if(pt.kind==='gorilla'){ L.state='fight_gorilla'; L._gorTarget=pt.ent; }
+        else if(pt.kind==='rhino'){ L.state='fight_rhino'; L._rhinoTarget=pt.ent; }
+        else { L.state='mob'; L._mobTarget=pt.ent; }              // elephant / other big prey
+      } else if(dist < detR){
         L.state = 'chase';
         prideAlert.pos.copy(ppos); prideAlert.timer = 9;   // broadcast to the pride
       } else if(gorillaMeshes.length && (L._gorTarget=nearestGorilla(lpos,18)) && L._gorTarget.health>0){
@@ -1682,6 +1705,12 @@ function updateLions(dt){
       if(Rh && Rh.health>0){ dir.copy(Rh.pos).sub(lpos); dir.y=0;
         if(dir.length()<=2.2) dir.set(0,0,0); else dir.normalize(); }   // close in & hold; the rhino loop deals the bite + gores back
       else L.state='wander';
+    } else if(L.state==='mob'){
+      const M=L._mobTarget;
+      if(M && M.health>0){ dir.copy(M.pos).sub(lpos); dir.y=0;
+        if(dir.length()<=2.2){ dir.set(0,0,0); M.health-=15*dt; M.flashTimer=0.2; }   // close in & bite the attacker (e.g. the elephant)
+        else dir.normalize(); }
+      else L.state='wander';
     } else if(L.state==='hunt_prey'){
       // chase a target prey; on catch, maul it; on kill, feed & become 'fed'
       if(!L.preyTarget || L.preyTarget.health<=0 || preyMeshes.indexOf(L.preyTarget)<0 || lpos.distanceTo(L.preyTarget.pos)>38){
@@ -1724,6 +1753,10 @@ function updateLions(dt){
       L.wanderTimer -= dt;
       if(L.wanderTimer < 0){ L.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); L.wanderTimer = rand(2,5); }
       dir.copy(L.wanderDir);
+      // PRIDE COHESION — drift back toward the pack so they stay together
+      const cdx=_lcx-lpos.x, cdz=_lcz-lpos.z, cd=Math.hypot(cdx,cdz);
+      if(cd>10){ dir.x+=cdx/cd*0.9; dir.z+=cdz/cd*0.9; }
+      if(dir.lengthSq()>0) dir.normalize();
     }
 
     // Wall avoidance
@@ -1746,8 +1779,8 @@ function updateLions(dt){
     } else if(L.state==='converge'){
       L.burst = clamp(L.burst + dt*0.12, 0, 1);
       speed = L.isMale ? 9 : 11;
-    } else if(L.state==='fight_gorilla' || L.state==='fight_rhino'){
-      speed = L.isMale ? 9 : 11;
+    } else if(L.state==='fight_gorilla' || L.state==='fight_rhino' || L.state==='mob'){
+      speed = L.isMale ? 10 : 12;
     } else if(L.state==='scavenge'){
       speed = L.isMale ? 7 : 8;
     } else if(L.state==='fleeing_fire' || L.state==='flee_hurt'){
@@ -2027,8 +2060,8 @@ function makeElephant(){
     cy-=0.33; cz+=(i<3?0.06:0.19); seg.position.set(0,cy,cz); seg.rotation.x=0.52+i*0.15; g.add(seg); }
   // tusks — big curving cream (base + upturned tip)
   [-1,1].forEach(d=>{
-    const t=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.15,1.25,7), tuskM); t.position.set(d*0.30, headY-0.5, headZ+0.7); t.rotation.x=1.12; t.rotation.z=-d*0.13; g.add(t);
-    const tip=new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.08,0.8,7), tuskM); tip.position.set(d*0.38, headY-1.12, headZ+1.5); tip.rotation.x=0.5; tip.rotation.z=-d*0.17; g.add(tip);
+    const t=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.16,1.85,7), tuskM); t.position.set(d*0.31, headY-0.72, headZ+0.92); t.rotation.x=1.08; t.rotation.z=-d*0.13; g.add(t);
+    const tip=new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.075,1.25,7), tuskM); tip.position.set(d*0.44, headY-1.62, headZ+2.1); tip.rotation.x=0.44; tip.rotation.z=-d*0.18; g.add(tip);
   });
   // eyes
   [-1,1].forEach(d=>{ const e=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.1,0.06), dark); e.position.set(d*0.33, headY+0.12, headZ+0.4); g.add(e); });
@@ -2057,7 +2090,7 @@ function makePrey(key,x,z,herdId){
     herdId, state:'graze', alertTimer:0, grazeTimer:rand(1,4), stunTimer:0,
     wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
     legPhase:Math.random()*6.28, jukeTimer:0, jukeDir:0, hopPhase:0, flashTimer:0, _lastSpeed:0 };
-  preyMeshes.push(P);
+  setHitbox(P); preyMeshes.push(P);
   return P;
 }
 
@@ -2147,6 +2180,10 @@ function updatePrey(dt){
               player.knockback.x=(ax/al)*ELE.KB; player.knockback.z=(az/al)*ELE.KB;
               shakeTime=Math.max(shakeTime,0.5); shakeAmt=0.012; playSound('spotted'); showKillfeed('🐘 The elephant tramples you!');
             } else { tgt.health-=ELE.GORE; tgt.flashTimer=0.25; tgt.stunTimer=Math.max(tgt.stunTimer||0,ELE.GORE_STUN);
+              // the victim FIGHTS BACK — it turns on the elephant
+              if(tk==='rhino'){ tgt.target=P; tgt.targetKind='prey'; tgt.aggroTimer=RHINO.AGGRO_TIME; }
+              else if(tk==='gorilla' && tgt.target!==P){ tgt.state='engaging'; tgt.phase='rush'; tgt.target=P; tgt.swung=false; tgt.perchTree=null; tgt.perchPos=null; }
+              else if(tk==='lion'){ alertPrideThreat(P, 'elephant', P.pos); }
               if(tgt.health<=0) showKillfeed('🐘 The elephant tramples a '+tk); }
             P.smackCd=ELE.SMACK_CD;
           }
@@ -2539,7 +2576,7 @@ function makeGorilla(x, z){
     flashTimer: 0,
     _detR: 0, _lastSpeed: 0,
   };
-  gorillaMeshes.push(G);
+  setHitbox(G); gorillaMeshes.push(G);
   return G;
 }
 
@@ -2784,6 +2821,7 @@ function updateGorillas(dt){
     // fights both). `lion`/`ld` stay for the night wake check further down.
     let foe=lion, fd=ld;
     rhinoMeshes.forEach(R=>{ if(R.health<=0) return; const d = R.pos.distanceTo(gpos); if(d < fd){ fd = d; foe = R; } });
+    preyMeshes.forEach(P=>{ if(P.species!=='elephant' || P.health<=0) return; const d = P.pos.distanceTo(gpos); if(d < fd){ fd = d; foe = P; } });  // a rampaging elephant is a foe too
 
     // The pride bites back: lions pressed against a GROUNDED gorilla wear it down
     // (a perched/sleeping gorilla is up its tree, out of reach). Its swipes punish
@@ -2858,7 +2896,7 @@ function updateGorillas(dt){
     if(G.state === 'engaging'){
       const tgt = G.target;
       // target down/gone, or it broke the leash → stand down, back to mood state
-      if(!tgt || tgt.health <= 0 || !(lionMeshes.includes(tgt) || rhinoMeshes.includes(tgt))
+      if(!tgt || tgt.health <= 0 || !(lionMeshes.includes(tgt) || rhinoMeshes.includes(tgt) || preyMeshes.includes(tgt))
          || tgt.pos.distanceTo(gpos) > GOR.LION_DETECT*1.7){
         G.target = null; G.swung = false; G.phase = 'rush';
         G.state = isNight ? 'perched' : 'roaming';
@@ -2891,7 +2929,8 @@ function updateGorillas(dt){
           if(rhinoMeshes.includes(tgt)){                 // hit a rhino → it turns on the gorilla
             tgt.target = G; tgt.targetKind = 'gorilla'; tgt.aggroTimer = RHINO.AGGRO_TIME;
             showKillfeed('🦍 Gorilla swiped the rhino');
-          } else { showKillfeed('🦍 Gorilla swiped a lion'); }
+          } else if(lionMeshes.includes(tgt)){ alertPrideThreat(G, 'gorilla', G.pos); showKillfeed('🦍 Gorilla swiped a lion'); }
+          else { showKillfeed('🦍 Gorilla swiped the '+(tgt.label||'beast')); }   // e.g. the elephant (it fights back on its own)
           if(td < 18){ shakeTime = Math.max(shakeTime,0.16); shakeAmt = 0.004; }
         }
         playSound('throw');
@@ -3084,7 +3123,7 @@ function makeRhino(x, z){
     wanderTimer:rand(2,5), wanderPause:false, legPhase:Math.random()*Math.PI*2,
   };
   group.rotation.y = R.heading;
-  rhinoMeshes.push(R);
+  setHitbox(R); rhinoMeshes.push(R);
   return R;
 }
 
@@ -3143,6 +3182,7 @@ function rhinoTargetValid(R){
   if(R.targetKind==='player')  return !playerOffGround();                   // treed/grappling/up-a-wall → unreachable
   if(R.targetKind==='lion')    return lionMeshes.includes(t) && t.health>0;
   if(R.targetKind==='gorilla') return gorillaMeshes.includes(t) && t.health>0 && t.state!=='perched' && t.state!=='sleeping';
+  if(R.targetKind==='prey')    return preyMeshes.includes(t) && t.health>0;   // e.g. a rampaging elephant
   return false;
 }
 
@@ -3161,7 +3201,8 @@ function rhinoSmack(R){
     showKillfeed('🦏 The rhino gores you!');
   } else if(t){
     t.health -= RHINO.GORE_DMG; t.flashTimer=0.25; t.stunTimer=Math.max(t.stunTimer||0, RHINO.GORE_STUN);
-    if(t.health<=0) showKillfeed('🦏 The rhino gored a '+(R.targetKind==='gorilla'?'gorilla':'lion')+'!');
+    if(R.targetKind==='lion') alertPrideThreat(R, 'rhino', R.pos);   // gored a lion → the pride mobs it
+    if(t.health<=0) showKillfeed('🦏 The rhino gored a '+(R.targetKind==='prey'?(t.label||'beast'):R.targetKind)+'!');
   }
 }
 
@@ -3529,6 +3570,22 @@ function throwSpear(){
   playSound('throw');
 }
 
+// Measure an animal's hit cylinder from its actual mesh (so thrown weapons hit the
+// WHOLE body, not a tiny sphere at its feet). Called once per spawn.
+function setHitbox(o){
+  const b = new THREE.Box3().setFromObject(o.mesh);
+  const rx = Math.max(b.max.x-o.pos.x, o.pos.x-b.min.x);
+  const rz = Math.max(b.max.z-o.pos.z, o.pos.z-b.min.z);
+  o.hitR  = Math.max(1.1, Math.max(rx,rz) + 0.25);   // horizontal reach from centre
+  o.hitTop = Math.max(1.4, b.max.y - o.pos.y) + 0.4; // body height above the feet
+}
+// Does a thrown projectile intersect the target's body cylinder?
+function projHit(r, o){
+  const dx = r.mesh.position.x - o.pos.x, dz = r.mesh.position.z - o.pos.z;
+  const R = o.hitR || 1.7;
+  return (dx*dx + dz*dz) < R*R && r.mesh.position.y < o.pos.y + (o.hitTop || 3);
+}
+
 function updateThrownRocks(dt){
   for(let i=thrownRocks.length-1;i>=0;i--){
     const r = thrownRocks[i];
@@ -3540,8 +3597,9 @@ function updateThrownRocks(dt){
     const m = r.mult || 1, ic = r.spear ? '🗡️' : '🪨';   // rocks use m; spear dmg is sized per target
     let hit = false;
     lionMeshes.forEach(L=>{
-      if(r.mesh.position.distanceTo(L.pos) < 1.7){   // wider radius so fast throws don't skip past
+      if(projHit(r, L)){                              // whole-body hit cylinder
         L.health -= r.spear ? L.maxHealth/5 : m;     // spear: exactly 5 to down any lion
+        alertPrideThreat(player, 'player', player.pos);   // hit a lion → the whole pride turns on you
         L.stunTimer = 5;
         L.state = 'stunned';
         L.flashTimer = 0.25;
@@ -3552,7 +3610,7 @@ function updateThrownRocks(dt){
     // Thrown weapons also wound + STUN prey (ranged hunting) and scatter the herd.
     // A spear one-shots most animals; the kudu takes two, the tall tough giraffe three; rocks wound.
     if(!hit) preyMeshes.forEach(P=>{
-      if(r.mesh.position.distanceTo(P.pos) < 1.7){
+      if(projHit(r, P)){
         P.health -= r.spear ? (P.species==='kudu' ? P.maxHealth/2 : P.species==='giraffe' ? P.maxHealth/3 : P.species==='elephant' ? P.maxHealth/15 : P.maxHealth) : 9*m;
         P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
         if(P.species==='elephant') P.aggroT = ELE.RAGE_TIME;   // hitting it enrages it → it charges you
@@ -3563,7 +3621,7 @@ function updateThrownRocks(dt){
     // They chip the gorilla too — far tankier than prey (skip a perched/sleeping
     // one, up its tree). A spear takes ten throws to down it.
     if(!hit) gorillaMeshes.forEach(G=>{
-      if(G.state!=='perched' && G.state!=='sleeping' && r.mesh.position.distanceTo(G.pos) < 2.0){
+      if(G.state!=='perched' && G.state!=='sleeping' && projHit(r, G)){
         G.health -= r.spear ? G.maxHealth/10 : 8*m;   // spear: 10 to down the gorilla
         G.flashTimer = 0.25;
         G.stunTimer = Math.max(G.stunTimer||0, r.spear ? GOR.SPEAR_STUN : GOR.ROCK_STUN);  // daze the brute
@@ -3573,7 +3631,7 @@ function updateThrownRocks(dt){
     // The rhino: tanky, takes many throws — and being hit reveals you exactly, so
     // it gets dazed, then makes one committed charge at where you were.
     if(!hit) rhinoMeshes.forEach(R=>{
-      if(r.mesh.position.distanceTo(R.pos) < 2.2){
+      if(projHit(r, R)){
         R.health -= r.spear ? RHINO.SPEAR_DMG : RHINO.ROCK_DMG;
         R.flashTimer = 0.25;
         R.stunTimer = Math.max(R.stunTimer||0, r.spear ? RHINO.SPEAR_STUN : RHINO.ROCK_STUN);
