@@ -1,5 +1,8 @@
 # Lion Survival — Project Context
 
+> **📖 Animals & rules quick reference → [`dossiers/bestiary.md`](dossiers/bestiary.md)** — plain-English
+> summary of every animal, hiding/stealth, spawns, and who-fights-whom. Read that first for gameplay.
+
 Single self-contained `index.html`. Three.js **r128** from CDN. **Zero image assets** — all
 geometry and textures are procedural (CanvasTexture / shaders). No build step, no npm.
 
