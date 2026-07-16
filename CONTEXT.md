@@ -229,6 +229,17 @@ currency this cut).
   as a tap-to-equip `+`. `equipFromCard` refuses (via `flashShopMsg`) rather than clobbering when full;
   `unlockItem` auto-equips only into a genuinely free slot. `reconcileFireTorch()` (called from
   `equipToSlot`/`unequipItem`) extinguishes + disposes the Fire Torch FX the moment it's unequipped.
+- **Basic-tool abilities (2026-07-16b):** five more abilities that are granted, material-free, cooldown-gated
+  versions of the hotbar tools — `kit_spear`, `kit_wall` (Palisade Wall), `kit_grapple`, `kit_axe` (Hand Axe:
+  chop tree / heavy melee via `nearestAnimalInFront`+`dealKitMelee`, reusing each animal's wound+retaliation
+  hooks), `kit_fire` (bigger/longer campfire). Each **reuses an existing mesh + its disposal path** so nothing
+  new leaks: spear→`thrownRocks[]`, campfire→`campfires[]`, wall→`wallMeshes`/`wallAABBs` (+ an 18 s despawn
+  timer in `kitWalls[]` that frees via `removeWallAt`), grapple→the grapple line. The only genuinely new FX is
+  the transient axe-swing mesh (`kitSwings[]`, self-disposes ~0.18 s). `clearKitFX()` (called from `resetGame`
+  + `triggerGameOver`) disposes swings and drops kit-wall timer refs; the wall/campfire/spear meshes are freed
+  by `resetGame`'s existing world teardown. Verified: place-everything-then-reset → **0** wall/campfire/spear/
+  swing orphans; wall despawn keeps `wallMeshes`/`wallAABBs` lockstep; a wall removed out from under its timer
+  (chop/smash) is handled without error. The tool hotbar (slots 1–6) is untouched.
 - **Controls:** `[Z]` `useActiveAbility`, `[R]` `cycleActiveAbility`, `[Tab]` open loadout. The keydown/
   mousedown handlers early-return while `uiPaused` (only Tab/Esc close). All wired in `registerControls`.
 - **Effects via small hooks** (grep `EQUIP`): `updateAbilities(dt)` (called first in `animate`) decays

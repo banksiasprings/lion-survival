@@ -63,6 +63,13 @@ Unlocks are **free** (no currency yet) and — like the equipped loadout — **p
 - 💨 **Adrenaline** — refill stamina + run 40 % faster for 5 s, 25 s cooldown.
 - 🌀 **Smoke Screen** — near-invisible (visMul ×0.15) for 6 s, 30 s cooldown.
 - 🦅 **Eagle Eye** — minimap zooms to the whole map and reveals **every** animal for 8 s, 20 s cooldown.
+- 🗡️ **Spear** — hurl a flint spear (heavy ranged damage), no crafting needed, 3 s cooldown.
+- 🪵 **Palisade Wall** — drop a wooden barrier in front of you for cover; it rots away after ~18 s, 8 s cooldown.
+- 🪝 **Grappling Hook** — reel up into a climbable tree or yank toward any surface in range (same as the tool grapple).
+- 🪓 **Hand Axe** — swing: chop a nearby tree for wood, or land a **heavy melee** blow (42) on the animal in front, 1.2 s cooldown.
+- 🏕️ **Campfire** — build a wide, long-lived (~120 s) ring of light that **lions flee**, 12 s cooldown.
+
+*(These five are granted, material-free versions of the hotbar tools — the tool hotbar itself is unchanged.)*
 
 **Accessories** (passive while equipped):
 - 🧥 **Camo Cloak** — 30 % harder to see (visMul ×0.7).

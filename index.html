@@ -288,6 +288,17 @@ const SHOP_ITEMS = [
     desc:'Kick up dust and vanish — near-invisible to predators for 6s. 30s cooldown.', cd:30 },
   { id:'eagle_eye',    type:'ability', icon:'🦅', name:'Eagle Eye',
     desc:'Scan the whole savanna: every animal shows on the minimap for 8s. 20s cooldown.', cd:20 },
+  // ---- Basic survival tools, granted as abilities (material-free, cooldown-gated) ----
+  { id:'kit_spear',   type:'ability', icon:'🗡️', name:'Spear',
+    desc:'Hurl a flint spear — heavy damage at range, no crafting needed. 3s cooldown.', cd:3 },
+  { id:'kit_wall',    type:'ability', icon:'🪵', name:'Palisade Wall',
+    desc:'Drop a wooden barrier in front of you for cover. It rots away after ~18s. 8s cooldown.', cd:8 },
+  { id:'kit_grapple', type:'ability', icon:'🪝', name:'Grappling Hook',
+    desc:'Launch a hook — reel up into a climbable tree, or yank yourself to any surface in range.', cd:0 },
+  { id:'kit_axe',     type:'ability', icon:'🪓', name:'Hand Axe',
+    desc:'Swing: chop a nearby tree for wood, or land a heavy melee blow on an animal in front. 1.2s cooldown.', cd:1.2 },
+  { id:'kit_fire',    type:'ability', icon:'🏕️', name:'Campfire',
+    desc:'Build a campfire — a wide, long-lived ring of light and warmth that lions flee. 12s cooldown.', cd:12 },
   // ---- Accessories (passive while equipped; 2 slots) ----
   { id:'camo_cloak',    type:'accessory', icon:'🧥', name:'Camo Cloak',
     desc:'Muted hides break your outline — 30% harder for anything to see you.', starter:true },
@@ -305,7 +316,9 @@ const ABILITY_SLOTS = 5, ACCESSORY_SLOTS = 2;
 let progress = { unlocked:new Set(), abilities:[null,null,null,null,null], accessories:[null,null], activeAbility:0 };
 let abilityCd = {};                 // id -> seconds of cooldown remaining
 let buffs = { adrenaline:0, smoke:0, eagleEye:0 };   // seconds remaining on timed ability effects
-let abilityFX = { fireTorch:null }; // { group, light, flame, on } — the one disposable Three object
+let abilityFX = { fireTorch:null }; // { group, light, flame, on } — a disposable Three object
+let kitWalls  = [];                 // { mesh, timer } short-lived Palisade Wall chunks (mesh also lives in wallMeshes)
+let kitSwings = [];                 // { mesh, t } transient Hand Axe swing arcs — self-dispose
 let EQUIP = { speedMul:1, visMul:1, healthRegenMul:1, hungerDrainMul:1 };  // per-frame passive modifiers
 let uiPaused = false;               // true while the in-game loadout overlay is open (sim frozen)
 let shopContext = 'menu';           // 'menu' | 'game' — where Close returns to
@@ -3926,9 +3939,13 @@ function useActiveAbility(){
   const id = progress.abilities[progress.activeAbility];
   if(!id){ showKillfeed('No ability in that slot — [R] to switch'); return; }
   const A = SHOP_BY_ID[id];
-  if(id==='fire_torch'){ toggleFireTorch(); return; }   // toggle, no cooldown
+  // Self-managed abilities bypass the generic cooldown gate:
+  if(id==='fire_torch'){ toggleFireTorch(); return; }                       // toggle
+  if(id==='kit_grapple'){ fireGrapple(); tickAbilityBar(); return; }        // fireGrapple owns its _grappleCd
   if((abilityCd[id]||0) > 0){ showKillfeed(A.icon+' '+A.name+' — '+Math.ceil(abilityCd[id])+'s'); return; }
-  // One-shot, cooldown-gated effects:
+  // One-shot, cooldown-gated effects. `did` gates the cooldown (a failed place
+  // doesn't lock you out); `quiet` means the action played its own sound.
+  let did = true, quiet = false;
   if(id==='healing_herb'){
     player.health = Math.min(PLAYER.maxHealth, player.health + 40);
     showKillfeed('🌿 Healing herb — +40 health');
@@ -3941,9 +3958,15 @@ function useActiveAbility(){
   } else if(id==='eagle_eye'){
     buffs.eagleEye = 8;
     showKillfeed('🦅 Eagle eye — the savanna revealed');
+  } else if(id==='kit_spear'){ did = kitThrowSpear();    quiet = true; }
+  else if(id==='kit_wall'){    did = kitPlaceWall();     quiet = true; }
+  else if(id==='kit_fire'){    did = kitPlaceCampfire(); quiet = true; }
+  else if(id==='kit_axe'){     did = kitAxe();           quiet = true; }
+  else { did = false; }
+  if(did){
+    abilityCd[id] = A.cd || 0;
+    if(!quiet) playSound('collect');
   }
-  abilityCd[id] = A.cd || 0;
-  playSound('collect');
   tickAbilityBar();
 }
 // [R] — switch the active ability to the next equipped ability slot.
@@ -3982,7 +4005,129 @@ function clearFireTorch(){
   tickAbilityBar();
 }
 
-// ---- Per-frame ability tick: cooldowns, buff timers, EQUIP mods, torch flicker ----
+// ---- Basic-tool abilities: granted, material-free versions of the hotbar tools ----
+// Each reuses the existing meshes/physics so disposal rides the SAME proven paths:
+//  • Spear    → thrownRocks[] (freed in updateThrownRocks on hit/expire + resetGame)
+//  • Campfire → campfires[] (freed on burnout in updateCampfires + resetGame)
+//  • Wall     → wallMeshes/wallAABBs (freed via removeWallAt + resetGame) + a despawn timer
+//  • Grapple  → the grapple line (freed on release/arrive + resetGame)
+//  • Axe      → a transient swing mesh in kitSwings[] (self-disposes; cleared on reset/game-over)
+function kitThrowSpear(){
+  const dir  = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation);
+  const mesh = buildSpearMesh();
+  mesh.position.copy(camera.position);
+  mesh.lookAt(mesh.position.clone().add(dir));         // tip leads the throw
+  scene.add(mesh);
+  thrownRocks.push({ mesh, vel:dir.clone().multiplyScalar(52), dist:0, mult:5, spear:true });
+  playSound('throw');
+  return true;
+}
+function kitPlaceWall(){
+  if(wallMeshes.length >= 30){ showKillfeed('🪵 Too many walls up already'); return false; }
+  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  const pos = player.pos.clone().addScaledVector(fwd, 2.5);
+  pos.y = terrainY(pos.x, pos.z);
+  const geo = new THREE.BoxGeometry(2.5, 2.2, 0.3);
+  const mat = new THREE.MeshLambertMaterial({color:0x9a6b45});   // fresh-cut palisade (lighter than a built wall)
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(pos.x, pos.y+1.1, pos.z);
+  mesh.rotation.y = yaw; mesh.castShadow = true; mesh.name = 'wall';
+  scene.add(mesh);
+  wallMeshes.push(mesh);
+  wallAABBs.push(new THREE.Box3().setFromObject(mesh));
+  kitWalls.push({ mesh, timer:18 });   // short-lived — rots away after ~18s
+  playSound('place');
+  return true;
+}
+function kitPlaceCampfire(){
+  // A campfire granted free — bigger & longer-lived than the wood-cost tool version.
+  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  const pos = player.pos.clone().addScaledVector(fwd, 2);
+  pos.y = terrainY(pos.x, pos.z);
+  const group = new THREE.Group(); group.position.copy(pos);
+  const logMat = new THREE.MeshLambertMaterial({color:0x5d3a1a});
+  [-0.35,0.35].forEach(ox=>{
+    const l = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.16,0.95), logMat);
+    l.position.set(ox, 0.1, 0); l.rotation.y = ox*2; group.add(l);
+  });
+  const flameMat = new THREE.MeshBasicMaterial({color:0xff6600, transparent:true, opacity:0.9});
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.34,1.05,8), flameMat);
+  flame.position.y = 0.62; group.add(flame);
+  const light = new THREE.PointLight(0xff7700, 3.2, 17); light.position.y = 0.7; group.add(light);
+  group.name = 'campfire'; scene.add(group);
+  campfires.push({ mesh:group, pos:pos.clone(), timer:120, flame, light, phase:0 });   // lions flee it (fleeing_fire)
+  playSound('fire');
+  return true;
+}
+// Nearest animal within a short frontal reach — for the axe's heavy melee.
+function nearestAnimalInFront(range, minDot){
+  const fwd = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation); fwd.y=0;
+  if(fwd.lengthSq()<1e-4) return null; fwd.normalize();
+  let best=null, bd=range;
+  const scan=(list, kind, skip)=>list.forEach(o=>{
+    if(skip && skip(o)) return;
+    const dx=o.pos.x-player.pos.x, dz=o.pos.z-player.pos.z;
+    const d=Math.hypot(dx,dz); if(d>bd) return;
+    if((dx/(d||1))*fwd.x + (dz/(d||1))*fwd.z < minDot) return;   // must be in front
+    bd=d; best={kind, o};
+  });
+  scan(lionMeshes,'lion');
+  scan(preyMeshes,'prey');
+  scan(gorillaMeshes,'gorilla', G=>G.state==='perched'||G.state==='sleeping');
+  scan(rhinoMeshes,'rhino');
+  return best;
+}
+// Apply a heavy melee blow, reusing each animal's proper wound + retaliation hooks.
+function dealKitMelee(hit, dmg){
+  const o = hit.o;
+  o.flashTimer = 0.25;
+  if(hit.kind==='lion'){
+    o.health -= dmg; o.stunTimer = 3; o.state='stunned';
+    alertPrideThreat(player, 'player', player.pos);         // the whole pride turns on you
+    showKillfeed(o.health<=0?'🪓 Axe kill — lion down!':'🪓 Axe cracks the lion!');
+  } else if(hit.kind==='prey'){
+    o.health -= dmg; o.stunTimer = 2; o.state='flee'; o.alertTimer = 3;
+    if(o.species==='elephant') o.aggroT = ELE.RAGE_TIME;    // enrages the bull
+    showKillfeed(o.health<=0?'🪓 Axe kill — '+o.label+'!':'🪓 Axe hits the '+o.label);
+  } else if(hit.kind==='gorilla'){
+    o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, GOR.ROCK_STUN);
+    showKillfeed('🪓 Axe staggers the gorilla!');
+  } else if(hit.kind==='rhino'){
+    o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, RHINO.ROCK_STUN);
+    o.target = player; o.targetKind = 'player'; o.aggroTimer = RHINO.AGGRO_TIME;   // it wheels on you
+    showKillfeed('🪓 Axe bites the rhino — it wheels on you!');
+  }
+}
+function kitAxe(){
+  spawnAxeSwing();
+  // Priority 1: chop the nearest ready tree for wood (quicker than the 30s hand-collect).
+  let tree=null, td=4.2;
+  treeObjects.forEach(t=>{ const d=t.pos.distanceTo(player.pos); if(d<td && (t.cooldown||0)<=0){ td=d; tree=t; } });
+  if(tree){
+    tree.cooldown = 8; woodCount++; updateWoodHUD();
+    showKillfeed('🪓 Chopped wood ('+woodCount+')'); playSound('collect');
+    return true;
+  }
+  // Priority 2: heavy melee on an animal in front.
+  const target = nearestAnimalInFront(3.4, 0.30);
+  if(target){
+    dealKitMelee(target, 42);
+    shakeTime = Math.max(shakeTime, 0.12); shakeAmt = 0.004; playSound('throw');
+  } else {
+    playSound('throw');   // whiff — swing still animates
+  }
+  return true;
+}
+function spawnAxeSwing(){
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(0.55, 0.09, 0.13),
+    new THREE.MeshBasicMaterial({color:0xdadce4, transparent:true, opacity:0.85})
+  );
+  scene.add(mesh);
+  kitSwings.push({ mesh, t:0.18, life:0.18 });
+}
+
+// ---- Per-frame ability tick: cooldowns, buff timers, EQUIP mods, torch flicker, kit FX ----
 function updateAbilities(dt){
   for(const k in abilityCd){ if(abilityCd[k]>0) abilityCd[k] = Math.max(0, abilityCd[k]-dt); }
   if(buffs.adrenaline>0) buffs.adrenaline = Math.max(0, buffs.adrenaline-dt);
@@ -4001,7 +4146,34 @@ function updateAbilities(dt){
     ft.flame.scale.y = 0.85 + Math.sin(ft.phase)*0.3;
     ft.light.intensity = 2.6 + Math.sin(ft.phase*2.1)*0.5;
   }
+
+  // Palisade walls rot away, then dispose through the shared wall path.
+  for(let i=kitWalls.length-1;i>=0;i--){
+    const w = kitWalls[i]; w.timer -= dt;
+    if(w.timer <= 0){
+      const idx = wallMeshes.indexOf(w.mesh);
+      if(idx >= 0) removeWallAt(idx);   // may already be gone (chopped/smashed) → indexOf -1, just drop it
+      kitWalls.splice(i,1);
+    }
+  }
+  // Transient axe swing arcs — a brief pale flash in front of the eye, then freed.
+  for(let i=kitSwings.length-1;i>=0;i--){
+    const s = kitSwings[i]; s.t -= dt;
+    if(s.t <= 0){ killObj(s.mesh); kitSwings.splice(i,1); continue; }
+    const fwd = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation);
+    s.mesh.position.copy(camera.position).addScaledVector(fwd, 1.0); s.mesh.position.y -= 0.2;
+    s.mesh.lookAt(camera.position);
+    s.mesh.material.opacity = 0.85 * (s.t / s.life);
+  }
+
   tickAbilityBar();
+}
+// Dispose every transient kit object (axe swings) + drop wall-timer refs. The wall
+// meshes and campfires themselves are freed by resetGame's world teardown.
+function clearKitFX(){
+  [...kitSwings].forEach(s=>killObj(s.mesh));
+  kitSwings.length = 0;
+  kitWalls.length  = 0;   // meshes disposed with wallMeshes in resetGame
 }
 
 // ---- In-game ability bar rendering ----
@@ -4616,6 +4788,7 @@ function triggerGameOver(){
   isPointerLocked = false;
   document.getElementById('abilitybar').style.display='none';
   clearFireTorch();   // dispose the Fire Torch FX so no light lingers over the menu
+  clearKitFX();       // dispose transient axe swings (walls/campfires clear on next reset, like all world objects)
 
   // Save to leaderboard
   const entry = { time: Math.floor(elapsed), days: dn.day, kills };
@@ -4665,6 +4838,7 @@ function resetGame(){
   if(grapple.line){ killObj(grapple.line); }
   if(torchState.light){ scene.remove(torchState.light); }   // light: nothing to dispose
   clearFireTorch();                                          // dispose any lit Fire Torch ability FX (light + flame mesh)
+  clearKitFX();                                              // dispose transient axe swings + drop kit-wall timer refs
 
   lionMeshes.length = 0;
   wallMeshes.length = 0;
