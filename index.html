@@ -51,6 +51,77 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
 #overlay button:hover{background:#c0392b}
 #leaderboard{font-size:13px;text-align:center;opacity:0.8;line-height:1.8}
 #gameover-stats{font-size:15px;text-align:center;line-height:1.9;color:#eee}
+#shop-btn{background:#8e44ad}
+#shop-btn:hover{background:#7d3c98}
+
+/* ---- In-game ability toolbar (5 abilities + 2 accessories) ---- */
+#abilitybar{position:fixed;left:16px;bottom:16px;display:none;flex-direction:column;gap:6px;
+  z-index:11;pointer-events:none;align-items:flex-start}
+.ab-slot{width:46px;height:46px;border:2px solid rgba(255,255,255,0.25);border-radius:9px;
+  background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;
+  position:relative;font-size:22px;line-height:1}
+.ab-slot.acc{border-color:rgba(120,180,255,0.4)}
+.ab-slot.active{border-color:#f1c40f;box-shadow:0 0 10px #f1c40f88;background:rgba(255,200,0,0.16)}
+.ab-slot .ab-key{position:absolute;top:-1px;left:3px;font-size:8px;opacity:0.55}
+.ab-slot.empty{opacity:0.4;font-size:15px}
+.ab-slot .ab-cd{position:absolute;inset:0;border-radius:9px;background:rgba(0,0,0,0.64);
+  display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff}
+.ab-slot .ab-on{position:absolute;bottom:-2px;right:-2px;font-size:10px}
+.ab-div{height:5px}
+#abilitybar .ab-hint{font-size:9px;opacity:0.5;color:#fff;text-shadow:0 1px 2px #000;
+  max-width:150px;line-height:1.4;margin-top:2px}
+
+/* ---- Shop / Loadout screen ---- */
+#shop{position:fixed;inset:0;background:rgba(6,10,6,0.94);z-index:120;display:none;
+  align-items:center;justify-content:center;font-family:'Courier New',monospace;color:#eee}
+#shop-panel{width:min(920px,94vw);max-height:92vh;overflow-y:auto;
+  background:rgba(12,18,12,0.97);border:1px solid rgba(241,196,15,0.35);
+  border-radius:14px;padding:22px 24px}
+#shop-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+#shop-head h2{color:#f1c40f;font-size:24px}
+#shop-close{background:#e74c3c;color:#fff;border:none;border-radius:8px;padding:8px 16px;
+  font-size:16px;cursor:pointer;font-family:inherit}
+#shop-close:hover{background:#c0392b}
+#shop-sub{font-size:12px;opacity:0.6;margin-bottom:14px}
+#loadout-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:14px;
+  background:rgba(0,0,0,0.3);border-radius:10px;margin-bottom:18px}
+.lo-lab{font-size:10px;letter-spacing:1px;opacity:0.5;width:100%;margin-bottom:-4px}
+.lo-slot{width:58px;height:58px;border:2px solid rgba(255,255,255,0.25);border-radius:10px;
+  background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;
+  font-size:26px;cursor:pointer;position:relative}
+.lo-slot:hover{border-color:rgba(255,255,255,0.55)}
+.lo-slot.acc{border-color:rgba(120,180,255,0.45)}
+.lo-slot.active{border-color:#f1c40f;box-shadow:0 0 10px #f1c40f66}
+.lo-slot .lo-n{position:absolute;top:2px;left:5px;font-size:8px;opacity:0.5}
+.lo-slot.empty{color:#666;font-size:22px}
+.lo-div{width:1px;align-self:stretch;background:rgba(255,255,255,0.15);margin:0 4px}
+#shop-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.sc-card{border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:12px;
+  background:rgba(0,0,0,0.3);display:flex;flex-direction:column;gap:6px}
+.sc-card.equipped{border-color:#f1c40f88;background:rgba(241,196,15,0.07)}
+.sc-top{display:flex;align-items:center;gap:8px}
+.sc-ic{font-size:26px}
+.sc-nm{font-weight:bold;font-size:14px}
+.sc-ty{font-size:9px;letter-spacing:1px;opacity:0.5;text-transform:uppercase}
+.sc-desc{font-size:11px;opacity:0.75;line-height:1.45;flex:1;min-height:32px}
+.sc-btns{display:flex;gap:6px}
+.sc-btn{border:none;border-radius:7px;padding:7px;font-size:12px;cursor:pointer;
+  font-family:inherit;font-weight:bold;flex:1}
+.sc-btn.unlock{background:#27ae60;color:#fff}
+.sc-btn.equip{background:#f1c40f;color:#222}
+.sc-btn.unequip{background:#555;color:#fff}
+.sc-btn.locked{background:#333;color:#888;cursor:default}
+#picker{position:fixed;inset:0;z-index:130;display:none;align-items:center;justify-content:center;
+  background:rgba(0,0,0,0.55)}
+#picker-box{background:#111a11;border:1px solid rgba(241,196,15,0.4);border-radius:12px;
+  padding:16px;width:min(360px,90vw);max-height:80vh;overflow-y:auto}
+#picker-box h3{color:#f1c40f;font-size:15px;margin-bottom:10px}
+.pk-item{display:flex;align-items:center;gap:10px;padding:9px;border-radius:8px;cursor:pointer;
+  border:1px solid transparent}
+.pk-item:hover{background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.15)}
+.pk-item .pk-ic{font-size:22px}
+.pk-item .pk-nm{font-size:13px}
+.pk-item .pk-d{font-size:10px;opacity:0.6}
 </style>
 </head>
 <body>
@@ -77,6 +148,7 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
     </div>
   </div>
   <div id="minimap"><canvas id="mm" width="150" height="150"></canvas></div>
+  <div id="abilitybar"></div>
 </div>
 <div id="overlay">
   <h1>🦁 LION SURVIVAL</h1>
@@ -86,12 +158,28 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
     WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hide in grass)<br>
     1/G Grapple → tree (LMB fire · RMB/Space drop · safe from lions while perched, no stamina cost) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe &nbsp;|&nbsp; 6 Spear<br>
     Q Pounce (hunt prey — ambush from grass for ×3) &nbsp;|&nbsp; E Eat kill / Collect &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; 6 + LMB Throw Spear (2🪵+1🪨, ×5 dmg) &nbsp;|&nbsp; T Craft Torch &nbsp;|&nbsp; LMB+Axe Chop Wall<br>
+    <span style="color:#c39bd3">🛒 Kit: Z Use ability &nbsp;|&nbsp; R Switch ability &nbsp;|&nbsp; Tab Loadout (pauses) &nbsp;— unlock &amp; equip in the SHOP</span><br>
     <span style="opacity:0.8">Watch your 🍖 hunger — eat prey you hunt or scavenge lion kills (they'll fight you for it).</span>
   </div>
   <button id="start-btn">▶ START GAME</button>
+  <button id="shop-btn">🛒 SHOP &amp; LOADOUT</button>
   <div id="gameover-stats"></div>
   <div id="leaderboard"></div>
 </div>
+
+<!-- Shop / Loadout screen (opened from the menu, or in-game with [Tab]) -->
+<div id="shop">
+  <div id="shop-panel">
+    <div id="shop-head">
+      <h2>🛒 Survival Kit</h2>
+      <button id="shop-close">✕ Close</button>
+    </div>
+    <div id="shop-sub"></div>
+    <div id="loadout-row"></div>
+    <div id="shop-grid"></div>
+  </div>
+</div>
+<div id="picker"><div id="picker-box"></div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -176,6 +264,52 @@ let dn = {
 let woodCount  = 0;
 let rockCount  = 0;  // held rocks
 let activeSlot = 1;
+
+// =====================================================================
+//  SHOP / ABILITY-ACCESSORY META-PROGRESSION
+//  A persistent kit layered ON TOP of the existing tool hotbar (which is
+//  untouched core gameplay). Abilities are activatable powers; accessories
+//  are passive gear. Unlocks + equipped loadout persist in localStorage.
+//  No currency yet — unlocking is free for this cut.
+// =====================================================================
+// Catalogue. `starter:true` items are unlocked (and pre-equipped) on a fresh
+// save. Effects are applied through small hooks in updatePlayer/updateStealth/
+// updateHealth/updateHunger and the fire-torch FX; nothing here mutates the
+// world beyond one disposable Three.js light (the Fire Torch), freed on reset.
+const SHOP_ITEMS = [
+  // ---- Abilities (activated with [Z]; one is 'active', switch with [R]) ----
+  { id:'fire_torch',   type:'ability', icon:'🔥', name:'Fire Torch',
+    desc:'Toggle a blazing torch that lights the dark around you. Wards nothing — the flame is a beacon lions can spot.', starter:true },
+  { id:'healing_herb', type:'ability', icon:'🌿', name:'Healing Herb',
+    desc:'Chew a medicinal herb to restore 40 health. 20s between uses.', starter:true, cd:20 },
+  { id:'adrenaline',   type:'ability', icon:'💨', name:'Adrenaline',
+    desc:'Surge of energy: refill stamina and run 40% faster for 5s. 25s cooldown.', cd:25 },
+  { id:'smoke_screen', type:'ability', icon:'🌀', name:'Smoke Screen',
+    desc:'Kick up dust and vanish — near-invisible to predators for 6s. 30s cooldown.', cd:30 },
+  { id:'eagle_eye',    type:'ability', icon:'🦅', name:'Eagle Eye',
+    desc:'Scan the whole savanna: every animal shows on the minimap for 8s. 20s cooldown.', cd:20 },
+  // ---- Accessories (passive while equipped; 2 slots) ----
+  { id:'camo_cloak',    type:'accessory', icon:'🧥', name:'Camo Cloak',
+    desc:'Muted hides break your outline — 30% harder for anything to see you.', starter:true },
+  { id:'swift_boots',   type:'accessory', icon:'👟', name:'Swift Boots',
+    desc:'Light footwear: 15% faster on foot, walking and sprinting.' },
+  { id:'bone_talisman', type:'accessory', icon:'🦴', name:'Bone Talisman',
+    desc:'A survivor\'s charm — you recover health more than twice as fast.' },
+  { id:'forager_satchel', type:'accessory', icon:'🎒', name:'Forager\'s Satchel',
+    desc:'Rationing pouch: hunger drains 40% slower.' },
+];
+const SHOP_BY_ID = {}; SHOP_ITEMS.forEach(it=>SHOP_BY_ID[it.id]=it);
+const ABILITY_SLOTS = 5, ACCESSORY_SLOTS = 2;
+
+// Runtime kit state (loaded/saved by loadProgress/saveProgress).
+let progress = { unlocked:new Set(), abilities:[null,null,null,null,null], accessories:[null,null], activeAbility:0 };
+let abilityCd = {};                 // id -> seconds of cooldown remaining
+let buffs = { adrenaline:0, smoke:0, eagleEye:0 };   // seconds remaining on timed ability effects
+let abilityFX = { fireTorch:null }; // { group, light, flame, on } — the one disposable Three object
+let EQUIP = { speedMul:1, visMul:1, healthRegenMul:1, hungerDrainMul:1 };  // per-frame passive modifiers
+let uiPaused = false;               // true while the in-game loadout overlay is open (sim frozen)
+let shopContext = 'menu';           // 'menu' | 'game' — where Close returns to
+let pickerSlot = null;              // {kind:'ability'|'accessory', index}
 
 // Audio
 let audioCtx = null;
@@ -1064,8 +1198,16 @@ function initPlayer(){
 function registerControls(){
   document.addEventListener('keydown', e=>{
     if(gameState!=='playing') return;
+    // Loadout overlay open: only Tab / Escape (close it) get through.
+    if(uiPaused){
+      if(e.code==='Tab' || e.code==='Escape'){ e.preventDefault(); closeShop(); }
+      return;
+    }
     keys[e.code] = true;
+    if(e.code==='Tab'){ e.preventDefault(); openShop('game'); return; }   // open kit loadout (pauses)
     if(player.stunTimer > 0) return;   // dazed by a gorilla tree-grab — no actions
+    if(e.code==='KeyZ') useActiveAbility();      // kit: use the active ability
+    if(e.code==='KeyR') cycleActiveAbility();    // kit: switch active ability
     if(e.code==='Digit1') setSlot(1);
     if(e.code==='Digit2') setSlot(2);
     if(e.code==='Digit3') setSlot(3);
@@ -1093,6 +1235,7 @@ function registerControls(){
 
   document.addEventListener('mousedown', e=>{
     if(gameState!=='playing') return;
+    if(uiPaused) return;   // loadout overlay open — let the DOM handle its own clicks
     if(!isPointerLocked){ renderer.domElement.requestPointerLock(); return; }
     if(player.stunTimer > 0) return;   // dazed by a gorilla tree-grab — no actions
     if(e.button===0) onLeftClick();
@@ -1170,6 +1313,7 @@ function updatePlayer(dt){
 
   let speed = (player.sprinting && player.stamina>0) ? PLAYER.sprintSpeed : PLAYER.speed;
   if(player.crouching) speed *= 0.5;   // crouch-walk: 5 u/s ≈ ⅓ of top speed, stealthy
+  speed *= EQUIP.speedMul;             // Swift Boots / Adrenaline surge (kit accessories & abilities)
 
   // Direction
   const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
@@ -1331,7 +1475,7 @@ function updateHealth(dt){
   }
   player.inDanger = veryNear;
   if(!nearLion && player.hunger > 0){   // no regen on an empty stomach
-    player.health = Math.min(PLAYER.maxHealth, player.health + PLAYER.healthRegen*dt);
+    player.health = Math.min(PLAYER.maxHealth, player.health + PLAYER.healthRegen*EQUIP.healthRegenMul*dt);
   }
   if(player.health <= 0){
     player.health = 0;
@@ -1348,7 +1492,7 @@ function updateHealth(dt){
 // starts eating into health. Refilled by eating prey carcasses (E).
 function updateHunger(dt){
   if(gameState!=='playing' || player.inTree===undefined) return;
-  let drain = PLAYER.hungerDrain;
+  let drain = PLAYER.hungerDrain * EQUIP.hungerDrainMul;   // Forager's Satchel slows this
   if(player.sprinting) drain *= PLAYER.hungerSprintMul;
   else if((player._moveSpeed||0) > 1.5) drain *= 1.3;
   player.hunger = Math.max(0, player.hunger - drain*dt);
@@ -1510,6 +1654,7 @@ function updateStealth(dt){
 
   // Up in the canopy the foliage hides you — lions quickly lose your scent/sight.
   if(player.inTree){ visMul *= 0.15; aud = Math.min(aud, 2); }
+  visMul *= EQUIP.visMul;   // Camo Cloak (passive) / Smoke Screen (ability) — kit stealth mods
 
   stealth.inGrass=inGrass; stealth.moving=moving; stealth.sprint=sprint;
   stealth.crouch=crouch; stealth.visMul=visMul; stealth.aud=aud;
@@ -1529,7 +1674,7 @@ function updateStealth(dt){
   // Rain (weather.detMul) cuts everyone's range — reflected here too.
   const act = lionActivity();
   const nominalSight = 16 * (0.4 + act*0.9);
-  player._visR = (nominalSight*visMul + (torchState.on ? 8 : 0)) * weather.detMul;
+  player._visR = (nominalSight*visMul + fireBeacon()) * weather.detMul;
   player._audR = aud * weather.detMul;
   player._hidden = wellHidden;
   window.__stealth = { vis:player._visR, aud:player._audR, hidden:wellHidden, detected };
@@ -1601,7 +1746,7 @@ function updateLions(dt){
     // VISUAL: lion's sight (sex + activity + hunger) × the player's visibility
     // multiplier (crouch / grass / stillness, from updateStealth). Torch = beacon.
     const lionSight = (L.isMale?13:16) * (0.4 + activity*0.9) * hungerAggr;
-    let visual = lionSight * stealth.visMul + (torchState.on ? 8 : 0);
+    let visual = lionSight * stealth.visMul + fireBeacon();
     // AUDIO: how far the player's noise carries (running is loud; stillness silent).
     let audio = stealth.aud;
     // SCENT: smell travels on the wind — a downwind lion detects much further.
@@ -3705,6 +3850,382 @@ function updateTorch(dt){
 }
 
 // =====================================================================
+//  SHOP / ABILITIES — persistence, activation, passive mods, FX
+// =====================================================================
+const KIT_KEY = 'lionSurvivalKit';
+
+function loadProgress(){
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(KIT_KEY)||'null'); } catch(e){ saved = null; }
+  if(saved && saved.unlocked){
+    progress.unlocked   = new Set(saved.unlocked.filter(id=>SHOP_BY_ID[id]));
+    progress.abilities  = normalizeSlots(saved.abilities,  ABILITY_SLOTS,   'ability');
+    progress.accessories= normalizeSlots(saved.accessories,ACCESSORY_SLOTS, 'accessory');
+    progress.activeAbility = Math.min(ABILITY_SLOTS-1, Math.max(0, saved.activeAbility|0));
+  } else {
+    // Fresh save: unlock + equip the starter kit.
+    progress.unlocked = new Set(SHOP_ITEMS.filter(it=>it.starter).map(it=>it.id));
+    progress.abilities   = [null,null,null,null,null];
+    progress.accessories = [null,null];
+    let ai=0, ci=0;
+    SHOP_ITEMS.filter(it=>it.starter).forEach(it=>{
+      if(it.type==='ability'   && ai<ABILITY_SLOTS)   progress.abilities[ai++]   = it.id;
+      if(it.type==='accessory' && ci<ACCESSORY_SLOTS) progress.accessories[ci++] = it.id;
+    });
+    progress.activeAbility = 0;
+    saveProgress();
+  }
+}
+// Coerce a loaded slot array to the right length and drop unknown/locked/wrong-type ids.
+function normalizeSlots(arr, len, type){
+  const out = new Array(len).fill(null);
+  if(Array.isArray(arr)){
+    for(let i=0;i<len;i++){
+      const id = arr[i];
+      if(id && SHOP_BY_ID[id] && SHOP_BY_ID[id].type===type && progress.unlocked.has(id)) out[i]=id;
+    }
+  }
+  return out;
+}
+function saveProgress(){
+  try {
+    localStorage.setItem(KIT_KEY, JSON.stringify({
+      unlocked:[...progress.unlocked], abilities:progress.abilities,
+      accessories:progress.accessories, activeAbility:progress.activeAbility
+    }));
+  } catch(e){ /* storage full / disabled — kit just won't persist */ }
+}
+
+// ---- Passive modifiers: recomputed each frame from accessories + timed buffs ----
+function computeEquipMods(){
+  const m = { speedMul:1, visMul:1, healthRegenMul:1, hungerDrainMul:1 };
+  for(const id of progress.accessories){
+    if(id==='swift_boots')     m.speedMul       *= 1.15;
+    if(id==='camo_cloak')      m.visMul         *= 0.70;
+    if(id==='bone_talisman')   m.healthRegenMul *= 2.2;
+    if(id==='forager_satchel') m.hungerDrainMul *= 0.60;
+  }
+  if(buffs.adrenaline>0) m.speedMul *= 1.4;   // Adrenaline speed surge
+  if(buffs.smoke>0)      m.visMul   *= 0.15;  // Smoke Screen near-invisibility
+  return m;
+}
+
+// True while any fire source is lit on the player — read by the lion detection
+// model as a beacon (torch tool OR the Fire Torch ability).
+function fireBeacon(){
+  return (torchState.on || (abilityFX.fireTorch && abilityFX.fireTorch.on)) ? 8 : 0;
+}
+// If the Fire Torch is lit but no longer equipped anywhere, extinguish it —
+// so unequipping it mid-run (loadout is editable any time) puts the light out.
+function reconcileFireTorch(){
+  if(abilityFX.fireTorch && !progress.abilities.includes('fire_torch')) clearFireTorch();
+}
+
+// ---- Ability activation ([Z] uses the active ability) ----
+function useActiveAbility(){
+  const id = progress.abilities[progress.activeAbility];
+  if(!id){ showKillfeed('No ability in that slot — [R] to switch'); return; }
+  const A = SHOP_BY_ID[id];
+  if(id==='fire_torch'){ toggleFireTorch(); return; }   // toggle, no cooldown
+  if((abilityCd[id]||0) > 0){ showKillfeed(A.icon+' '+A.name+' — '+Math.ceil(abilityCd[id])+'s'); return; }
+  // One-shot, cooldown-gated effects:
+  if(id==='healing_herb'){
+    player.health = Math.min(PLAYER.maxHealth, player.health + 40);
+    showKillfeed('🌿 Healing herb — +40 health');
+  } else if(id==='adrenaline'){
+    player.stamina = PLAYER.maxStamina; buffs.adrenaline = 5;
+    showKillfeed('💨 Adrenaline surge!');
+  } else if(id==='smoke_screen'){
+    buffs.smoke = 6;
+    showKillfeed('🌀 Smoke screen — you vanish');
+  } else if(id==='eagle_eye'){
+    buffs.eagleEye = 8;
+    showKillfeed('🦅 Eagle eye — the savanna revealed');
+  }
+  abilityCd[id] = A.cd || 0;
+  playSound('collect');
+  tickAbilityBar();
+}
+// [R] — switch the active ability to the next equipped ability slot.
+function cycleActiveAbility(){
+  for(let step=1; step<=ABILITY_SLOTS; step++){
+    const idx = (progress.activeAbility + step) % ABILITY_SLOTS;
+    if(progress.abilities[idx]){
+      progress.activeAbility = idx;
+      const A = SHOP_BY_ID[progress.abilities[idx]];
+      showKillfeed('▶ '+A.icon+' '+A.name);
+      saveProgress(); renderAbilityBar();
+      return;
+    }
+  }
+  showKillfeed('No abilities equipped');
+}
+
+// ---- Fire Torch FX: one PointLight + a small flame that rides with the camera ----
+function toggleFireTorch(){
+  if(abilityFX.fireTorch && abilityFX.fireTorch.on){ clearFireTorch(); return; }
+  const group = new THREE.Group();
+  const flameMat = new THREE.MeshBasicMaterial({color:0xff7a1a, transparent:true, opacity:0.9});
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.12,0.42,8), flameMat);
+  const light = new THREE.PointLight(0xffaa44, 3, 18);
+  light.position.y = 0.1;
+  group.add(flame); group.add(light);
+  group.name = 'fireTorchAbility';
+  scene.add(group);
+  abilityFX.fireTorch = { group, light, flame, on:true, phase:0 };
+  showKillfeed('🔥 Fire torch lit');
+  playSound('fire');
+  tickAbilityBar();
+}
+function clearFireTorch(){
+  if(abilityFX.fireTorch){ killObj(abilityFX.fireTorch.group); abilityFX.fireTorch = null; }
+  tickAbilityBar();
+}
+
+// ---- Per-frame ability tick: cooldowns, buff timers, EQUIP mods, torch flicker ----
+function updateAbilities(dt){
+  for(const k in abilityCd){ if(abilityCd[k]>0) abilityCd[k] = Math.max(0, abilityCd[k]-dt); }
+  if(buffs.adrenaline>0) buffs.adrenaline = Math.max(0, buffs.adrenaline-dt);
+  if(buffs.smoke>0)      buffs.smoke      = Math.max(0, buffs.smoke-dt);
+  if(buffs.eagleEye>0)   buffs.eagleEye   = Math.max(0, buffs.eagleEye-dt);
+  EQUIP = computeEquipMods();
+
+  const ft = abilityFX.fireTorch;
+  if(ft && ft.on){
+    ft.phase += dt*8;
+    // Ride just in front of and below the eye — reads as a torch held at the hip.
+    const fwd = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation);
+    ft.group.position.copy(camera.position)
+      .addScaledVector(fwd, 0.7);
+    ft.group.position.y = camera.position.y - 0.55;
+    ft.flame.scale.y = 0.85 + Math.sin(ft.phase)*0.3;
+    ft.light.intensity = 2.6 + Math.sin(ft.phase*2.1)*0.5;
+  }
+  tickAbilityBar();
+}
+
+// ---- In-game ability bar rendering ----
+let _abSlots = [];   // cached slot elements for the lightweight per-frame tick
+function renderAbilityBar(){
+  const bar = document.getElementById('abilitybar');
+  if(!bar) return;
+  bar.innerHTML=''; _abSlots=[];
+  for(let i=0;i<ABILITY_SLOTS;i++) bar.appendChild(makeAbSlot('ability', i));
+  const div = document.createElement('div'); div.className='ab-div'; bar.appendChild(div);
+  for(let i=0;i<ACCESSORY_SLOTS;i++) bar.appendChild(makeAbSlot('accessory', i));
+  const hint = document.createElement('div'); hint.className='ab-hint';
+  hint.textContent='[Z] use · [R] switch · [Tab] loadout';
+  bar.appendChild(hint);
+  tickAbilityBar();
+}
+function makeAbSlot(kind, i){
+  const el = document.createElement('div');
+  const id = (kind==='ability'?progress.abilities:progress.accessories)[i];
+  el.className = 'ab-slot'+(kind==='accessory'?' acc':'')+(id?'':' empty');
+  el.dataset.kind=kind; el.dataset.index=i;
+  el.innerHTML = `<span class="ab-key">${kind==='ability'?('A'+(i+1)):('•'+(i+1))}</span>`+
+                 `<span class="ab-ic">${id?SHOP_BY_ID[id].icon:'+'}</span>`;
+  _abSlots.push(el);
+  return el;
+}
+// Lightweight per-frame refresh — active ring, cooldown counters, torch-lit dot.
+function tickAbilityBar(){
+  for(const el of _abSlots){
+    const kind=el.dataset.kind, i=+el.dataset.index;
+    const id=(kind==='ability'?progress.abilities:progress.accessories)[i];
+    el.classList.toggle('active', kind==='ability' && i===progress.activeAbility && !!id);
+    // clear transient overlays
+    const old=el.querySelector('.ab-cd'); if(old) old.remove();
+    const oldOn=el.querySelector('.ab-on'); if(oldOn) oldOn.remove();
+    if(!id) continue;
+    if(id==='fire_torch' && abilityFX.fireTorch && abilityFX.fireTorch.on){
+      const on=document.createElement('span'); on.className='ab-on'; on.textContent='🟢'; el.appendChild(on);
+    }
+    const cd=abilityCd[id]||0;
+    if(cd>0){ const c=document.createElement('span'); c.className='ab-cd'; c.textContent=Math.ceil(cd); el.appendChild(c); }
+  }
+}
+
+// ---- Shop / Loadout screen ----
+function openShop(context){
+  shopContext = context;
+  if(context==='game'){
+    uiPaused = true;
+    if(document.pointerLockElement) document.exitPointerLock();
+    isPointerLocked = false;
+  } else {
+    document.getElementById('overlay').style.display='none';
+  }
+  const sub = document.getElementById('shop-sub');
+  sub.style.color = '';
+  sub.textContent = context==='game'
+    ? 'Paused. Equip up to 5 abilities + 2 accessories (all optional), then Close to return to the hunt.'
+    : 'Unlock abilities & accessories (free), then equip any you like — slots are optional. Your loadout carries into every run.';
+  document.getElementById('shop').style.display='flex';
+  renderShop();
+}
+function closeShop(){
+  document.getElementById('picker').style.display='none';
+  document.getElementById('shop').style.display='none';
+  if(shopContext==='game'){
+    uiPaused = false;
+    clock.getDelta();   // discard the paused interval so dt doesn't spike
+    renderer.domElement.requestPointerLock().catch(()=>{});
+  } else {
+    document.getElementById('overlay').style.display='flex';
+  }
+}
+function renderShop(){
+  // Loadout slot row
+  const row = document.getElementById('loadout-row');
+  row.innerHTML = '<div class="lo-lab">ABILITIES — up to '+ABILITY_SLOTS+' (all optional) · [Z] uses the active one</div>';
+  for(let i=0;i<ABILITY_SLOTS;i++) row.appendChild(makeLoadoutSlot('ability', i));
+  const div=document.createElement('div'); div.className='lo-div'; row.appendChild(div);
+  const lab=document.createElement('div'); lab.className='lo-lab'; lab.style.marginTop='6px';
+  lab.textContent='ACCESSORIES — up to '+ACCESSORY_SLOTS+' (optional) · passive'; row.appendChild(lab);
+  for(let i=0;i<ACCESSORY_SLOTS;i++) row.appendChild(makeLoadoutSlot('accessory', i));
+
+  // Catalogue grid
+  const grid = document.getElementById('shop-grid');
+  grid.innerHTML='';
+  for(const it of SHOP_ITEMS){
+    const unlocked = progress.unlocked.has(it.id);
+    const equipped = isEquipped(it.id);
+    const card=document.createElement('div');
+    card.className='sc-card'+(equipped?' equipped':'');
+    let btns='';
+    if(!unlocked){
+      btns=`<button class="sc-btn unlock" data-act="unlock" data-id="${it.id}">Unlock (free)</button>`;
+    } else if(equipped){
+      btns=`<button class="sc-btn unequip" data-act="unequip" data-id="${it.id}">Unequip</button>`;
+    } else {
+      btns=`<button class="sc-btn equip" data-act="equip" data-id="${it.id}">Equip</button>`;
+    }
+    card.innerHTML =
+      `<div class="sc-top"><span class="sc-ic">${it.icon}</span>`+
+      `<span><div class="sc-nm">${it.name}</div><div class="sc-ty">${it.type}${equipped?' · equipped':''}</div></span></div>`+
+      `<div class="sc-desc">${it.desc}</div><div class="sc-btns">${btns}</div>`;
+    grid.appendChild(card);
+  }
+}
+function makeLoadoutSlot(kind, i){
+  const id=(kind==='ability'?progress.abilities:progress.accessories)[i];
+  const el=document.createElement('div');
+  el.className='lo-slot'+(kind==='accessory'?' acc':'')+(id?'':' empty')+
+    ((kind==='ability'&&i===progress.activeAbility&&id)?' active':'');
+  el.dataset.kind=kind; el.dataset.index=i;
+  el.title = id ? (SHOP_BY_ID[id].name+' — tap to change or empty this slot')
+               : ('Empty '+kind+' slot — tap to equip (optional; you can leave it empty)');
+  el.innerHTML=`<span class="lo-n">${kind==='ability'?('A'+(i+1)):('•'+(i+1))}</span>${id?SHOP_BY_ID[id].icon:'+'}`;
+  return el;
+}
+function isEquipped(id){ return progress.abilities.includes(id) || progress.accessories.includes(id); }
+
+// Slot click → quick-equip picker listing unlocked items of that slot's type.
+function openPicker(kind, index){
+  pickerSlot = { kind, index };
+  const box=document.getElementById('picker-box');
+  const items = SHOP_ITEMS.filter(it=>it.type===kind && progress.unlocked.has(it.id));
+  let html=`<h3>${kind==='ability'?'Ability':'Accessory'} slot ${index+1}</h3>`;
+  html+=`<div class="pk-item" data-pick=""><span class="pk-ic">✕</span><span class="pk-nm">Empty this slot</span></div>`;
+  if(!items.length){
+    html+=`<div class="pk-d" style="padding:8px">Nothing unlocked yet — unlock ${kind==='ability'?'abilities':'accessories'} in the catalogue below.</div>`;
+  }
+  for(const it of items){
+    html+=`<div class="pk-item" data-pick="${it.id}"><span class="pk-ic">${it.icon}</span>`+
+          `<span><div class="pk-nm">${it.name}</div><div class="pk-d">${it.type}</div></span></div>`;
+  }
+  box.innerHTML=html;
+  document.getElementById('picker').style.display='flex';
+}
+function equipToSlot(kind, index, id){
+  const arr = kind==='ability'?progress.abilities:progress.accessories;
+  if(id){
+    // Enforce uniqueness — if it's already in another slot of this kind, clear that one.
+    const other=arr.indexOf(id); if(other>=0 && other!==index) arr[other]=null;
+  }
+  arr[index]=id||null;
+  if(kind==='ability'){
+    // Keep 'active' pointing at an equipped slot (or index 0 when the bar is empty).
+    if(!progress.abilities[progress.activeAbility]){
+      const first=progress.abilities.findIndex(x=>x);
+      progress.activeAbility = first>=0?first:0;
+    }
+  }
+  reconcileFireTorch();
+  saveProgress(); renderShop(); renderAbilityBar();
+}
+function unlockItem(id){
+  if(!progress.unlocked.has(id)){
+    progress.unlocked.add(id);
+    // Auto-equip only into a genuinely FREE slot — never displaces what you chose.
+    const it=SHOP_BY_ID[id];
+    const arr=it.type==='ability'?progress.abilities:progress.accessories;
+    const free=arr.indexOf(null); if(free>=0) equipToSlot(it.type, free, id);
+    saveProgress(); renderShop(); renderAbilityBar();
+  }
+}
+function equipFromCard(id){
+  const it=SHOP_BY_ID[id];
+  const arr=it.type==='ability'?progress.abilities:progress.accessories;
+  const idx=arr.indexOf(null);
+  if(idx<0){   // all slots full — don't clobber; let the player choose what to swap
+    flashShopMsg(`All ${arr.length} ${it.type} slots are full — tap a slot to swap it, or Unequip one first.`);
+    return;
+  }
+  equipToSlot(it.type, idx, id);
+}
+function unequipItem(id){
+  [progress.abilities, progress.accessories].forEach(arr=>{
+    const k=arr.indexOf(id); if(k>=0) arr[k]=null;
+  });
+  if(!progress.abilities[progress.activeAbility]){
+    const first=progress.abilities.findIndex(x=>x); progress.activeAbility=first>=0?first:0;
+  }
+  reconcileFireTorch();
+  saveProgress(); renderShop(); renderAbilityBar();
+}
+// Transient feedback line inside the shop (visible while the shop is open).
+function flashShopMsg(msg){
+  const el=document.getElementById('shop-sub'); if(!el) return;
+  el.textContent=msg; el.style.color='#f1c40f';
+}
+
+// Apply the saved loadout to a fresh run + reset transient ability state.
+function applyLoadoutToRun(){
+  abilityCd = {};
+  buffs = { adrenaline:0, smoke:0, eagleEye:0 };
+  clearFireTorch();
+  if(!progress.abilities[progress.activeAbility]){
+    const first=progress.abilities.findIndex(x=>x); progress.activeAbility=first>=0?first:0;
+  }
+  renderAbilityBar();
+}
+
+function wireShopUI(){
+  document.getElementById('shop-btn').addEventListener('click', ()=>openShop('menu'));
+  document.getElementById('shop-close').addEventListener('click', closeShop);
+  document.getElementById('loadout-row').addEventListener('click', e=>{
+    const s=e.target.closest('.lo-slot'); if(!s) return;
+    openPicker(s.dataset.kind, +s.dataset.index);
+  });
+  document.getElementById('shop-grid').addEventListener('click', e=>{
+    const b=e.target.closest('.sc-btn'); if(!b) return;
+    const id=b.dataset.id, act=b.dataset.act;
+    if(act==='unlock') unlockItem(id);
+    else if(act==='equip') equipFromCard(id);
+    else if(act==='unequip') unequipItem(id);
+  });
+  const picker=document.getElementById('picker');
+  picker.addEventListener('click', e=>{
+    if(e.target===picker){ picker.style.display='none'; return; }   // click backdrop to dismiss
+    const it=e.target.closest('.pk-item'); if(!it || !pickerSlot) return;
+    equipToSlot(pickerSlot.kind, pickerSlot.index, it.dataset.pick||null);
+    picker.style.display='none';
+  });
+}
+
+// =====================================================================
 //  DAY / NIGHT CYCLE
 // =====================================================================
 const CYCLE = 240; // full cycle seconds (4 min)
@@ -3993,7 +4514,10 @@ function drawMinimap(){
   if(!mmCtx) return;
   const C = 75; // centre
   const S = 150;
-  const scale = S / 150;   // fixed local radar (~±75 m around the player) — the map is too big to show whole
+  // Eagle Eye ability zooms the radar out to the whole savanna and reveals every
+  // animal; otherwise it's the usual fixed local radar (~±75 m around the player).
+  const eagle = buffs.eagleEye > 0;
+  const scale = eagle ? (C / HALF) : (S / 150);
 
   mmCtx.clearRect(0,0,S,S);
   // Background
@@ -4050,7 +4574,7 @@ function drawMinimap(){
   // are crouched/hidden in grass beyond close range — symmetric stealth.)
   lionMeshes.forEach(L=>{
     const d = L.pos.distanceTo(player.pos);
-    if(L._hiddenFromPlayer && d > 6) return;     // can't see hidden lions on radar
+    if(!eagle && L._hiddenFromPlayer && d > 6) return;   // can't see hidden lions on radar (Eagle Eye reveals them)
     const [px,py]=toMM(L.pos.x-player.pos.x, L.pos.z-player.pos.z);
     mmCtx.fillStyle = L.state==='chase' ? '#ff3b30'
                     : L.state==='converge' ? '#ff9500'
@@ -4060,7 +4584,7 @@ function drawMinimap(){
 
   // Gorilla — big distinct marker; brighter when it's actively engaging
   gorillaMeshes.forEach(G=>{
-    if(G.state==='perched' || G.state==='sleeping') return;   // up its tree — off-radar
+    if(!eagle && (G.state==='perched' || G.state==='sleeping')) return;   // up its tree — off-radar (Eagle Eye reveals)
     mmCtx.fillStyle = (G.state==='engaging'||G.state==='pursuing'||G.state==='treegrab'||G.state==='smashing') ? '#c050ff' : '#b05cff';
     const [px,py]=toMM(G.pos.x-player.pos.x, G.pos.z-player.pos.z);
     mmCtx.beginPath(); mmCtx.arc(px,py,5.5,0,Math.PI*2); mmCtx.fill();
@@ -4090,6 +4614,8 @@ function triggerGameOver(){
   gameState = 'over';
   document.exitPointerLock();
   isPointerLocked = false;
+  document.getElementById('abilitybar').style.display='none';
+  clearFireTorch();   // dispose the Fire Torch FX so no light lingers over the menu
 
   // Save to leaderboard
   const entry = { time: Math.floor(elapsed), days: dn.day, kills };
@@ -4138,6 +4664,7 @@ function resetGame(){
   [..._dustPuffs].forEach(d=>killObj(d.mesh));
   if(grapple.line){ killObj(grapple.line); }
   if(torchState.light){ scene.remove(torchState.light); }   // light: nothing to dispose
+  clearFireTorch();                                          // dispose any lit Fire Torch ability FX (light + flame mesh)
 
   lionMeshes.length = 0;
   wallMeshes.length = 0;
@@ -4181,6 +4708,11 @@ function resetGame(){
   setSlot(1);
   initPlayer();
 
+  // Kit: reset transient ability state + surface the ability toolbar for the run.
+  uiPaused = false;
+  applyLoadoutToRun();
+  document.getElementById('abilitybar').style.display='flex';
+
   // Spawn the starting pride (2 lionesses + a male) and clear any stale alert
   prideAlert.timer = 0;
   spawnPride();
@@ -4198,12 +4730,15 @@ function animate(){
   animId = requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
   if(gameState!=='playing'){ renderer.render(scene,camera); return; }
+  // Loadout overlay open mid-game — freeze the sim but keep rendering the frozen frame.
+  if(uiPaused){ renderer.render(scene,camera); return; }
 
   elapsed += dt;
 
   updateWind(dt);
   updateDayNight(dt);
   updateWeather(dt);          // storm (after day/night — scales its lighting)
+  updateAbilities(dt);        // kit: cooldowns, timed buffs, EQUIP mods, fire-torch FX (before player/stealth read them)
   updatePlayer(dt);
   updateStealth(dt);
   updateHealth(dt);
@@ -4246,6 +4781,11 @@ createRocks();
 createRockFormations();   // scenery boulders/standing stones/outcrops
 registerControls();
 
+// Kit: load the persisted shop unlocks/loadout and wire the shop UI.
+loadProgress();
+wireShopUI();
+renderAbilityBar();
+
 // Renderer canvas (#game-canvas) position/z-index handled in CSS (z-index:1,
 // below #vignette 5, #hud 10, #overlay 100). The #mm minimap canvas is scoped
 // separately so it stays inside its bottom-right container. Don't override here.
@@ -4284,7 +4824,7 @@ document.getElementById('start-btn').addEventListener('click', startGame);
 
 // Also let clicking the canvas restart pointer lock if lost mid-game
 renderer.domElement.addEventListener('click', ()=>{
-  if(gameState==='playing' && !isPointerLocked){
+  if(gameState==='playing' && !uiPaused && !isPointerLocked){
     renderer.domElement.requestPointerLock().catch(()=>{});
   }
 });

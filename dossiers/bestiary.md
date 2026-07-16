@@ -1,6 +1,6 @@
 # Lion Survival — Bestiary & Rules (canonical reference)
 
-*The plain-English "how the world works" doc. Kept current — last updated 2026-06-28.*
+*The plain-English "how the world works" doc. Kept current — last updated 2026-07-16.*
 *Exact numbers live in `index.html`: `SPECIES`, `GOR`, `RHINO`, `ELE`, `PLAYER` configs.*
 
 ---
@@ -39,6 +39,36 @@
 
 **Spears-to-kill:** gazelle/impala/warthog/zebra/wildebeest **1** · kudu **2** · giraffe **3** ·
 lion **5** · gorilla **10** · rhino **14** · **elephant 15**.
+
+---
+
+## Your kit — the Shop (abilities & accessories)
+
+A persistent kit layered on top of the tool hotbar (grapple/wall/campfire/torch/axe/spear — unchanged).
+Open the **🛒 SHOP** from the menu, or press **Tab** in-game (pauses) to manage your **loadout**.
+Unlocks are **free** (no currency yet) and — like the equipped loadout — **persist across runs**
+(`localStorage` key `lionSurvivalKit`). New saves start with **Fire Torch + Healing Herb + Camo Cloak**.
+
+- **Toolbar: up to 5 abilities + up to 2 accessories — every slot is optional.** Equip anywhere from 0 to 5
+  abilities; empty slots show a `+` placeholder you can fill (or leave empty) any time. One *equipped*
+  ability is *active* (slot 1 by default). You can equip/unequip freely, even mid-run — unequipping a lit
+  Fire Torch puts it out.
+- **[Z]** uses the active ability · **[R]** switches which ability is active · **[Tab]** opens the loadout.
+- Tap any slot in the loadout screen to open a **quick-equip picker** (choose an item or "Empty this slot");
+  each catalogue card has **Unlock/Equip/Unequip**. Slots never auto-fill against your choice.
+
+**Abilities** (activated with [Z]):
+- 🔥 **Fire Torch** — toggle a light that brightens the dark. It's a **beacon** — lions spot you more easily (like the torch tool).
+- 🌿 **Healing Herb** — +40 health, 20 s cooldown.
+- 💨 **Adrenaline** — refill stamina + run 40 % faster for 5 s, 25 s cooldown.
+- 🌀 **Smoke Screen** — near-invisible (visMul ×0.15) for 6 s, 30 s cooldown.
+- 🦅 **Eagle Eye** — minimap zooms to the whole map and reveals **every** animal for 8 s, 20 s cooldown.
+
+**Accessories** (passive while equipped):
+- 🧥 **Camo Cloak** — 30 % harder to see (visMul ×0.7).
+- 👟 **Swift Boots** — 15 % faster on foot.
+- 🦴 **Bone Talisman** — health regen ×2.2.
+- 🎒 **Forager's Satchel** — hunger drains 40 % slower.
 
 ---
 

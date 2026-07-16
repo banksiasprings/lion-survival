@@ -211,4 +211,38 @@ Spear kill-counts (`updateThrownRocks` prey branch): kudu 2, giraffe 3, elephant
   (player→chase, gorilla→fight_gorilla, rhino→fight_rhino, elephant→new `mob` state that bites it).
   Lions also have **cohesion** now (drift toward the pride centroid in `wander`) so they stay a pack.
 
+## Shop & Kit (2026-07-16) — abilities + accessories
+A persistent meta-progression layer **on top of** the existing 6-slot tool hotbar (grapple/wall/campfire/
+torch/axe/spear — all untouched core gameplay). Catalogue lives in `SHOP_ITEMS` (+`SHOP_BY_ID`); runtime
+state in `progress` (`{unlocked:Set, abilities[5], accessories[2], activeAbility}`), persisted to
+`localStorage['lionSurvivalKit']` via `loadProgress`/`saveProgress`. Fresh saves seed the **starter kit**
+(`starter:true` → Fire Torch, Healing Herb, Camo Cloak) unlocked + equipped. Unlocking is **free** (no
+currency this cut).
+- **UI:** 🛒 SHOP button on the menu overlay (`#shop-btn`); the `#shop` screen is the shared **loadout
+  manager** (also opened in-game with **Tab**, which sets `uiPaused` → `animate()` freezes the sim but
+  keeps rendering). `#loadout-row` = 7 slots (5 ability + 2 accessory); clicking one opens the
+  quick-equip **`#picker`**. `#shop-grid` = catalogue cards (icon/name/desc + Unlock/Equip/Unequip).
+  In-game `#abilitybar` (bottom-left) mirrors the loadout; `renderAbilityBar` rebuilds it, `tickAbilityBar`
+  does the per-frame active-ring/cooldown refresh.
+- **Slots are optional & nullable.** `abilities`/`accessories` are fixed-length arrays that hold `null` for
+  empty; equip 0–5 abilities / 0–2 accessories, freely, any time (incl. mid-run via Tab). Empty slots render
+  as a tap-to-equip `+`. `equipFromCard` refuses (via `flashShopMsg`) rather than clobbering when full;
+  `unlockItem` auto-equips only into a genuinely free slot. `reconcileFireTorch()` (called from
+  `equipToSlot`/`unequipItem`) extinguishes + disposes the Fire Torch FX the moment it's unequipped.
+- **Controls:** `[Z]` `useActiveAbility`, `[R]` `cycleActiveAbility`, `[Tab]` open loadout. The keydown/
+  mousedown handlers early-return while `uiPaused` (only Tab/Esc close). All wired in `registerControls`.
+- **Effects via small hooks** (grep `EQUIP`): `updateAbilities(dt)` (called first in `animate`) decays
+  cooldowns/buffs and recomputes `EQUIP` {speedMul, visMul, healthRegenMul, hungerDrainMul} from
+  accessories + timed buffs. Read in `updatePlayer` (speed), `updateStealth` (visMul), `updateHealth`
+  (regen), `updateHunger` (drain). Timed ability buffs: `buffs.{adrenaline,smoke,eagleEye}`. Eagle Eye
+  zooms/reveals the minimap. Fire Torch = the lion-detection **beacon** via `fireBeacon()` (replaced the
+  two inline `torchState.on?8:0` reads).
+- **⚠ Disposal discipline:** the Fire Torch ability is the **only** kit element that creates a Three.js
+  object — a `Group{PointLight + flame Mesh}` (`abilityFX.fireTorch`). It's freed with `killObj` in
+  `clearFireTorch()`, called on toggle-off, in `resetGame`, and in `triggerGameOver` (verified: lighting
+  it then resetting leaves **0** `fireTorchAbility` orphans in `scene.children`). Everything else is pure
+  stat/flag — no VRAM footprint. **Next iteration ideas:** currency/XP so unlocks cost something; more
+  abilities (spear-summon, war-cry to scatter a pride, decoy); accessory rarity tiers; a "loadout preset"
+  quick-swap; mobile/touch tap-to-use for the ability bar.
+
 Each phase is an independent commit so it can be iterated in isolation.
