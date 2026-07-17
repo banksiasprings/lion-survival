@@ -11,7 +11,11 @@ Run locally: `python3 -m http.server 8911` (see `.claude/launch.json`) → open 
 ## Architecture (preserve these invariants)
 - **Memory discipline:** every Three object added to the scene must be freed with `killObj()` /
   `disposeObject3D()` when removed. `scene.remove()` alone leaks VRAM and eventually blacks out the
-  canvas. Shared materials carry `userData.keep = true` so they're never disposed.
+  canvas. Shared materials carry `userData.keep = true` so they're never disposed — **and as of
+  2026-07-17 shared _geometries_ honour the same flag**, because three r128 hands every `Sprite` the
+  *same* geometry instance, so disposing one HP bar would yank the buffer out from under every other
+  sprite. Attaching a per-animal object as a **child of the animal's group** is the cheapest way to
+  stay disposal-safe: `killObj(X.mesh)` traverses and frees it on every existing removal path.
 - **WebGL context-loss safety net** in `initScene()` — don't remove it.
 - **Day/night hooks:** `scene.userData.sun` (DirectionalLight) and `scene.userData.ambient`
   (AmbientLight) are lerped each frame in `updateDayNight()`. New sky/lighting must hook here.
@@ -236,6 +240,32 @@ Spear kill-counts (`updateThrownRocks` prey branch): kudu 2, giraffe 3, elephant
   materials** (freed by `disposeObject3D`/`killObj` — verified 0 orphans on spawn-then-reset). The
   gait now bobs each leg around `userData.baseY` (baked with the sex scale `s`, fixing the old
   unscaled `0.3`). ~29 parts (male) / ~21 (female).
+
+## Floating HP bars (2026-07-17)
+Every animal — **lion, prey (all 8 species), gorilla, rhino** — carries a billboarded HP bar above its
+head: red track, green fill, `"34/85"` text. `THREE.Sprite` + per-animal `CanvasTexture`, procedural
+(no assets), 256×44 px.
+- **Attached as a CHILD of the animal's group** (`attachHealthBar`, called at each of the four spawn
+  sites right after `setHitbox` — after, because the bar must not be inside the mesh when `setHitbox`
+  measures the body's bounding box). Disposal therefore rides the **existing** `killObj()`/
+  `disposeObject3D()` path — death, carcass, reset and any future removal path all free the material +
+  CanvasTexture with no separate teardown to remember. The **shared sprite geometry** opts out via
+  `userData.keep` (see the memory-discipline invariant above).
+- **Hit-flash safe:** a Sprite is `!isMesh`, and every flash loop swaps materials on `isMesh` children
+  only, so the bars are skipped structurally (they also carry `noFlash` as belt & braces).
+- **Scale-compensated:** bars live inside scaled groups (gorilla 1.36, elephant 1.55, rhino 1.15), so
+  `attachHealthBar` divides the group scale back out — every bar sits exactly **1.0 m clear of `hitTop`**
+  and is sized off `hitR` (gazelle 1.15 → elephant 2.2 world units), well under the animal's own width.
+- **Visibility** (`updateHealthBars`, called from `animate` after every animal has moved): hidden at full
+  HP; shown instantly on damage; holds `HB_HOLD` 4.5 s after the last hit, fading out over the final
+  `HB_FADE` 1 s; re-damage re-shows at full opacity. `healAllAnimals` at each day/night turn puts
+  animals back to full → bars hide again. The player's **aim target** (`nearestAnimalInFront(26, 0.97)`)
+  always shows, *including at full HP* — there is only ever one, so it costs no clutter. Flip that by
+  dropping the `isTarget ||` in the `show` expression.
+- **`depthTest: true` on purpose** — a bar must not draw through terrain/foliage, which would leak the
+  position of a lion sunk in grass and undermine the whole stealth model.
+- **Redraw discipline:** the canvas is redrawn (and the texture re-uploaded) **only when the displayed
+  HP integer changes**, never per frame.
 
 ## Shop & Kit (2026-07-16) — abilities + accessories
 The player's **whole toolset**. It began as a meta-layer over the old 6-slot bottom tool hotbar, but that
