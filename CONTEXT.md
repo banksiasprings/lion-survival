@@ -211,6 +211,32 @@ Spear kill-counts (`updateThrownRocks` prey branch): kudu 2, giraffe 3, elephant
   (player→chase, gorilla→fight_gorilla, rhino→fight_rhino, elephant→new `mob` state that bites it).
   Lions also have **cohesion** now (drift toward the pride centroid in `wander`) so they stay a pack.
 
+## Lions — retaliation guarantee, gorilla balance & new mesh (2026-07-17)
+- **Retaliation is now a structural guarantee, not per-site.** Previously each attack path had to
+  remember to call `alertPrideThreat`. Now every lion carries `lastHitBy`/`lastHitKind`, damage sites
+  just *tag* those (thrown weapon, axe → `player`; gorilla swipe → `gorilla`; rhino gore → `rhino`;
+  elephant trample → `elephant`), and a single **HP-drop watchdog** at the top of the `updateLions`
+  per-lion loop raises the vendetta whenever `L.health < L._prevHealth` (lions never starve, so any
+  drop = an attacker). `alertPrideThreat` is now called from exactly one place. No attack path — present
+  or future — can silently skip retaliation. **Tree-safety preserved:** the vendetta gate still refuses
+  a `player` threat while `player.inTree`, so a treed player can poke lions without being chased (and the
+  line-1400 `if(!player.inTree)` melee gate still means a treed player takes no lion damage).
+- **Lion buff so a pride can fight down a gorilla.** Lion HP **46/30 → 85/58** (male/lioness) so they
+  survive 2–3 gorilla swipes; `GOR.SWIPE_DMG 34→30`, `GOR.SWIPE_CD 2.4→2.6`, `GOR.LION_BITE_DPS 7→9`.
+  Net: a pride of 3–4 can now grind a *grounded* gorilla to its 25%-HP flee threshold (120 dmg) with
+  losses instead of getting wiped — a slow, either-side-can-win fight. Lion→player damage (`32/22`) is
+  unchanged (the gorilla fight is governed by `LION_BITE_DPS`, not `L.damage`); spears still down a lion
+  in 5 (`maxHealth/5`), so player balance holds.
+- **Mesh redesign (`makeLion`).** Replaced the box-body/sphere-mane lion with a feline build: deep
+  chest + muscular haunches + raised shoulder line + lighter underbelly, a low-carried neck & head,
+  a proud lighter muzzle with a dark nose/eyes and rounded ears, tapered legs, and a two-segment
+  S-curve tail with the black tuft. **Male** = a shaggy multi-sphere mane ring that frames the face
+  (the muzzle pokes out in front of it); **female** = maneless & sleeker — a strong sex silhouette.
+  Kept the **flat hierarchy** (the hit-flash swaps materials on `group.children`) and **per-lion
+  materials** (freed by `disposeObject3D`/`killObj` — verified 0 orphans on spawn-then-reset). The
+  gait now bobs each leg around `userData.baseY` (baked with the sex scale `s`, fixing the old
+  unscaled `0.3`). ~29 parts (male) / ~21 (female).
+
 ## Shop & Kit (2026-07-16) — abilities + accessories
 The player's **whole toolset**. It began as a meta-layer over the old 6-slot bottom tool hotbar, but that
 hotbar (grapple/wall/campfire/torch/axe/spear tools + the `#inventory` UI, `activeSlot`/`setSlot`/

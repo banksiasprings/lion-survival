@@ -1499,43 +1499,70 @@ function makeLion(x, z, sex){
   sex = sex || (Math.random() < 0.66 ? 'lioness' : 'male');
   const isMale = sex==='male';
   const s = isMale ? 1.22 : 1.0;                       // males larger
-  const bodyCol = isMale ? 0xc89a34 : 0xd8b45c;        // males a touch darker/tawny
   const group = new THREE.Group();
-  const bodyMat = new THREE.MeshLambertMaterial({color:bodyCol});
-  const darkMat = new THREE.MeshLambertMaterial({color:0x5e4410});
-  // Body
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1*s,0.65*s,1.8*s), bodyMat);
-  body.position.y = 0.65*s; group.add(body);
-  // Head
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.7*s,0.65*s,0.7*s), bodyMat);
-  head.position.set(0, 0.85*s, 0.85*s); group.add(head);
-  // Mane — males only, the clearest visual sex cue
-  if(isMale){
-    const mane = new THREE.Mesh(new THREE.SphereGeometry(0.52*s,8,6), darkMat);
-    mane.position.set(0, 0.9*s, 0.78*s); mane.scale.z=0.8; group.add(mane);
-  }
-  // Legs (4)
-  const legG = new THREE.CylinderGeometry(0.1*s,0.1*s,0.6*s,6);
-  const legPos = [[-0.3,0.3,0.5],[0.3,0.3,0.5],[-0.3,0.3,-0.5],[0.3,0.3,-0.5]];
+  // --- palette: warm tawny coat, lighter muzzle/underbelly, near-black points,
+  //     and (males only) a shaggy dark mane — the clearest sex cue. Every material
+  //     is per-lion, so disposeObject3D (via killObj) frees them when it dies.
+  const bodyMat  = new THREE.MeshLambertMaterial({color: isMale ? 0xbe872c : 0xd3ab52});
+  const bellyMat = new THREE.MeshLambertMaterial({color: 0xe7d4a2});   // muzzle + underbelly
+  const darkMat  = new THREE.MeshLambertMaterial({color: 0x241a0b});   // nose, eyes, tail tuft
+  const maneMat  = isMale ? new THREE.MeshLambertMaterial({color: 0x49330f}) : null;
+
+  // Small builders — bake the sex scale s into every dimension & position (a male
+  // reads bigger) and add each part as a DIRECT child. The hit-flash swaps
+  // materials on group.children, so the hierarchy stays deliberately flat.
+  const box = (w,h,d,mat,x,y,z,rx)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w*s,h*s,d*s), mat);
+    m.position.set(x*s,y*s,z*s); if(rx) m.rotation.x=rx; group.add(m); return m; };
+  const cyl = (rt,rb,h,seg,mat,x,y,z,rx)=>{ const m=new THREE.Mesh(new THREE.CylinderGeometry(rt*s,rb*s,h*s,seg), mat);
+    m.position.set(x*s,y*s,z*s); if(rx) m.rotation.x=rx; group.add(m); return m; };
+  const sph = (r,mat,x,y,z)=>{ const m=new THREE.Mesh(new THREE.SphereGeometry(r*s,10,8), mat);
+    m.position.set(x*s,y*s,z*s); group.add(m); return m; };
+
+  // ---- torso: deep chest at the front, muscular haunches at the rear, a slung
+  //      lighter belly, and a raised shoulder line — a feline profile, not a box ----
+  box(0.66,0.50,0.52, bodyMat, 0,0.66,0.60);         // chest / brisket
+  box(0.84,0.56,1.45, bodyMat, 0,0.78,-0.05);        // barrel
+  box(0.82,0.58,0.64, bodyMat, 0,0.80,-0.66);        // haunches (a touch bigger)
+  box(0.80,0.30,0.62, bodyMat, 0,1.00,0.34);         // shoulder rise
+  box(0.64,0.26,1.25, bellyMat,0,0.55,-0.02);        // lighter underbelly
+
+  // ---- neck + head, carried low and forward; the muzzle is pushed well proud so
+  //      that on a male it emerges FROM the mane instead of being swallowed by it ----
+  box(0.44,0.46,0.60, bodyMat, 0,0.94,0.86,-0.30);   // neck (tilted down-forward)
+  box(0.52,0.48,0.52, bodyMat, 0,0.98,1.26);         // skull
+  box(0.30,0.20,0.22, bodyMat, 0,1.16,1.12);         // brow ridge
+  box(0.38,0.34,0.42, bellyMat,0,0.84,1.56);         // muzzle (lighter, proud of the mane)
+  box(0.17,0.13,0.14, darkMat, 0,0.90,1.79);         // nose
+  sph(0.06, darkMat, -0.17,1.05,1.52);               // eye L
+  sph(0.06, darkMat,  0.17,1.05,1.52);               // eye R
+  { const eL=sph(0.13,bodyMat,-0.21,1.24,1.08), eR=sph(0.13,bodyMat,0.21,1.24,1.08);   // rounded ears
+    eL.scale.set(1,1,0.55); eR.scale.set(1,1,0.55); }
+
+  // ---- legs (4) — tapered, thicker at the shoulder/thigh; kept in `legs` for the
+  //      walk cycle (bobbed via userData.baseY so they scale correctly with s) ----
   const legs = [];
-  legPos.forEach(([lx,ly,lz])=>{
-    const leg = new THREE.Mesh(legG, bodyMat);
-    leg.position.set(lx*s, ly*s, lz*s);
-    group.add(leg); legs.push(leg);
-  });
-  // Snout
-  const snout = new THREE.Mesh(new THREE.BoxGeometry(0.4*s,0.34*s,0.34*s), bodyMat);
-  snout.position.set(0, 0.78*s, 1.18*s); group.add(snout);
-  // Ears (2 small cones)
-  [[-0.22,1.18,0.78],[0.22,1.18,0.78]].forEach(([ex,ey,ez])=>{
-    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.1*s,0.18*s,4), darkMat);
-    ear.position.set(ex*s, ey*s, ez*s); group.add(ear);
-  });
-  // Tail + dark tuft
-  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.05*s,0.08*s,0.8*s,6), bodyMat);
-  tail.position.set(0, 0.75*s, -0.95*s); tail.rotation.x = 0.4; group.add(tail);
-  const tuft = new THREE.Mesh(new THREE.SphereGeometry(0.1*s,6,5), darkMat);
-  tuft.position.set(0, 0.55*s, -1.25*s); group.add(tuft);
+  const mkLeg=(x,z,rt)=>{ const l=cyl(rt,0.085,0.66,7, bodyMat, x,0.33,z);
+    l.userData.baseY=0.33*s; l.userData.sw=0.095*s; legs.push(l); };
+  mkLeg(-0.27,0.52,0.115); mkLeg(0.27,0.52,0.115);   // front
+  mkLeg(-0.27,-0.58,0.135); mkLeg(0.27,-0.58,0.135); // rear (thicker thigh)
+
+  // ---- tail: a two-segment S-curve ending in the iconic black tuft ----
+  cyl(0.06,0.045,0.62,6, bodyMat, 0,0.82,-1.00, 0.55);
+  cyl(0.05,0.038,0.50,6, bodyMat, 0,1.02,-1.30,-0.25);
+  sph(0.12, darkMat, 0,0.88,-1.50);
+
+  // ---- mane (males) — a big ruff plus a shaggy face-frame and chest spill; the
+  //      face pokes out in front of it, so the mane frames the head ----
+  if(isMale){
+    const ruff = sph(0.66, maneMat, 0,1.00,0.52); ruff.scale.set(1.22,1.18,1.0);    // bulk over neck
+    sph(0.44, maneMat, 0,1.02,0.10);                 // shoulder mane behind
+    sph(0.30, maneMat, 0,1.50,0.66);                 // crest above the head
+    sph(0.40, maneMat, -0.52,1.00,0.72);             // cheek frame L (behind the face)
+    sph(0.40, maneMat,  0.52,1.00,0.72);             // cheek frame R
+    sph(0.30, maneMat, -0.34,0.60,0.86);             // jowl L (under the jaw)
+    sph(0.30, maneMat,  0.34,0.60,0.86);             // jowl R
+    const chest=sph(0.34, maneMat, 0,0.54,0.98); chest.scale.set(1.15,0.95,0.9);    // chest spill
+  }
 
   group.children.forEach(c=>{ if(c.isMesh) c.userData.origMat = c.material; });
 
@@ -1549,8 +1576,8 @@ function makeLion(x, z, sex){
     mesh: group, legs, sex, isMale,
     pos: new THREE.Vector3(x, ty, z),
     vel: new THREE.Vector3(),
-    health: isMale ? 46 : 30, maxHealth: isMale ? 46 : 30,
-    damage: isMale ? 32 : 22,                 // males hit harder
+    health: isMale ? 85 : 58, maxHealth: isMale ? 85 : 58,   // buffed 2026-07-17 so a pride can genuinely fight down a gorilla
+    damage: isMale ? 32 : 22,                 // males hit harder (vs the PLAYER; the gorilla fight is governed by GOR.LION_BITE_DPS)
     hunger: rand(45, 75),                     // start moderately hungry
     burst: 1,                                 // sprint reserve 0..1 (tires quickly)
     state: 'wander',   // wander|rest|converge|chase|hunt_prey|scavenge|fleeing_fire|stunned
@@ -1562,6 +1589,8 @@ function makeLion(x, z, sex){
     restTarget: null,
     legPhase: Math.random()*Math.PI*2,
     flashTimer: 0,
+    lastHitBy: null, lastHitKind: null,       // who last wounded this lion → fed to the pride-retaliation watchdog
+    _prevHealth: isMale ? 85 : 58,            // watchdog compares against this to detect any HP loss
     _detR: 0,                                 // last detection radius (HUD/minimap)
   };
   setHitbox(L); lionMeshes.push(L);
@@ -1683,13 +1712,24 @@ function updateLions(dt){
     // Gait animation — faster legs when moving faster
     const gait = 2 + (L._lastSpeed||0)*0.7;
     L.legPhase += dt*gait;
-    L.legs.forEach((leg,i)=>{ leg.position.y = 0.3 + Math.sin(L.legPhase + i*Math.PI/2)*0.12; });
+    L.legs.forEach((leg,i)=>{ leg.position.y = (leg.userData.baseY||0.3) + Math.sin(L.legPhase + i*Math.PI/2)*(leg.userData.sw||0.12); });
 
     if(L.flashTimer > 0){
       L.flashTimer -= dt;
       const flashing = L.flashTimer > 0;
       L.mesh.children.forEach(c=>{ if(c.isMesh) c.material = flashing ? FLASH_MAT : c.userData.origMat; });
     }
+
+    // ---- PRIDE RETALIATION WATCHDOG ----------------------------------------
+    // Any HP this lion lost since last frame — from ANY source, current or future
+    // (lions never starve; only the player does) — makes the WHOLE pride turn on
+    // whoever last wounded it. Damage sites just tag L.lastHitBy / L.lastHitKind;
+    // this single place raises the vendetta, so no attack path (gorilla swipe, rhino
+    // gore, elephant trample, thrown weapon, axe) can silently skip the retaliation.
+    if(L.health < L._prevHealth - 0.001 && L.lastHitBy){
+      alertPrideThreat(L.lastHitBy, L.lastHitKind, L.lastHitBy.pos || L.pos);
+    }
+    L._prevHealth = L.health;
 
     if(L.stunTimer > 0){ L.stunTimer -= dt; L.state='stunned'; L._lastSpeed=0; return; }
 
@@ -2288,7 +2328,7 @@ function updatePrey(dt){
               // the victim FIGHTS BACK — it turns on the elephant
               if(tk==='rhino'){ tgt.target=P; tgt.targetKind='prey'; tgt.aggroTimer=RHINO.AGGRO_TIME; }
               else if(tk==='gorilla' && tgt.target!==P){ tgt.state='engaging'; tgt.phase='rush'; tgt.target=P; tgt.swung=false; tgt.perchTree=null; tgt.perchPos=null; }
-              else if(tk==='lion'){ alertPrideThreat(P, 'elephant', P.pos); }
+              else if(tk==='lion'){ tgt.lastHitBy=P; tgt.lastHitKind='elephant'; }   // → pride-retaliation watchdog mobs the elephant
               if(tgt.health<=0) showKillfeed('🐘 The elephant tramples a '+tk); }
             P.smackCd=ELE.SMACK_CD;
           }
@@ -2512,7 +2552,7 @@ const GOR = {
   LION_DETECT:   13,    // perched gorilla drops on a lion inside this radius
   WAKE_DETECT:   16,    // a sleeping gorilla wakes (→ perched) inside this
   SLEEP_AFTER:   7,     // sec perched with no lion near → doze off (sleeping)
-  LION_BITE_DPS: 7,     // dps each lion pressed against a grounded gorilla deals back
+  LION_BITE_DPS: 9,     // dps each lion pressed against a grounded gorilla deals back (buffed 2026-07-17 — a pride can now grind it down)
   ROCK_STUN:     1.5,   // sec a thrown rock dazes the gorilla (your counter to a brute)
   SPEAR_STUN:    2.8,   // a spear stuns it longer/harder than a rock
 
@@ -2521,10 +2561,10 @@ const GOR = {
   RETALIATE_LEASH: 26,  // give up chasing a recent attacker beyond this distance
 
   SWIPE_RANGE:   3.4,   // reach of a swipe at a lion
-  SWIPE_DMG:     34,    // damage dealt to a lion per swipe
+  SWIPE_DMG:     30,    // damage dealt to a lion per swipe (was 34 — softened 2026-07-17 so buffed lions survive a couple)
   SWIPE_WINDUP:  0.45,  // tell before the swipe connects
   SWIPE_RECOVER: 0.55,  // recovery after the swipe before returning to perch
-  SWIPE_CD:      2.4,   // per-gorilla cooldown between swipes
+  SWIPE_CD:      2.6,   // per-gorilla cooldown between swipes (was 2.4 — slightly slower so the pride gets more bites in)
 
   GRAB_RANGE:    4.2,   // horizontal reach to a tree-sheltered player
   GRAB_WINDUP:   0.85,  // tell before the grab lands (a window to drop/grapple away)
@@ -3034,7 +3074,7 @@ function updateGorillas(dt){
           if(rhinoMeshes.includes(tgt)){                 // hit a rhino → it turns on the gorilla
             tgt.target = G; tgt.targetKind = 'gorilla'; tgt.aggroTimer = RHINO.AGGRO_TIME;
             showKillfeed('🦍 Gorilla swiped the rhino');
-          } else if(lionMeshes.includes(tgt)){ alertPrideThreat(G, 'gorilla', G.pos); showKillfeed('🦍 Gorilla swiped a lion'); }
+          } else if(lionMeshes.includes(tgt)){ tgt.lastHitBy=G; tgt.lastHitKind='gorilla'; showKillfeed('🦍 Gorilla swiped a lion'); }
           else { showKillfeed('🦍 Gorilla swiped the '+(tgt.label||'beast')); }   // e.g. the elephant (it fights back on its own)
           if(td < 18){ shakeTime = Math.max(shakeTime,0.16); shakeAmt = 0.004; }
         }
@@ -3306,7 +3346,7 @@ function rhinoSmack(R){
     showKillfeed('🦏 The rhino gores you!');
   } else if(t){
     t.health -= RHINO.GORE_DMG; t.flashTimer=0.25; t.stunTimer=Math.max(t.stunTimer||0, RHINO.GORE_STUN);
-    if(R.targetKind==='lion') alertPrideThreat(R, 'rhino', R.pos);   // gored a lion → the pride mobs it
+    if(R.targetKind==='lion'){ t.lastHitBy=R; t.lastHitKind='rhino'; }   // gored a lion → the pride-retaliation watchdog mobs it
     if(t.health<=0) showKillfeed('🦏 The rhino gored a '+(R.targetKind==='prey'?(t.label||'beast'):R.targetKind)+'!');
   }
 }
@@ -3605,7 +3645,7 @@ function updateThrownRocks(dt){
     lionMeshes.forEach(L=>{
       if(projHit(r, L)){                              // whole-body hit cylinder
         L.health -= r.spear ? L.maxHealth/5 : m;     // spear: exactly 5 to down any lion
-        alertPrideThreat(player, 'player', player.pos);   // hit a lion → the whole pride turns on you
+        L.lastHitBy=player; L.lastHitKind='player';   // hit a lion → the whole pride turns on you (via the retaliation watchdog)
         L.stunTimer = 5;
         L.state = 'stunned';
         L.flashTimer = 0.25;
@@ -3884,7 +3924,7 @@ function dealKitMelee(hit, dmg){
   o.flashTimer = 0.25;
   if(hit.kind==='lion'){
     o.health -= dmg; o.stunTimer = 3; o.state='stunned';
-    alertPrideThreat(player, 'player', player.pos);         // the whole pride turns on you
+    o.lastHitBy=player; o.lastHitKind='player';             // the whole pride turns on you (via the retaliation watchdog)
     showKillfeed(o.health<=0?'🪓 Axe kill — lion down!':'🪓 Axe cracks the lion!');
   } else if(hit.kind==='prey'){
     o.health -= dmg; o.stunTimer = 2; o.state='flee'; o.alertTimer = 3;
