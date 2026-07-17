@@ -28,16 +28,6 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
 #health-bar{height:100%;width:100%;background:#e74c3c;border-radius:5px}
 #stamina-bar{height:100%;width:100%;background:#2ecc71;border-radius:5px}
 #hunger-bar{height:100%;width:100%;background:#e69020;border-radius:5px;transition:width 0.2s}
-#torch-wrap{width:240px;height:6px;background:rgba(0,0,0,0.45);border-radius:3px;overflow:hidden;display:none}
-#torch-bar{height:100%;width:100%;background:#f39c12;border-radius:3px}
-#inventory{display:flex;gap:8px}
-.inv-slot{width:56px;height:56px;border:2px solid rgba(255,255,255,0.3);border-radius:8px;
-  background:rgba(0,0,0,0.5);display:flex;flex-direction:column;align-items:center;
-  justify-content:center;font-size:11px;gap:2px;position:relative}
-.inv-slot.active{border-color:#f1c40f;background:rgba(255,200,0,0.15)}
-.inv-slot .icon{font-size:22px;line-height:1}
-.inv-slot .count{font-size:10px;opacity:0.8}
-.inv-slot .hotkey{position:absolute;top:2px;left:4px;font-size:9px;opacity:0.5}
 #minimap{position:fixed;bottom:18px;right:18px;width:150px;height:150px;
   border-radius:50%;border:2px solid rgba(255,255,255,0.3);overflow:hidden;background:#1a3a1a}
 #minimap canvas{position:static;inset:auto;z-index:auto;display:block;width:150px;height:150px}
@@ -137,15 +127,6 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
     <div id="stamina-wrap"><div id="stamina-bar"></div></div>
     <div id="hunger-wrap"><div id="hunger-bar"></div></div>
     <div id="health-wrap"><div id="health-bar"></div></div>
-    <div id="torch-wrap"><div id="torch-bar"></div></div>
-    <div id="inventory">
-      <div class="inv-slot active" id="slot1"><span class="hotkey">1</span><span class="icon">🪝</span><span>Grapple</span></div>
-      <div class="inv-slot" id="slot2"><span class="hotkey">2</span><span class="icon">🧱</span><span class="count" id="wood-count">0 wood</span></div>
-      <div class="inv-slot" id="slot3"><span class="hotkey">3</span><span class="icon">🔥</span><span>Campfire</span></div>
-      <div class="inv-slot" id="slot4"><span class="hotkey">4</span><span class="icon">🔦</span><span>Torch</span></div>
-      <div class="inv-slot" id="slot5"><span class="hotkey">5</span><span class="icon">🪓</span><span>Axe</span></div>
-      <div class="inv-slot" id="slot6"><span class="hotkey">6</span><span class="icon">🗡️</span><span class="count">2🪵+1🪨</span></div>
-    </div>
   </div>
   <div id="minimap"><canvas id="mm" width="150" height="150"></canvas></div>
   <div id="abilitybar"></div>
@@ -156,9 +137,8 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
      Crouch in tall grass to hide (standing in it, they still see you), stay quiet, mind the wind, and grapple into a tree when the pride closes in.</p>
   <div style="font-size:12px;opacity:0.65;line-height:1.9;text-align:center">
     WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hide in grass)<br>
-    1/G Grapple → tree (LMB fire · RMB/Space drop · safe from lions while perched, no stamina cost) &nbsp;|&nbsp; 2 Walls &nbsp;|&nbsp; 3 Campfire &nbsp;|&nbsp; 4 Torch &nbsp;|&nbsp; 5 Axe &nbsp;|&nbsp; 6 Spear<br>
-    Q Pounce (hunt prey — ambush from grass for ×3) &nbsp;|&nbsp; E Eat kill / Collect &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; 6 + LMB Throw Spear (2🪵+1🪨, ×5 dmg) &nbsp;|&nbsp; T Craft Torch &nbsp;|&nbsp; LMB+Axe Chop Wall<br>
-    <span style="color:#c39bd3">🛒 Kit: Z Use ability &nbsp;|&nbsp; R Switch ability &nbsp;|&nbsp; Tab Loadout (pauses) &nbsp;— unlock &amp; equip in the SHOP</span><br>
+    <span style="color:#c39bd3">🛒 Your kit is on the LEFT — LMB or Z Use active ability &nbsp;·&nbsp; R Switch &nbsp;·&nbsp; Tab Loadout (pauses) &nbsp;·&nbsp; unlock &amp; equip in the SHOP</span><br>
+    G Grapple → tree (RMB/Space drop · safe from lions while perched) &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; Q Pounce (ambush from grass ×3) &nbsp;|&nbsp; E Eat kill / Collect wood &amp; rocks<br>
     <span style="opacity:0.8">Watch your 🍖 hunger — eat prey you hunt or scavenge lion kills (they'll fight you for it).</span>
   </div>
   <button id="start-btn">▶ START GAME</button>
@@ -246,9 +226,6 @@ let roarTimer = rand(8,20); // distant night-roar cadence
 // Grapple
 let grapple = { active: false, point: null, line: null, targetLion: null };
 
-// Torch
-let torchState = { crafted: false, on: false, fuel: 90, light: null };
-
 // Day/Night
 let dn = {
   time: 0, // 0..240 seconds full cycle, 0=dawn
@@ -260,15 +237,15 @@ let dn = {
   nextRhinoDay: 3        // day the next rhino wanders in (every 2-5 days)
 };
 
-// Items
+// Items — wood & rocks are still collectible (axe/[E]); rocks feed [F] throws.
+// (The old wood-cost tool hotbar was removed 2026-07-16 in favour of the side kit.)
 let woodCount  = 0;
 let rockCount  = 0;  // held rocks
-let activeSlot = 1;
 
 // =====================================================================
 //  SHOP / ABILITY-ACCESSORY META-PROGRESSION
-//  A persistent kit layered ON TOP of the existing tool hotbar (which is
-//  untouched core gameplay). Abilities are activatable powers; accessories
+//  The player's whole toolset — this replaced the old bottom tool hotbar
+//  (removed 2026-07-16). Abilities are activatable powers; accessories
 //  are passive gear. Unlocks + equipped loadout persist in localStorage.
 //  No currency yet — unlocking is free for this cut.
 // =====================================================================
@@ -292,7 +269,7 @@ const SHOP_ITEMS = [
   { id:'kit_spear',   type:'ability', icon:'🗡️', name:'Spear',
     desc:'Hurl a flint spear — heavy damage at range, no crafting needed. 3s cooldown.', cd:3 },
   { id:'kit_wall',    type:'ability', icon:'🪵', name:'Palisade Wall',
-    desc:'Drop a wooden barrier in front of you for cover. It rots away after ~18s. 8s cooldown.', cd:8 },
+    desc:'Drop a permanent wooden barrier in front of you for cover (up to 10 up at once). 8s cooldown.', cd:8 },
   { id:'kit_grapple', type:'ability', icon:'🪝', name:'Grappling Hook',
     desc:'Launch a hook — reel up into a climbable tree, or yank yourself to any surface in range.', cd:0 },
   { id:'kit_axe',     type:'ability', icon:'🪓', name:'Hand Axe',
@@ -317,7 +294,7 @@ let progress = { unlocked:new Set(), abilities:[null,null,null,null,null], acces
 let abilityCd = {};                 // id -> seconds of cooldown remaining
 let buffs = { adrenaline:0, smoke:0, eagleEye:0 };   // seconds remaining on timed ability effects
 let abilityFX = { fireTorch:null }; // { group, light, flame, on } — a disposable Three object
-let kitWalls  = [];                 // { mesh, timer } short-lived Palisade Wall chunks (mesh also lives in wallMeshes)
+let kitWalls  = [];                 // { mesh } permanent Palisade Wall chunks (mesh also lives in wallMeshes)
 let kitSwings = [];                 // { mesh, t } transient Hand Axe swing arcs — self-dispose
 let EQUIP = { speedMul:1, visMul:1, healthRegenMul:1, hungerDrainMul:1 };  // per-frame passive modifiers
 let uiPaused = false;               // true while the in-game loadout overlay is open (sim frozen)
@@ -1221,14 +1198,7 @@ function registerControls(){
     if(player.stunTimer > 0) return;   // dazed by a gorilla tree-grab — no actions
     if(e.code==='KeyZ') useActiveAbility();      // kit: use the active ability
     if(e.code==='KeyR') cycleActiveAbility();    // kit: switch active ability
-    if(e.code==='Digit1') setSlot(1);
-    if(e.code==='Digit2') setSlot(2);
-    if(e.code==='Digit3') setSlot(3);
-    if(e.code==='Digit4') setSlot(4);
-    if(e.code==='Digit5') setSlot(5);
-    if(e.code==='Digit6') setSlot(6);
-    if(e.code==='KeyG'){
-      setSlot(1);
+    if(e.code==='KeyG'){                          // dedicated grapple toggle (also on the kit)
       if(grapple.active || player.inTree || player.climbing) releaseGrapple();
       else fireGrapple();
     }
@@ -1236,7 +1206,6 @@ function registerControls(){
     if(e.code==='KeyF') throwRock();
     if(e.code==='KeyE'){ if(!eatNearbyCarcass()) doCollect(); }   // eat carcass, else collect
     if(e.code==='KeyQ') pouncePrey();                            // hunt: pounce on prey
-    if(e.code==='KeyT') craftTorch();
   });
   document.addEventListener('keyup', e=>{ keys[e.code]=false; });
 
@@ -1251,7 +1220,7 @@ function registerControls(){
     if(uiPaused) return;   // loadout overlay open — let the DOM handle its own clicks
     if(!isPointerLocked){ renderer.domElement.requestPointerLock(); return; }
     if(player.stunTimer > 0) return;   // dazed by a gorilla tree-grab — no actions
-    if(e.button===0) onLeftClick();
+    if(e.button===0) useActiveAbility();   // LMB uses the active kit ability
     if(e.button===2) onRightClick();
   });
   document.addEventListener('contextmenu', e=>e.preventDefault());
@@ -1259,23 +1228,6 @@ function registerControls(){
   document.addEventListener('pointerlockchange', ()=>{
     isPointerLocked = !!document.pointerLockElement;
   });
-}
-
-function setSlot(n){
-  activeSlot = n;
-  [1,2,3,4,5,6].forEach(i=>{
-    const el = document.getElementById('slot'+i);
-    el.classList.toggle('active', i===n);
-  });
-}
-
-function onLeftClick(){
-  if(activeSlot===1) fireGrapple();
-  else if(activeSlot===2) placeWall();
-  else if(activeSlot===3) placeCampfire();
-  else if(activeSlot===4) toggleTorch();
-  else if(activeSlot===5) chopWall();
-  else if(activeSlot===6) throwSpear();
 }
 
 function onRightClick(){
@@ -1431,11 +1383,6 @@ function updatePlayer(dt){
     arr[0]=camera.position.x; arr[1]=camera.position.y; arr[2]=camera.position.z;
     arr[3]=grapple.point.x;   arr[4]=grapple.point.y;   arr[5]=grapple.point.z;
     grapple.line.geometry.attributes.position.needsUpdate = true;
-  }
-
-  // Update torch light
-  if(torchState.on && torchState.light){
-    torchState.light.position.copy(camera.position);
   }
 
   // Horizontal speed — feeds the stealth audio signature (Phase 3).
@@ -2595,8 +2542,8 @@ const GOR = {
 
 // Tear down wall i, freeing its VRAM. wallMeshes[i] and wallAABBs[i] are kept in
 // lockstep (built together), so splice both at the same index. Returns the wall's
-// world position (for FX), or null. Shared by the axe (chopWall) and the gorilla's
-// wall-smash so the two paths can't drift apart.
+// world position (for FX), or null. Shared by the kit-wall despawn/cleanup, the
+// gorilla's wall-smash and the elephant so the paths can't drift apart.
 function removeWallAt(idx){
   if(idx < 0 || idx >= wallMeshes.length) return null;
   const pos = wallMeshes[idx].position.clone();
@@ -2878,7 +2825,7 @@ function animateGorilla(G, dt, gait){
   L.forEach((l,i)=>{ const s=Math.sin(G.legPhase + i*Math.PI); l.rotation.x = s*amp*0.5; });
 }
 
-// Smash wall i (the gorilla's version of chopWall — no wood reclaim, with feel).
+// Smash wall i — the gorilla tears a Palisade Wall down (via removeWallAt, with feel).
 function gorillaSmashWall(G, idx){
   const pos = removeWallAt(idx);
   if(!pos) return;
@@ -3535,96 +3482,8 @@ function releaseGrapple(){
 }
 
 // =====================================================================
-//  WALLS
+//  CAMPFIRE  (placed by the Campfire kit ability — see kitPlaceCampfire)
 // =====================================================================
-function placeWall(){
-  if(woodCount < 1) return;
-  if(wallMeshes.length >= 30) return;
-  woodCount--;
-  updateWoodHUD();
-
-  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
-  const pos = player.pos.clone().addScaledVector(fwd, 2.5);
-  pos.y = terrainY(pos.x, pos.z);
-
-  const geo = new THREE.BoxGeometry(2.5, 2.2, 0.3);
-  const mat = new THREE.MeshLambertMaterial({color:0x8b5e3c});
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(pos.x, pos.y+1.1, pos.z);
-  mesh.rotation.y = yaw;
-  mesh.castShadow = true;
-  mesh.name = 'wall';
-  scene.add(mesh);
-  wallMeshes.push(mesh);
-
-  // AABB (approximate, axis-aligned)
-  const box = new THREE.Box3().setFromObject(mesh);
-  wallAABBs.push(box);
-  playSound('place');
-}
-
-// =====================================================================
-//  AXE — CHOP WALLS
-// =====================================================================
-// Destroy the wall you're looking at (the ones you built) and reclaim its
-// wood. wallMeshes[i] and wallAABBs[i] are kept in lockstep, so splice both
-// at the same index.
-function chopWall(){
-  if(!wallMeshes.length) return;
-  raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
-  const hits = raycaster.intersectObjects(wallMeshes, false);
-  if(!hits.length || hits[0].distance > 6) return;
-  const idx = wallMeshes.indexOf(hits[0].object);
-  if(!removeWallAt(idx)) return;   // shared with the gorilla's wall-smash (lockstep splice)
-  woodCount++;                 // reclaim the wood you spent building it
-  updateWoodHUD();
-  showKillfeed('🪓 Wall chopped! (+1 wood)');
-  playSound('place');
-}
-
-// =====================================================================
-//  CAMPFIRE
-// =====================================================================
-function placeCampfire(){
-  if(woodCount < 3) return;
-  woodCount -= 3;
-  updateWoodHUD();
-
-  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
-  const pos = player.pos.clone().addScaledVector(fwd, 2);
-  pos.y = terrainY(pos.x, pos.z);
-
-  const group = new THREE.Group();
-  group.position.copy(pos);
-
-  // Base logs (crossed boxes)
-  const logMat = new THREE.MeshLambertMaterial({color:0x5d3a1a});
-  [-0.3,0.3].forEach(ox=>{
-    const l = new THREE.Mesh(new THREE.BoxGeometry(0.15,0.15,0.8), logMat);
-    l.position.set(ox, 0.1, 0);
-    l.rotation.y = ox*2;
-    group.add(l);
-  });
-
-  // Flame cone
-  const flameMat = new THREE.MeshBasicMaterial({color:0xff6600, transparent:true, opacity:0.9});
-  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.25,0.8,8), flameMat);
-  flame.position.y = 0.55;
-  group.add(flame);
-
-  // Light
-  const light = new THREE.PointLight(0xff7700, 2.5, 12);
-  light.position.y = 0.6;
-  group.add(light);
-
-  group.name = 'campfire';
-  scene.add(group);
-
-  const cf = { mesh:group, pos:pos.clone(), timer:60, flame, light, phase:0 };
-  campfires.push(cf);
-  playSound('fire');
-}
-
 function updateCampfires(dt){
   for(let i=campfires.length-1;i>=0;i--){
     const cf = campfires[i];
@@ -3715,18 +3574,7 @@ function buildSpearMesh(){
   return g;
 }
 
-function throwSpear(){
-  if(woodCount < 2 || rockCount < 1){ showKillfeed('🗡️ Need 2 🪵 + 1 🪨 to make a spear'); return; }
-  woodCount -= 2; rockCount -= 1;
-  updateWoodHUD(); updateRockHUD();
-  const dir  = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation);
-  const mesh = buildSpearMesh();
-  mesh.position.copy(camera.position);
-  mesh.lookAt(mesh.position.clone().add(dir));          // tip leads (object's -Z faces the throw)
-  scene.add(mesh);
-  thrownRocks.push({ mesh, vel:dir.clone().multiplyScalar(52), dist:0, mult:5, spear:true });
-  playSound('throw');
-}
+// (buildSpearMesh is used by the Spear kit ability — see kitThrowSpear.)
 
 // Measure an animal's hit cylinder from its actual mesh (so thrown weapons hit the
 // WHOLE body, not a tiny sphere at its feet). Called once per spawn.
@@ -3815,54 +3663,6 @@ function updateThrownRocks(dt){
 }
 
 // =====================================================================
-//  TORCH
-// =====================================================================
-function craftTorch(){
-  if(torchState.crafted) return;
-  if(woodCount < 1) return;
-  woodCount--;
-  updateWoodHUD();
-  torchState.crafted = true;
-  torchState.fuel    = 90;
-  torchState.on      = false;
-  document.getElementById('torch-wrap').style.display='block';
-  showKillfeed('🔦 Torch crafted!');
-}
-
-function toggleTorch(){
-  if(!torchState.crafted) return;
-  if(!torchState.on){
-    torchState.on = true;
-    if(!torchState.light){
-      torchState.light = new THREE.PointLight(0xffaa44, 3, 15);
-      scene.add(torchState.light);
-    }
-    torchState.light.visible = true;
-  } else {
-    torchState.on = false;
-    if(torchState.light) torchState.light.visible = false;
-  }
-}
-
-function updateTorch(dt){
-  if(torchState.on){
-    torchState.fuel -= dt;
-    if(torchState.fuel<=0){
-      // Battery dead — torch burns out. Mark it uncrafted so the player can
-      // craft a fresh one with wood; otherwise craftTorch's "already crafted"
-      // guard locked you out of light for the rest of the run.
-      torchState.fuel    = 0;
-      torchState.on      = false;
-      torchState.crafted = false;
-      if(torchState.light) torchState.light.visible=false;
-      document.getElementById('torch-wrap').style.display='none';
-      showKillfeed('🔦 Torch burned out — craft another with wood [T]');
-    }
-    document.getElementById('torch-bar').style.width=(torchState.fuel/90*100)+'%';
-  }
-}
-
-// =====================================================================
 //  SHOP / ABILITIES — persistence, activation, passive mods, FX
 // =====================================================================
 const KIT_KEY = 'lionSurvivalKit';
@@ -3923,10 +3723,10 @@ function computeEquipMods(){
   return m;
 }
 
-// True while any fire source is lit on the player — read by the lion detection
-// model as a beacon (torch tool OR the Fire Torch ability).
+// True while the Fire Torch ability is lit — read by the lion detection model as
+// a beacon (a lit flame gives your position away).
 function fireBeacon(){
-  return (torchState.on || (abilityFX.fireTorch && abilityFX.fireTorch.on)) ? 8 : 0;
+  return (abilityFX.fireTorch && abilityFX.fireTorch.on) ? 8 : 0;
 }
 // If the Fire Torch is lit but no longer equipped anywhere, extinguish it —
 // so unequipping it mid-run (loadout is editable any time) puts the light out.
@@ -4022,8 +3822,9 @@ function kitThrowSpear(){
   playSound('throw');
   return true;
 }
+const KIT_WALL_MAX = 10;   // active-wall cap (permanent walls — bounds VRAM; enemies smashing them frees space)
 function kitPlaceWall(){
-  if(wallMeshes.length >= 30){ showKillfeed('🪵 Too many walls up already'); return false; }
+  if(kitWalls.length >= KIT_WALL_MAX){ showKillfeed('🪵 Wall limit ('+KIT_WALL_MAX+') — smashed walls free up space'); return false; }
   const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
   const pos = player.pos.clone().addScaledVector(fwd, 2.5);
   pos.y = terrainY(pos.x, pos.z);
@@ -4035,7 +3836,7 @@ function kitPlaceWall(){
   scene.add(mesh);
   wallMeshes.push(mesh);
   wallAABBs.push(new THREE.Box3().setFromObject(mesh));
-  kitWalls.push({ mesh, timer:18 });   // short-lived — rots away after ~18s
+  kitWalls.push({ mesh });   // PERMANENT — stays until an enemy smashes it, or the run resets / the ability is unequipped
   playSound('place');
   return true;
 }
@@ -4147,14 +3948,10 @@ function updateAbilities(dt){
     ft.light.intensity = 2.6 + Math.sin(ft.phase*2.1)*0.5;
   }
 
-  // Palisade walls rot away, then dispose through the shared wall path.
+  // Palisade walls are permanent — but prune entries an enemy has smashed
+  // (removeWallAt frees the mesh) so the active-wall cap stays honest.
   for(let i=kitWalls.length-1;i>=0;i--){
-    const w = kitWalls[i]; w.timer -= dt;
-    if(w.timer <= 0){
-      const idx = wallMeshes.indexOf(w.mesh);
-      if(idx >= 0) removeWallAt(idx);   // may already be gone (chopped/smashed) → indexOf -1, just drop it
-      kitWalls.splice(i,1);
-    }
+    if(wallMeshes.indexOf(kitWalls[i].mesh) < 0) kitWalls.splice(i,1);
   }
   // Transient axe swing arcs — a brief pale flash in front of the eye, then freed.
   for(let i=kitSwings.length-1;i>=0;i--){
@@ -4168,12 +3965,25 @@ function updateAbilities(dt){
 
   tickAbilityBar();
 }
-// Dispose every transient kit object (axe swings) + drop wall-timer refs. The wall
-// meshes and campfires themselves are freed by resetGame's world teardown.
+// Dispose every transient kit object (axe swings) + drop wall refs. On resetGame
+// the wall meshes and campfires are freed by the world teardown, so here we only
+// clear the tracking list. clearKitWalls() below is for the unequip path.
 function clearKitFX(){
   [...kitSwings].forEach(s=>killObj(s.mesh));
   kitSwings.length = 0;
   kitWalls.length  = 0;   // meshes disposed with wallMeshes in resetGame
+}
+// Dispose every placed Palisade Wall right now (used when the Wall ability is
+// unequipped mid-run — permanent walls shouldn't outlive their tool).
+function clearKitWalls(){
+  for(const w of [...kitWalls]){
+    const idx = wallMeshes.indexOf(w.mesh);
+    if(idx >= 0) removeWallAt(idx);   // disposes + keeps wallMeshes/wallAABBs lockstep
+  }
+  kitWalls.length = 0;
+}
+function reconcileKitWalls(){
+  if(kitWalls.length && !progress.abilities.includes('kit_wall')) clearKitWalls();
 }
 
 // ---- In-game ability bar rendering ----
@@ -4186,7 +3996,7 @@ function renderAbilityBar(){
   const div = document.createElement('div'); div.className='ab-div'; bar.appendChild(div);
   for(let i=0;i<ACCESSORY_SLOTS;i++) bar.appendChild(makeAbSlot('accessory', i));
   const hint = document.createElement('div'); hint.className='ab-hint';
-  hint.textContent='[Z] use · [R] switch · [Tab] loadout';
+  hint.textContent='LMB / Z use · R switch · Tab loadout';
   bar.appendChild(hint);
   tickAbilityBar();
 }
@@ -4325,6 +4135,7 @@ function equipToSlot(kind, index, id){
     }
   }
   reconcileFireTorch();
+  reconcileKitWalls();
   saveProgress(); renderShop(); renderAbilityBar();
 }
 function unlockItem(id){
@@ -4355,6 +4166,7 @@ function unequipItem(id){
     const first=progress.abilities.findIndex(x=>x); progress.activeAbility=first>=0?first:0;
   }
   reconcileFireTorch();
+  reconcileKitWalls();
   saveProgress(); renderShop(); renderAbilityBar();
 }
 // Transient feedback line inside the shop (visible while the shop is open).
@@ -4549,12 +4361,8 @@ function playSound(type){
 // =====================================================================
 //  HUD UPDATE
 // =====================================================================
-function updateWoodHUD(){
-  document.getElementById('wood-count').textContent = woodCount+' wood';
-}
-function updateRockHUD(){
-  document.getElementById('topright'); // no-op, updated in updateHUD
-}
+function updateWoodHUD(){ /* no-op — wood & rocks are shown in #topright by updateHUD */ }
+function updateRockHUD(){ /* no-op — updated in updateHUD */ }
 
 function showKillfeed(msg){
   const kf = document.getElementById('killfeed');
@@ -4589,7 +4397,7 @@ function updateHUD(){
     `${dn.isDay?'☀️ DAY':'🌙 NIGHT'} ${fmtTime(Math.max(0,timeLeft))}<br>`+
     (weather.intensity>0.15?`⛈️ STORM<br>`:'')+
     `🦁 Lions: ${lionMeshes.length}<br>`+
-    `🪨 Rocks: ${rockCount}`;
+    `🪨 Rocks: ${rockCount} &nbsp; 🪵 Wood: ${woodCount}`;
 
   // Vignette
   const vig = document.getElementById('vignette');
@@ -4623,9 +4431,6 @@ function updateHUD(){
   carcasses.forEach(c=>{ if(c.pos.distanceTo(player.pos)<2.6) promptText='[E] Eat '+c.species+' (hunger)'; });
   promptEl.textContent = promptText;
   promptEl.style.display = promptText?'block':'none';
-
-  // Wood count
-  document.getElementById('wood-count').textContent = woodCount+' wood';
 
   updateSignals();
 }
@@ -4836,9 +4641,8 @@ function resetGame(){
   [...carcasses].forEach(c=>{ removeVultures(c); killObj(c.mesh); });
   [..._dustPuffs].forEach(d=>killObj(d.mesh));
   if(grapple.line){ killObj(grapple.line); }
-  if(torchState.light){ scene.remove(torchState.light); }   // light: nothing to dispose
   clearFireTorch();                                          // dispose any lit Fire Torch ability FX (light + flame mesh)
-  clearKitFX();                                              // dispose transient axe swings + drop kit-wall timer refs
+  clearKitFX();                                              // dispose transient axe swings + drop kit-wall refs (wall meshes freed below)
 
   lionMeshes.length = 0;
   wallMeshes.length = 0;
@@ -4854,7 +4658,6 @@ function resetGame(){
   _dustPuffs.length = 0;
 
   grapple   = { active:false, point:null, line:null, mode:null, perch:null, tree:null };
-  torchState= { crafted:false, on:false, fuel:90, light:null };
 
   woodCount  = 0;
   rockCount  = 0;
@@ -4862,7 +4665,6 @@ function resetGame(){
   elapsed    = 0;
   shakeTime  = 0;
   shakeAmt   = 0;
-  activeSlot = 1;
 
   // Start in full daylight (skip dawn) so the restart doesn't render the
   // world at midnight + heavy fog. Place us 15 s past dawn = full day.
@@ -4877,9 +4679,6 @@ function resetGame(){
   rockSpawns.forEach(r=>{ r.available=true; r.cooldown=0; r.mesh.visible=true; });
   treeObjects.forEach(t=>{ t.cooldown=0; });
 
-  updateWoodHUD();
-  document.getElementById('torch-wrap').style.display='none';
-  setSlot(1);
   initPlayer();
 
   // Kit: reset transient ability state + surface the ability toolbar for the run.
@@ -4927,7 +4726,6 @@ function animate(){
   updateCampfires(dt);
   updateThrownRocks(dt);
   updateCorpses(dt);
-  updateTorch(dt);
   updateGrass(dt);
   updateDust(dt);
   updateAmbience(dt);         // distant night roars

@@ -31,7 +31,7 @@
 
 **Your weapons & hunting:**
 - **Rocks** (`F`, hold up to 10): chip damage + a long **stun**. Your main tool for stunning big threats.
-- **Spear** (slot **6**, LMB): craft-on-throw for **2 wood + 1 rock**, hits far harder than a rock.
+- **Spear** (equip the **Spear** kit ability, then **LMB**/`Z`): hurls far harder than a rock, no crafting.
 - **Pounce** (`Q`): a long lunge (range 9, 54 damage); from a **hidden crouch-in-grass ambush it's ×3**
   (~162 — one-shots most prey). The stealth-hunter play.
 - **Hitboxes cover the whole body** now — a thrown weapon connects anywhere on an animal (no more having
@@ -44,8 +44,9 @@ lion **5** · gorilla **10** · rhino **14** · **elephant 15**.
 
 ## Your kit — the Shop (abilities & accessories)
 
-A persistent kit layered on top of the tool hotbar (grapple/wall/campfire/torch/axe/spear — unchanged).
-Open the **🛒 SHOP** from the menu, or press **Tab** in-game (pauses) to manage your **loadout**.
+Your whole toolset. **(The old bottom tool hotbar was removed 2026-07-16 — the kit on the left replaced it;
+the bottom of the screen now shows only your health/stamina/hunger bars.)** Use the active ability with
+**LMB** or **`Z`**. Open the **🛒 SHOP** from the menu, or press **Tab** in-game (pauses) to manage your **loadout**.
 Unlocks are **free** (no currency yet) and — like the equipped loadout — **persist across runs**
 (`localStorage` key `lionSurvivalKit`). New saves start with **Fire Torch + Healing Herb + Camo Cloak**.
 
@@ -64,12 +65,13 @@ Unlocks are **free** (no currency yet) and — like the equipped loadout — **p
 - 🌀 **Smoke Screen** — near-invisible (visMul ×0.15) for 6 s, 30 s cooldown.
 - 🦅 **Eagle Eye** — minimap zooms to the whole map and reveals **every** animal for 8 s, 20 s cooldown.
 - 🗡️ **Spear** — hurl a flint spear (heavy ranged damage), no crafting needed, 3 s cooldown.
-- 🪵 **Palisade Wall** — drop a wooden barrier in front of you for cover; it rots away after ~18 s, 8 s cooldown.
+- 🪵 **Palisade Wall** — drop a **permanent** wooden barrier for cover (up to **10** up at once), 8 s cooldown. Blocks animals; the gorilla & elephant still smash through.
 - 🪝 **Grappling Hook** — reel up into a climbable tree or yank toward any surface in range (same as the tool grapple).
 - 🪓 **Hand Axe** — swing: chop a nearby tree for wood, or land a **heavy melee** blow (42) on the animal in front, 1.2 s cooldown.
 - 🏕️ **Campfire** — build a wide, long-lived (~120 s) ring of light that **lions flee**, 12 s cooldown.
 
-*(These five are granted, material-free versions of the hotbar tools — the tool hotbar itself is unchanged.)*
+*(These five are granted, material-free versions of the classic survival tools — they replaced the old
+bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks feed `F` throws.)*
 
 **Accessories** (passive while equipped):
 - 🧥 **Camo Cloak** — 30 % harder to see (visMul ×0.7).

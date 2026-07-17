@@ -132,9 +132,9 @@ not flavour.
       eyes keep burning. Scale 1.36 (`dossiers/gorilla_render_2026-06-17.md`).
 
 ## Tweaks (2026-06-28) — `dossiers/tweaks_2026-06-28.md`
-- **Spear** = toolbar slot **6** (`throwSpear`/`buildSpearMesh`, modeled handle + flint leaf-blade):
-  thrown like a rock (LMB while slot 6 is held), crafted on the throw from **2 wood + 1 rock**. Damage
-  is now **sized per target** so kill-counts are predictable: gorilla `maxHealth/10` (**10 spears**),
+- **Spear** — *(2026-07-16: the old wood+rock crafted spear tool `throwSpear` was removed with the bottom
+  hotbar; the spear is now the material-free `kit_spear` ability using the same `buildSpearMesh` + projectile.)*
+  Damage is **sized per target** so kill-counts are predictable: gorilla `maxHealth/10` (**10 spears**),
   lion `maxHealth/5` (**5**), prey one-shot (**1**) except the big-horned **kudu** `maxHealth/2` (**2**).
   Rocks keep the old `mult` model (chip + stun).
 - **Pounce** (`Q`) buffed: `pounceRange 3.6 → 9` (long lunge), `pounceDamage 18 → 54` (3×); a hidden
@@ -212,8 +212,13 @@ Spear kill-counts (`updateThrownRocks` prey branch): kudu 2, giraffe 3, elephant
   Lions also have **cohesion** now (drift toward the pride centroid in `wander`) so they stay a pack.
 
 ## Shop & Kit (2026-07-16) — abilities + accessories
-A persistent meta-progression layer **on top of** the existing 6-slot tool hotbar (grapple/wall/campfire/
-torch/axe/spear — all untouched core gameplay). Catalogue lives in `SHOP_ITEMS` (+`SHOP_BY_ID`); runtime
+The player's **whole toolset**. It began as a meta-layer over the old 6-slot bottom tool hotbar, but that
+hotbar (grapple/wall/campfire/torch/axe/spear tools + the `#inventory` UI, `activeSlot`/`setSlot`/
+`onLeftClick`, the `torchState` torch tool, and keys 1–6/`T`) was **removed 2026-07-16** — the side kit
+replaced it. LMB now calls `useActiveAbility`. The bottom bar (`#bottombar`) shows only health/stamina/
+hunger; wood & rocks moved to `#topright` (`updateWoodHUD`/`updateRockHUD` are now no-ops). Wood is still
+collectible (Hand Axe / `[E]`) but has no consumer now (candidate future crafting sink). Catalogue lives in
+`SHOP_ITEMS` (+`SHOP_BY_ID`); runtime
 state in `progress` (`{unlocked:Set, abilities[5], accessories[2], activeAbility}`), persisted to
 `localStorage['lionSurvivalKit']` via `loadProgress`/`saveProgress`. Fresh saves seed the **starter kit**
 (`starter:true` → Fire Torch, Healing Herb, Camo Cloak) unlocked + equipped. Unlocking is **free** (no
@@ -229,17 +234,20 @@ currency this cut).
   as a tap-to-equip `+`. `equipFromCard` refuses (via `flashShopMsg`) rather than clobbering when full;
   `unlockItem` auto-equips only into a genuinely free slot. `reconcileFireTorch()` (called from
   `equipToSlot`/`unequipItem`) extinguishes + disposes the Fire Torch FX the moment it's unequipped.
-- **Basic-tool abilities (2026-07-16b):** five more abilities that are granted, material-free, cooldown-gated
-  versions of the hotbar tools — `kit_spear`, `kit_wall` (Palisade Wall), `kit_grapple`, `kit_axe` (Hand Axe:
-  chop tree / heavy melee via `nearestAnimalInFront`+`dealKitMelee`, reusing each animal's wound+retaliation
-  hooks), `kit_fire` (bigger/longer campfire). Each **reuses an existing mesh + its disposal path** so nothing
-  new leaks: spear→`thrownRocks[]`, campfire→`campfires[]`, wall→`wallMeshes`/`wallAABBs` (+ an 18 s despawn
-  timer in `kitWalls[]` that frees via `removeWallAt`), grapple→the grapple line. The only genuinely new FX is
-  the transient axe-swing mesh (`kitSwings[]`, self-disposes ~0.18 s). `clearKitFX()` (called from `resetGame`
-  + `triggerGameOver`) disposes swings and drops kit-wall timer refs; the wall/campfire/spear meshes are freed
-  by `resetGame`'s existing world teardown. Verified: place-everything-then-reset → **0** wall/campfire/spear/
-  swing orphans; wall despawn keeps `wallMeshes`/`wallAABBs` lockstep; a wall removed out from under its timer
-  (chop/smash) is handled without error. The tool hotbar (slots 1–6) is untouched.
+- **Basic-tool abilities (2026-07-16b):** five granted, material-free, cooldown-gated tools — `kit_spear`,
+  `kit_wall` (Palisade Wall), `kit_grapple`, `kit_axe` (Hand Axe: chop tree / heavy melee via
+  `nearestAnimalInFront`+`dealKitMelee`, reusing each animal's wound+retaliation hooks), `kit_fire`
+  (bigger/longer campfire). Each **reuses an existing mesh + its disposal path** so nothing new leaks:
+  spear→`thrownRocks[]`, campfire→`campfires[]`, wall→`wallMeshes`/`wallAABBs`, grapple→the grapple line.
+  The only genuinely new FX is the transient axe-swing mesh (`kitSwings[]`, self-disposes ~0.18 s).
+- **Palisade Wall is PERMANENT (2026-07-16c):** placed walls persist for the whole run (no decay) — capped at
+  `KIT_WALL_MAX` (10) active. Tracked in `kitWalls[]` (`{mesh}`, no timer); `updateAbilities` prunes entries
+  an enemy smashed (`removeWallAt`) so the cap stays honest. Disposal: `clearKitWalls()`+`reconcileKitWalls()`
+  (called from `equipToSlot`/`unequipItem`, mirroring the Fire Torch) tear down all placed walls the moment
+  the Wall ability is **unequipped**; `resetGame`'s world teardown frees them on restart; `clearKitFX()`
+  (from `resetGame`+`triggerGameOver`) disposes axe swings and drops kit-wall refs. Verified: walls persist
+  60 s+; cap enforced at 10; enemy-smash prunes + keeps `wallMeshes`/`wallAABBs` lockstep; unequip disposes
+  all placed walls (0 orphans); place-then-reset → 0 orphans.
 - **Controls:** `[Z]` `useActiveAbility`, `[R]` `cycleActiveAbility`, `[Tab]` open loadout. The keydown/
   mousedown handlers early-return while `uiPaused` (only Tab/Esc close). All wired in `registerControls`.
 - **Effects via small hooks** (grep `EQUIP`): `updateAbilities(dt)` (called first in `animate`) decays
@@ -248,12 +256,13 @@ currency this cut).
   (regen), `updateHunger` (drain). Timed ability buffs: `buffs.{adrenaline,smoke,eagleEye}`. Eagle Eye
   zooms/reveals the minimap. Fire Torch = the lion-detection **beacon** via `fireBeacon()` (replaced the
   two inline `torchState.on?8:0` reads).
-- **⚠ Disposal discipline:** the Fire Torch ability is the **only** kit element that creates a Three.js
-  object — a `Group{PointLight + flame Mesh}` (`abilityFX.fireTorch`). It's freed with `killObj` in
-  `clearFireTorch()`, called on toggle-off, in `resetGame`, and in `triggerGameOver` (verified: lighting
-  it then resetting leaves **0** `fireTorchAbility` orphans in `scene.children`). Everything else is pure
-  stat/flag — no VRAM footprint. **Next iteration ideas:** currency/XP so unlocks cost something; more
-  abilities (spear-summon, war-cry to scatter a pride, decoy); accessory rarity tiers; a "loadout preset"
-  quick-swap; mobile/touch tap-to-use for the ability bar.
+- **⚠ Disposal discipline:** kit elements that create Three.js objects each ride a proven disposal path —
+  Fire Torch (`abilityFX.fireTorch`, `Group{PointLight+flame}`, freed in `clearFireTorch()` on toggle-off/
+  reset/game-over/unequip); Palisade Wall (`wallMeshes`/`wallAABBs`, freed by `removeWallAt`/reset/unequip);
+  Campfire (`campfires[]`, freed on burnout/reset); Spear (`thrownRocks[]`, freed on hit/expire/reset); axe
+  swing (`kitSwings[]`, self-disposes). Accessories + the buff abilities (Healing Herb/Adrenaline/Smoke/Eagle
+  Eye) are pure stat/flag — no VRAM footprint. **Next iteration ideas:** give wood a consumer (crafting sink)
+  or remove it; currency/XP so unlocks cost something; more abilities (war-cry to scatter a pride, decoy);
+  accessory rarity tiers; a "loadout preset" quick-swap; mobile/touch tap-to-use for the ability bar.
 
 Each phase is an independent commit so it can be iterated in isolation.
