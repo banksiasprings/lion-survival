@@ -157,14 +157,14 @@ not flavour.
   After it gores the player it's **winded** (`SPEED_SLOW` for `SLOW_AFTER_HIT`) so you can break away; it
   **won't hit through a wall or while you grapple/climb/are up high** (`playerOffGround`/`segHitsWall`);
   and below `FLEE_HP` it **breaks off and runs**. Shown on the minimap (grey dot, red when charging you).
-  Spawns on a **2–5 day cadence** (`dn.nextRhinoDay`), `MAX 3`.
+  Arrives via the daily dawn wave (see below), `RHINO.MAX 6`.
 - **All animals reheal at each day↔night turn** (`healAllAnimals` in `updateDayNight`).
 - **Every animal flees when about to die** (< ~25 % HP, runs from the nearest threat): prey (`flee`),
   rhino (drops target & bolts), lion (`flee_hurt` state), gorilla (`fleeing` state).
 - **Spawn cadence — a daily wave** (`spawnDailyWave`, fired at each dawn `dn.day++` and once at reset for
-  day 1): **3 lions, 2 gorillas, 1 rhino**, each up to its cap (lions 14, `GOR.MAX 5`, `RHINO.MAX 5`),
-  spawned player-relative (r 55–95). The old per-flip / per-N-day cadences are gone. Lions, the gorilla
-  and rhinos all show on the minimap.
+  day 1): **3 lions, 2 gorillas, 2 rhinos** (rhinos 1→2 on 2026-07-18e), each up to its cap (lions 14,
+  `GOR.MAX 5`, `RHINO.MAX 6`), spawned player-relative (r 55–95). The old per-flip / per-N-day cadences
+  are gone. Lions, the gorilla and rhinos all show on the minimap.
 - **Gorilla is a brute now** (batch 2): a grounded one **SMACKS** the player for **half the health bar**
   (`GOR.SMACK_DMG 50`) on a `SMACK_CD` cooldown with knockback + a brief daze — one big blow, not the old
   continuous `MAUL_DPS` grind. **`PURSUE_RANGE 26 → 40`** so it notices/hunts from far off. Counterplay:
@@ -378,32 +378,45 @@ The game's **first crafting economy**: two animal drops that unlock two new kit 
 - **Spear costs materials now.** `SPEAR_COST={rock:1,wood:2}` per throw. `kitThrowSpear` mirrors the wall
   gate: refuse + name the shortfall (`return false` → `useActiveAbility` skips cooldown/sound), deduct on
   success. `abilityCost(id)`/`canAfford(id)` centralise the held-material cost of the three material-cost
-  abilities (spear + both walls); `tickAbilityBar` greys an unaffordable slot (`.ab-slot.poor`) and
-  `updateTouchUI` greys the mobile attack button the same way.
+  abilities (spear + both walls + **crossbow**, added 2026-07-18e); `tickAbilityBar` greys an unaffordable
+  slot (`.ab-slot.poor`) and `updateTouchUI` greys the mobile attack button the same way.
 - **🦏 rhino horn** drops from **any** rhino death (`updateRhinos` dead-loop; not player-gated — like the
   tusk, a rhino fights back + flees near death so a non-player kill is rare). `hornCount` is the third
   run-scoped craft counter (reset in `resetGame`); `canCraft`/`craftCostStr`/`unlockItem`/HUD/shop-materials
   readout all handle `craft:{horn}`.
-- **🏹 Rhino Crossbow** = ability, `craft:{horn:1}`, `cd:2.5`. **Craft-once / unlimited bolts** (chosen over
-  Steven's literal "1 horn/shot", which is unfarmable — flagged to him). `kitFireCrossbow` pushes an
+- **🏹 Rhino Crossbow** = ability, `craft:{horn:1}` to unlock, **`CROSSBOW_COST={horn:1}` PER SHOT**
+  (2026-07-18e — Steven found unlimited bolts too strong; ammo now via the `abilityCost`/`canAfford` path,
+  refuse+message "🏹 Crossbow needs 1 rhino horn (have 0)" on a failed shot → no cooldown, deduct on
+  success — exactly the spear economy). `cd:2.5`. `kitFireCrossbow` pushes an
   `{crossbow:true}` projectile onto `thrownRocks[]`; `updateThrownRocks` branches on `r.crossbow` for **flat
   50 dmg** to every animal type (reusing the existing stun/retaliation per-branch), **flatter gravity (1.0
   vs 5)**, `CROSSBOW_SPEED=110`, `CROSSBOW_RANGE=WORLD*0.65≈325` despawn, and 🏹 "Bolt" labels. Bolt flies
   along the aim ray (mostly flat) → aim the reticle *at* a target; a level shot sails over close animals'
   hitboxes (same eye-height geometry as the spear, but the scope makes precise aim easy). Freed on
   hit/range/`resetGame`.
-- **Scope / ADS** (`scopeHeld` input + `scopeActive()` = held AND Crossbow is the active ability).
-  `updateScope` (called from `updateAbilities`) lerps `camera.fov` between `BASE_FOV=75` (game default —
-  untouched) and `SCOPE_FOV=30`, and toggles the `#scope` DOM overlay (radial optic vignette + centred
-  green reticle, z-8 below the HUD). **Desktop:** RMB-hold zooms when the Crossbow is active (else RMB keeps
-  its grapple-drop role); `mouseup` always releases. **Mobile:** a hold-based `[data-touch="scope"]` 🔭
-  button with its own pointerdown/up listeners (the delegated tap handler no-ops `scope`); `updateTouchUI`
-  shows it only while the Crossbow is active and force-releases `scopeHeld` when hidden. `resetGame` clears
-  `scopeHeld`, restores `camera.fov=BASE_FOV`, and hides the overlay.
-- **⚠ Balance (report, not silently tuned):** no existing numbers changed. Crossbow (50 dmg + ~325 range +
-  2.5 s + zoom) is strong but gated behind killing a 220-HP rhino; ammo is craft-once (flagged). Base FOV
-  stays 75 (changing it would reshape all gameplay) so the zoom reads as ~2.5× rather than the 2× Steven
-  estimated from an assumed 60° base.
+- **Scope / ADS — HOLD *and* TAP-TOGGLE (input redundancy, 2026-07-18e).** Two input states OR together:
+  `scopeHeld` (momentary hold) and `scopeToggle` (persistent). `scopeActive()` = `(scopeHeld||scopeToggle)
+  AND Crossbow is the active ability`. `updateScope` (called from `updateAbilities`) lerps `camera.fov`
+  between `BASE_FOV=75` (game default — untouched) and `SCOPE_FOV=30`, and toggles the `#scope` DOM overlay
+  (radial optic vignette + centred green reticle, z-8 below the HUD). **Desktop:** RMB-**hold** zooms while
+  the Crossbow is active (`mouseup` releases; else RMB keeps its grapple-drop role) **and [G] tap-toggles**
+  (`!e.repeat`-guarded so auto-repeat can't flutter it; else G keeps its grapple-toggle role — same
+  crossbow-active branch pattern as RMB). **Mobile:** the `[data-touch="scope"]` 🔭 button is a
+  **tap-toggle** now (routed through the delegated tap handler → `doTouchAction('scope')` flips
+  `scopeToggle`; the old press-and-hold listeners are gone). `updateTouchUI` shows it only while the
+  Crossbow is active and clears **both** `scopeHeld` + `scopeToggle` when hidden. The toggle persists across
+  shots and clears on **weapon swap** (`setActiveAbility`/`cycleActiveAbility`) or **death/restart**
+  (`resetGame` clears both flags, restores `camera.fov=BASE_FOV`, hides the overlay).
+- **Crouch — HOLD *and* TAP-TOGGLE (input redundancy, 2026-07-18e).** `player.crouching = !!keys['KeyC'] ||
+  crouchToggle`. Desktop **C-hold** still crouches while held (unchanged); a **brief C tap** (< `CROUCH_TAP_MS`
+  250 ms, timed via `_crouchDownT`=`performance.now()` on the `!e.repeat` keydown, checked on keyup) flips
+  the persistent `crouchToggle`. Long holds fall through untouched, so hold-to-crouch is byte-for-byte
+  intact. Mobile 🐾 was already a tap-toggle (`keys['KeyC'] = !keys['KeyC']`) — unchanged, ORs in the same
+  way. `resetGame` clears `crouchToggle` (stand up on restart).
+- **⚠ Balance (report, not silently tuned):** Crossbow damage/range/cooldown/FOV all unchanged — the only
+  change is **1 rhino horn per shot** (was craft-once/unlimited). Rhino dawn spawn **1→2/day**, `RHINO.MAX
+  5→6`. Base FOV stays 75 so the zoom still reads ~2.5×. Scope+crouch gain a tap-toggle alongside the
+  hold — no hold behaviour removed.
 
 ## Stone walls, Hammer & axe/hammer-on-walls (2026-07-18)
 Two new kit abilities + wall HP, all riding the existing wall/`kitSwings` disposal paths.

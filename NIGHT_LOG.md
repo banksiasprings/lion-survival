@@ -2,6 +2,29 @@
 
 Running log of changes, newest first. One line per change.
 
+## 2026-07-18 — Crossbow ammo, rhino spawn rate, hold+toggle inputs (Steven's 3 tuning/UX asks)
+- **🏹 Crossbow now costs 1 rhino horn PER SHOT** (was craft-once/unlimited — Steven tested it, "too good").
+  New `CROSSBOW_COST={horn:1}`; `kitFireCrossbow` gates like the spear — refuses with **"🏹 Crossbow needs 1
+  rhino horn (have 0)"**, returns false → **no cooldown penalty**, deducts 1 horn on a successful shot. Wired
+  into `abilityCost`/`canAfford` so the **desktop toolbar slot** (`.ab-slot.poor`) and the **mobile attack
+  button** grey out at 0 horns. The 1-horn craft cost to *unlock* the crossbow is kept, so a first shot needs
+  2 horns total (1 to craft + 1 to fire). Verified in-engine: unlock 2→1, fire 1→0, refuse at 0 (msg, 0 bolt,
+  cd stays 0), grey-out toggles.
+- **Rhino dawn spawn 1 → 2 per day; cap `RHINO.MAX` 5 → 6.** `spawnDailyWave` now spawns 2 rhinos each dawn
+  (and on day-1 reset). Verified: fresh start shows **2 rhinos** on the minimap, reset re-seeds 2.
+- **Scope zoom + crouch: HOLD *and* TAP-TOGGLE (input redundancy — Steven's RMB is flaky).** No hold
+  behaviour removed; a tap-toggle is *added* alongside.
+  - **Scope:** RMB-hold still zooms (unchanged). New — **[G] taps to toggle** zoom on/off (when the Crossbow
+    is active; else G keeps its grapple role). **Mobile 🔭 is now a tap-toggle** (was press-and-hold). State
+    persists across shots; clears on weapon swap or death. Second state var `scopeToggle` ORs with `scopeHeld`
+    in `scopeActive()`.
+  - **Crouch:** C-hold still crouches while held (unchanged). New — a **brief C tap** (<250 ms) toggles crouch
+    on/off via `crouchToggle` (`player.crouching = keys['KeyC'] || crouchToggle`). Mobile 🐾 was already a
+    tap-toggle. Auto-repeat guarded (`!e.repeat`) so a real hold never registers as a tap.
+  - Verified in-engine: G on→off (fov 75↔30, overlay on/off), toggle survives firing, weapon-swap + reset
+    clear it; C tap toggles crouch with the key released, C-hold crouches-while-held then stands on release,
+    mobile 🔭/🐾 toggles. Zero console errors.
+
 ## 2026-07-18 — Spear cost, Rhino Crossbow + scope zoom (Steven's 3 follow-ups)
 - **Spear now costs 1 rock + 2 wood per throw** (`SPEAR_COST`), matching the wall economy. `kitThrowSpear`
   refuses cleanly (names the shortfall, returns false → no cooldown/sound) when you can't afford it, deducts

@@ -239,10 +239,10 @@ body.touch #crosshair{opacity:0.5}
      Crouch in tall grass to hide (standing in it, they still see you), stay quiet, mind the wind, and grapple into a tree when the pride closes in.</p>
   <div style="font-size:12px;opacity:0.65;line-height:1.9;text-align:center">
     <span class="kb-only">
-    WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hide in grass)<br>
+    WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hold, or tap to toggle — hides in grass)<br>
     <span style="color:#c39bd3">🛒 Your kit is on the LEFT — LMB or Z Use active ability &nbsp;·&nbsp; R Switch &nbsp;·&nbsp; Tab Loadout (pauses) &nbsp;·&nbsp; unlock &amp; equip in the SHOP</span><br>
     G Grapple → tree (RMB/Space drop · safe from lions while perched) &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; Q Pounce (ambush from grass ×3) &nbsp;|&nbsp; E Eat kill / Collect wood &amp; rocks<br>
-    <span style="opacity:0.85">🏹 Crossbow equipped? Hold RMB to scope-zoom, LMB to fire.</span><br>
+    <span style="opacity:0.85">🏹 Crossbow equipped? Hold RMB or tap G to scope-zoom, LMB to fire. Each bolt costs 1 rhino horn.</span><br>
     </span>
     <span class="touch-only">
     Left stick to move &nbsp;·&nbsp; swipe the right side to look &nbsp;·&nbsp; big button uses your active tool<br>
@@ -435,7 +435,7 @@ const SHOP_ITEMS = [
     desc:'Hurl a carved elephant-tusk boomerang: 100 damage, arcs out and RETURNS to your hand. 20s cooldown. Craft: 1 elephant tusk.',
     cd:20, craft:{ tusk:1 } },
   { id:'kit_crossbow', type:'ability', icon:'🏹', name:'Rhino Crossbow',
-    desc:'Fire a bolt that flies almost across the map (50 dmg). [RMB]/🔭 hold to scope-zoom. Unlimited bolts, 2.5s cooldown. Craft: 1 rhino horn.',
+    desc:'Fire a bolt that flies almost across the map (50 dmg). Costs 1 rhino horn PER SHOT. [RMB] hold or [G]/🔭 toggle to scope-zoom. 2.5s cooldown. Craft: 1 rhino horn to unlock.',
     cd:2.5, craft:{ horn:1 } },
   // ---- Accessories (passive while equipped; 2 slots) ----
   { id:'lion_necklace', type:'accessory', icon:'🦷', name:'Lion Tooth Necklace',
@@ -462,7 +462,11 @@ let kitWalls  = [];                 // { mesh } permanent Palisade Wall chunks (
 let kitSwings = [];                 // { mesh, t } transient Hand Axe swing arcs — self-dispose
 let skyHammers = [];                // { grp,... } Hammer "from the sky" VFX — fall, impact, fade
 let _impactFlashes = [];            // { mesh,mat,life } bright ground bursts under a landing sky hammer
-let scopeHeld = false;              // Rhino Crossbow ADS: RMB / 🔭 button held (input state)
+let scopeHeld = false;              // Rhino Crossbow ADS: RMB held (momentary hold input)
+let scopeToggle = false;            // Rhino Crossbow ADS: [G] / 🔭 tapped ON (persists until toggled off, weapon swap, or death)
+let crouchToggle = false;           // Crouch tap-toggle: tap C / 🐾 → stays crouched (hold C still works alongside it)
+let _crouchDownT = 0;               // performance.now() at the last C keydown — a brief press = a tap → flips crouchToggle
+const CROUCH_TAP_MS = 250;          // C press shorter than this = a tap (toggle); longer = a hold
 let EQUIP = { speedMul:1, visMul:1, healthRegenMul:1, hungerDrainMul:1 };  // per-frame passive modifiers
 let uiPaused = false;               // true while the in-game loadout overlay is open (sim frozen)
 let shopContext = 'menu';           // 'menu' | 'game' — where Close returns to
@@ -1390,16 +1394,24 @@ function registerControls(){
       const n = +e.code.slice(5);
       if(n>=1 && n<=ABILITY_SLOTS) setActiveAbility(n-1);
     }
-    if(e.code==='KeyG'){                          // dedicated grapple toggle (also on the kit)
-      if(grapple.active || player.inTree || player.climbing) releaseGrapple();
+    if(e.code==='KeyG'){                          // Crossbow active → toggle scope zoom; else dedicated grapple toggle
+      if(progress.abilities[progress.activeAbility]==='kit_crossbow'){ if(!e.repeat) scopeToggle = !scopeToggle; }
+      else if(grapple.active || player.inTree || player.climbing) releaseGrapple();
       else fireGrapple();
     }
+    if(e.code==='KeyC' && !e.repeat) _crouchDownT = performance.now();   // start timing — a brief C press = a tap (see keyup)
     if(e.code==='Space' && player.inTree) dropFromTree();   // drop off the branch
     if(e.code==='KeyF') throwRock();
     if(e.code==='KeyE'){ if(!eatNearbyCarcass()) doCollect(); }   // eat carcass, else collect
     if(e.code==='KeyQ') pouncePrey();                            // hunt: pounce on prey
   });
-  document.addEventListener('keyup', e=>{ keys[e.code]=false; });
+  document.addEventListener('keyup', e=>{
+    keys[e.code]=false;
+    // Crouch: a brief C press (< CROUCH_TAP_MS) is a TAP → flip the persistent toggle.
+    // A long hold falls through untouched, so hold-to-crouch still works as before.
+    if(e.code==='KeyC' && gameState==='playing' && !uiPaused &&
+       (performance.now() - _crouchDownT) < CROUCH_TAP_MS){ crouchToggle = !crouchToggle; }
+  });
 
   document.addEventListener('mousemove', e=>{
     if(!isPointerLocked) return;
@@ -1501,17 +1513,8 @@ function initTouchControls(){
   _tcPounceBtn = document.querySelector('[data-touch="pounce"]');
   _tcScopeBtn  = document.querySelector('[data-touch="scope"]');
   _tcAttack    = document.getElementById('tc-attack');
-
-  // Scope button is press-and-HOLD (not a tap), so it gets its own listeners.
-  // The delegated tap handler ignores 'scope' (see doTouchAction).
-  if(_tcScopeBtn){
-    const on  = e=>{ e.preventDefault(); if(gameState==='playing' && !uiPaused) scopeHeld = true; };
-    const off = e=>{ e.preventDefault(); scopeHeld = false; };
-    _tcScopeBtn.addEventListener('pointerdown', on, {passive:false});
-    _tcScopeBtn.addEventListener('pointerup', off);
-    _tcScopeBtn.addEventListener('pointercancel', off);
-    _tcScopeBtn.addEventListener('pointerleave', off);
-  }
+  // Scope 🔭 is a tap-toggle now (matches the [G] key) — routed through the delegated
+  // tap handler → doTouchAction('scope') flips scopeToggle. No special hold listeners.
 
   // ---- Ability toolbar taps (reuses #abilitybar; renderAbilityBar rebuilds the slots,
   //      so we delegate off the container, not the slots) ----
@@ -1541,7 +1544,7 @@ function doTouchAction(name, btn){
     case 'rock':    throwRock(); break;                                         // == F
     case 'pounce':  pouncePrey(); break;                                        // == Q
     case 'eat':     if(!eatNearbyCarcass()) doCollect(); break;                 // == E
-    case 'scope':   break;                                                      // hold-based — handled by its own listeners
+    case 'scope':   scopeToggle = !scopeToggle; break;                          // tap-toggle (== [G])
   }
 }
 
@@ -1562,7 +1565,7 @@ function updateTouchUI(){
   if(_tcScopeBtn){
     const show = activeId==='kit_crossbow';
     _tcScopeBtn.style.display = show ? '' : 'none';
-    if(!show) scopeHeld = false;                    // can't hold a hidden button
+    if(!show){ scopeHeld = false; scopeToggle = false; }   // crossbow not active → drop the zoom state
     _tcScopeBtn.classList.toggle('on', scopeActive());
   }
   tickAbilityBar();   // keep the toolbar's active-ring + cooldown numbers live on touch
@@ -1595,8 +1598,8 @@ function updatePlayer(dt){
   }
   mouseDX = 0; mouseDY = 0;
 
-  // Crouch
-  player.crouching = !!keys['KeyC'];
+  // Crouch — held C (hold-to-crouch) OR the tap-toggle (both desktop C-tap and mobile 🐾)
+  player.crouching = !!keys['KeyC'] || crouchToggle;
   const eyeH = player.crouching ? PLAYER.crouchHeight : PLAYER.eyeHeight;
 
   // Sprinting + stamina (can't sprint while crouched)
@@ -3556,7 +3559,7 @@ function updateGorillas(dt){
 // it never hits from behind. Poor senses (grass/crouch hide you, stealth.visMul),
 // gets stunned by rocks/spears, and is BLOCKED by walls (no smashing through).
 const RHINO = {
-  MAX: 5,
+  MAX: 6,                 // was 5 — bumped so the 2/day dawn wave has headroom to actually appear
   HEALTH: 220,            // tankier than the gorilla (160) — ~14 spears
   SPEED_ROAM: 3.0,        // slow amble
   SPEED_CHARGE: 15,       // keeps charging its target at this speed
@@ -4304,6 +4307,7 @@ function cycleActiveAbility(){
     const idx = (progress.activeAbility + step) % ABILITY_SLOTS;
     if(progress.abilities[idx]){
       progress.activeAbility = idx;
+      scopeToggle = false;                 // weapon swap ends any toggled scope zoom
       const A = SHOP_BY_ID[progress.abilities[idx]];
       showKillfeed('▶ '+A.icon+' '+A.name);
       saveProgress(); renderAbilityBar();
@@ -4318,6 +4322,7 @@ function setActiveAbility(idx){
   if(idx < 0 || idx >= ABILITY_SLOTS) return;
   if(!progress.abilities[idx]){ showKillfeed('Slot '+(idx+1)+' is empty — [Tab] to equip'); return; }
   progress.activeAbility = idx;
+  scopeToggle = false;                    // weapon swap ends any toggled scope zoom
   const A = SHOP_BY_ID[progress.abilities[idx]];
   showKillfeed('▶ '+A.icon+' '+A.name);
   saveProgress(); renderAbilityBar();
@@ -4372,19 +4377,21 @@ function kitThrowSpear(){
   playSound('throw');
   return true;
 }
-// Which held-material cost an ability charges per use (spear + both walls), or null.
+// Which held-material cost an ability charges per use (spear + both walls + crossbow), or null.
 // Read by the toolbar to grey a slot you can't currently afford (mirrors the
 // refuse-on-use behaviour) and by the mobile attack button.
 function abilityCost(id){
   if(id==='kit_spear')     return SPEAR_COST;
   if(id==='kit_wall')      return { wood:WALL_COST.wood };
   if(id==='kit_stonewall') return { rock:WALL_COST.rock };
+  if(id==='kit_crossbow')  return CROSSBOW_COST;   // 1 rhino horn per bolt
   return null;
 }
 function canAfford(id){
   const c = abilityCost(id); if(!c) return true;
   if(c.rock && rockCount < c.rock) return false;
   if(c.wood && woodCount < c.wood) return false;
+  if(c.horn && hornCount < c.horn) return false;
   return true;
 }
 // ---- Tusk Boomerang: 100 dmg, arcs out and RETURNS to the player's hand ----
@@ -4456,23 +4463,31 @@ function boomerangStrike(kind, o){
 }
 // ---- Rhino Crossbow: a flat, long-range bolt (50 dmg) with a scope-zoom ----
 // Rides thrownRocks[] like the spear (r.crossbow flag → flatter gravity, long range,
-// flat 50 dmg, 🏹 labels in updateThrownRocks). Unlimited bolts (craft-once model),
-// gated only by the 2.5s cooldown.
+// flat 50 dmg, 🏹 labels in updateThrownRocks). Each shot costs 1 rhino horn
+// (CROSSBOW_COST — the ammo gate, mirroring the spear's material cost) plus the 2.5s cooldown.
 const CROSSBOW_SPEED = 110;                       // fast, sniper-ish bolt
 const CROSSBOW_RANGE = Math.round(WORLD*0.65);    // ~325 — almost all the way across the map
+const CROSSBOW_COST  = { horn:1 };                // 1 rhino horn per bolt (unlimited was too strong — Steven)
 function kitFireCrossbow(){
+  // Ammo gate — refuse + name the shortfall, no lockout on a failed shot
+  // (return false → useActiveAbility skips cooldown + sound), then deduct on success.
+  if(hornCount < CROSSBOW_COST.horn){
+    showKillfeed('🏹 Crossbow needs '+CROSSBOW_COST.horn+' rhino horn (have '+hornCount+')');
+    return false;
+  }
   const dir  = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation).normalize();
   const mesh = buildBoltMesh();
   mesh.position.copy(camera.position);
   mesh.lookAt(mesh.position.clone().add(dir));    // tip leads (built along -Z like the spear)
   scene.add(mesh);
   thrownRocks.push({ mesh, vel:dir.clone().multiplyScalar(CROSSBOW_SPEED), dist:0, crossbow:true });
+  hornCount -= CROSSBOW_COST.horn;                // deduct a horn (HUD reads hornCount in updateHUD)
   playSound('throw');
   return true;
 }
 // ---- ADS scope zoom (Rhino Crossbow only) ----
 const BASE_FOV = 75, SCOPE_FOV = 30;              // base is the game default; zoomed ≈ 2.5× (Steven asked ~30°)
-function scopeActive(){ return scopeHeld && progress.abilities[progress.activeAbility]==='kit_crossbow'; }
+function scopeActive(){ return (scopeHeld || scopeToggle) && progress.abilities[progress.activeAbility]==='kit_crossbow'; }
 function updateScope(dt){
   const want = scopeActive() ? SCOPE_FOV : BASE_FOV;
   if(Math.abs(camera.fov - want) > 0.05){
@@ -5161,7 +5176,7 @@ function dnState(t){
 function spawnDailyWave(){
   for(let i=0;i<3 && lionMeshes.length    < 14;       i++) spawnLion(Math.random()<0.75?'lioness':'male');
   for(let i=0;i<2 && gorillaMeshes.length < GOR.MAX;  i++) spawnGorilla();
-  for(let i=0;i<1 && rhinoMeshes.length   < RHINO.MAX;i++) spawnRhino();
+  for(let i=0;i<2 && rhinoMeshes.length   < RHINO.MAX;i++) spawnRhino();   // 2 rhinos/day (was 1)
 }
 
 // At each day↔night turn every animal recovers to full health (the herds and
@@ -5198,7 +5213,7 @@ function updateDayNight(dt){
   if(dn.isDay !== wasDay){ healAllAnimals(); }     // day↔night turn → every animal reheals
   if(dn.isDay && !wasDay){                          // DAWN → a new day
     dn.day++;
-    spawnDailyWave();                               // 3 lions, 2 gorillas, 1 rhino
+    spawnDailyWave();                               // 3 lions, 2 gorillas, 2 rhinos
     showKillfeed('🌅 Day '+dn.day+' — fresh predators move in');
   }
 }
@@ -5582,7 +5597,8 @@ function resetGame(){
   toothCount = 0;    // craft materials are run-scoped (the crafted item, once unlocked, persists across runs)
   tuskCount  = 0;
   hornCount  = 0;
-  scopeHeld  = false;                                        // drop any held crossbow scope on restart
+  scopeHeld  = false; scopeToggle = false;                   // drop any held/toggled crossbow scope on restart
+  crouchToggle = false;                                      // stand up on restart (clear the crouch tap-toggle)
   if(camera){ camera.fov = BASE_FOV; camera.updateProjectionMatrix(); }
   const sc = document.getElementById('scope'); if(sc){ sc.style.display='none'; sc._on=false; }
   kills      = 0;
@@ -5614,7 +5630,7 @@ function resetGame(){
   prideAlert.timer = 0;
   spawnPride();
   spawnHerds();              // populate the savanna with prey (Phase 6)
-  spawnDailyWave();          // day-1 predators: +3 lions, +2 gorillas, +1 rhino (then again each dawn)
+  spawnDailyWave();          // day-1 predators: +3 lions, +2 gorillas, +2 rhinos (then again each dawn)
 
   gameState = 'playing';
   document.getElementById('overlay').style.display='none';
