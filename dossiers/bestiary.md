@@ -20,8 +20,8 @@
   invisible; running in the open makes you a target.**
 
 **Day / night (a 4-minute cycle — 2 min day, 2 min night):**
-- **Every dawn a fresh wave spawns: 3 lions, 2 gorillas, 1 rhino** (population caps: lions 14, gorillas 5,
-  rhinos 5). Elephants, giraffes and the plains herbivores arrive in herds.
+- **Every dawn a fresh wave spawns: 3 lions, 2 gorillas, 2 rhinos, 10 wild dogs** (population caps: lions 14,
+  gorillas 5, rhinos 6, wild dogs 15). Elephants, giraffes and the plains herbivores arrive in herds.
 - **At every day↔night turn, ALL animals heal to full.** Wearing something down resets each half-cycle.
 - Lions are most active at **dawn, dusk and through the night**; they laze in shade at midday.
 
@@ -142,6 +142,19 @@ bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks f
 - **Stunned by rocks/spears.** Only **flees when near death.**
 - **Everything fights it and it fights everything** — a rhino/gorilla/lion it tramples will turn on it.
 
+### 🐕 African wild dogs — the fast pack (they run you down)
+- HP **25 each** — squishy alone (a spear/bolt/boomerang one-shots one, ~2 rocks), **lethal as a pack**.
+- **A pack of 10 spawns every dawn** (cap 15). They roam loosely, hunt prey, and hunt **you** cautiously
+  when you're **visible standing/sprinting** — crouch-in-grass hides you from them like everything else.
+- **Super fast.** Their cautious hunt (~14) you can still outrun by **sprinting (16)**… but once provoked they
+  hit **~18 — faster than a sprint and faster than any lion. You cannot outrun a vendetta pack.**
+- **PACK VENDETTA — the key danger.** Wound **any one dog** (any hit) and the **ENTIRE pack** turns on you
+  and **NEVER disengages** — unlike the lion pride, they don't calm down. It ends only when **the whole pack
+  is dead or you die.** Your only escape is to **climb a tree** (grapple) or **put a wall between you and them**.
+- Bite ~11 each, fast (~1.5 s). Ten of them at once shreds you. **A treed or walled-off player is safe** —
+  they mill at the base but can't reach you. **Rivals with lions** — they trade small nips on contact.
+- **No body-part drop** — they're pure challenge, no crafting reward.
+
 ### 🦒 Giraffe — tall prey, too fast to chase
 - HP 40 (~a lion). **Faster than you even sprinting** — you can't run it down; spear/rock or ambush it.
 - **Flees** when threatened or hit (like all prey). Takes **3 spears.** Towering, spotted, walks with a gait.
@@ -159,5 +172,8 @@ to sneak up for a pounce. All die to **1 spear** (kudu takes 2).
 - **Lions** hunt you & prey; mob the gorilla/rhino/elephant; **whole pride retaliates** if one is hurt.
 - **Gorilla** fights lions, rhinos, elephants, and hunts you.
 - **Rhino** & **Elephant** fight back against anything that attacks them (including each other).
+- **Wild dogs** hunt you & prey; **rivals with lions** (small skirmishes on contact, not to the death);
+  **avoid** the gorilla/rhino/elephant (too big). Wound one → the **whole pack hunts you relentlessly** until
+  the pack is wiped or you die (they never calm, unlike the pride).
 - **Prey** (zebra→kudu, giraffe) just flee — except a cornered **warthog** gores back.
 - **Everything reheals at each day/night turn**, so bring enough firepower to finish a fight in one round.

@@ -2,6 +2,35 @@
 
 Running log of changes, newest first. One line per change.
 
+## 2026-07-18 — 🐕 African wild dogs (new pack predator)
+- **New animal: African wild dogs** — a fast pack predator (`DOG` config / `dogMeshes[]` / `makeWildDog` /
+  `updateWildDogs`), self-contained like the rhino, riding every existing seam (hitbox, HP bar, killObj
+  disposal, dawn wave, minimap). **Lion AI untouched** (only added the dog↔lion skirmish, computed inside
+  `updateWildDogs`).
+- **Spawn:** a **pack of 10 every dawn**, cap **15** (old: n/a — new animal). HP **25** each (squishy — a
+  spear/bolt/boomerang one-shots, ~2 rocks), bite **11** @ 1.5 s.
+- **Super fast:** roam 5 · cautious hunt **14** (≈1.3× lion base — a sprint still outruns it) · **vendetta
+  chase 18** (faster than a sprint (16) and any lion — can't be outrun).
+- **PACK VENDETTA (the headline):** wound ANY dog → `wildDogsVendetta=true` → the **whole pack** hunts you
+  relentlessly at chase speed and **never disengages** (unlike the lion pride, which calms in 12 s). Ends only
+  when the pack is wiped or you die. Set inline at each player-damage site (thrown/boomerang/melee all got a
+  `'dog'` branch). Escape = climb a tree or put a wall between you and them (dogs are wall-blocked and can't
+  reach a treed player).
+- **Baseline (unprovoked):** loose-pack roam, hunt nearby prey, hunt an EXPOSED player (crouch-in-grass hides
+  you). **Rivals with lions:** trade small nips on contact (dog −8/lion −3), kept off the pride watchdog so a
+  skirmish never becomes a pride war or blames the player. **Avoid** gorilla/rhino/elephant.
+- **Mesh:** ~19-part procedural mottled canid (segmented body cylinder, tapered head, upright ears, 4 swinging
+  cone legs, stump tail), ~⅔ a lion. Minimap dots (red on vendetta). No body-part drop (pure challenge).
+- Verified in-engine: 10 spawn/day + cap 15; attack one → all 10 converge (84→30 m in 3 s) & vendetta stays on
+  through 15 s; pack-wipe clears it; skirmish trades damage without mis-blaming the player; disposal 0 orphans
+  (objs/geo/tex all return to baseline); zero console errors. Mesh silhouette confirmed via offline PIL render
+  (browser-pane WebGL renders black — a known headless limitation).
+- **⚠ Balance — flagged, NOT silently tuned (Steven asked):** 10 relentless super-fast dogs from day 1 can
+  overwhelm a fresh run before you have tools. Kept as requested; mitigations already present (baseline 14 is
+  out-runnable by sprint 16, spawn 55–95 m out, crouch-in-grass hides you, tree/wall is a hard escape → the
+  danger is provoke-triggered). `SPEED_CHASE 18` is the interpretive call: "1.3× lion base" (~14) vs "outrun
+  even sprinting" — went with the gameplay-defining latter for vendetta, the ~1.3× for baseline. See report.
+
 ## 2026-07-18 — G is scope-only (Steven follow-up)
 - **[G] no longer does grapple at all.** Was context-sensitive (Crossbow→scope, else→grapple drop); now it's
   **scope-toggle only** — when the Crossbow is the active ability it toggles the ADS zoom, otherwise G does

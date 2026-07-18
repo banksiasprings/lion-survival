@@ -421,6 +421,48 @@ The game's **first crafting economy**: two animal drops that unlock two new kit 
   5→6`. Base FOV stays 75 so the zoom still reads ~2.5×. Scope+crouch gain a tap-toggle alongside the
   hold — no hold behaviour removed.
 
+## African wild dogs — fast pack predator (2026-07-18f)
+A whole new animal (`DOG` config / `dogMeshes[]` / `makeWildDog`/`spawnWildDog`/`updateWildDogs`), built as a
+self-contained module right after the rhino — mirrors the rhino's shape (config → mesh → spawn → per-frame
+FSM → dead-loop) so it rides every existing seam (`setHitbox`/`attachHealthBar`, `killObj` disposal, the
+floating HP bar, the daily dawn wave, the minimap). **Lion AI untouched.**
+- **Fast squishy pack.** `HEALTH 25` (a spear/bolt/boomerang one-shots; ~2 rocks), bite `11`, `BITE_CD 1.5`.
+  Three speeds: `SPEED_ROAM 5` (loose amble), `SPEED_HUNT 14` (≈1.3× lion base ~10.5 — a **sprint (16) still
+  outruns it**), `SPEED_CHASE 18` (**vendetta only** — faster than a sprint & any lion, can't be outrun).
+- **`wildDogsVendetta` (global flag) is the headline mechanic.** Any player hit on any dog sets it **inline at
+  the damage site** (thrown rock/spear/bolt in `updateThrownRocks`, `boomerangStrike`, `dealKitMelee` — all
+  gained a `'dog'` branch; `nearestAnimalInFront` + the boomerang strike-list + `updateHealthBars` +
+  `updatePrey`'s flee scan all gained `dogMeshes`). While set, **every** dog paths straight to the player at
+  `SPEED_CHASE`, ignoring hunger/prey/lions/day-night/leash, and **never disengages** (unlike the lion pride's
+  12 s `prideThreat` timer). Ends ONLY when the pack is fully wiped (`dogMeshes.length===0` in the dead-loop)
+  or the player dies (`resetGame` clears it). Set inline (not via an HP-drop watchdog) because
+  `updateThrownRocks` runs *after* `updateWildDogs` in `animate`, so a watchdog could miss a one-shot kill.
+- **Baseline (no vendetta):** roam in a loose pack (drift toward the pack centroid), hunt the nearest prey
+  within `HUNT_PREY_RANGE 26`, and cautiously hunt an **exposed** player (`DETECT 24 × stealth.visMul` →
+  crouch-in-grass shrinks it, `playerOffGround` excludes a treed/walled player). A hurt non-vendetta dog
+  flees; a vendetta dog never does.
+- **Lion skirmish (rivals, not to the death).** Computed *inside* `updateWildDogs` so lion AI stays untouched:
+  a dog adjacent to a lion (`SKIRMISH_RANGE 3.4`, incidental — dogs don't seek lions) trades a small mutual
+  nip (`DOG_NIP 3` to the lion, `LION_NIP 8` back). The nip to the lion is **hidden from the pride-retaliation
+  watchdog** (`lion._prevHealth -= DOG_NIP`) so a skirmish never spins up a pride war or mis-blames the
+  player — verified: after a skirmish the lion's `lastHitKind` stays null and `prideThreat.ent` never points
+  at the player.
+- **Escape = tree or wall.** `dogStep` runs `collideWalls` (any wall stops the pack); `dogBite` refuses through
+  `playerOffGround()`/`segHitsWall` — a treed or walled-off player is safe.
+- **Mesh:** ~19-part procedural mottled canid (tan/brown/black/cream segmented body cylinder, tapered head +
+  muzzle + nose, two upright ear cones, four hip-pivot cone legs that swing via `animateDog`, stump tail w/
+  cream tip), `scale 0.92` (~⅔ a lion), per-dog materials/geometries → freed by `killObj`. Verified 0 orphans
+  (objs/geo/tex all return to baseline on a spawn→dispose cycle). **No body-part drop** (pure challenge).
+- **Minimap:** small orange dots, **red when on a vendetta**. Reheal at each day/night turn (`healAllAnimals`).
+- **⚠ Balance (report, not silently tuned):** Steven flagged this himself — **10 relentless super-fast dogs
+  from day 1, before the player has tools, can overwhelm a fresh run.** Kept as asked (the vendetta is the
+  point). Mitigations already in: baseline hunt (14) is out-runnable by a sprint (16), dogs spawn 55–95 m
+  away, crouch-in-grass hides you, and a tree/wall is a hard escape — so the danger is provoke-triggered, not
+  unavoidable. `SPEED_CHASE 18` is the one interpretive call: Steven said both "~1.3× lion base" (→~14) *and*
+  "outrun even sprinting" — the latter is gameplay-defining, so vendetta chase = 18 (>sprint 16) and baseline
+  hunt = 14 (the ~1.3×). Skirmish tuning (dogs lose 8/nip, lions 3/nip) makes dogs give ground so lions win
+  skirmishes without it becoming a war. All flagged; nothing else rebalanced.
+
 ## Stone walls, Hammer & axe/hammer-on-walls (2026-07-18)
 Two new kit abilities + wall HP, all riding the existing wall/`kitSwings` disposal paths.
 - **Stone Wall (`kit_stonewall` 🧱)** — a second wall material. Placement shares `placeKitWall(stone)`

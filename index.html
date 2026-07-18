@@ -351,6 +351,8 @@ let carcasses   = [];   // Phase 6: edible kills (prey) — food for player & li
 let vultures    = [];   // Phase 6: circling birds over fresh kills
 let gorillaMeshes = [];   // Phase 6/7: advanced apex gorilla — FSM sleeping|perched|roaming|engaging|smashing|treegrab
 let rhinoMeshes = [];     // neutral megafauna — roams, charges only when provoked
+let dogMeshes   = [];     // African wild dogs — fast pack predator (see DOG / updateWildDogs)
+let wildDogsVendetta = false;  // set when the player wounds ANY dog → the WHOLE pack hunts you relentlessly until the pack is wiped or you die (never calms, unlike the lion pride)
 
 // Savanna environment (Phase 1) — also feeds stealth (Phase 3) & grapple (Phase 4)
 let wind = { angle: rand(0, Math.PI*2), dirX: 0, dirZ: 0, speed: 0.55, time: 0 };
@@ -2708,10 +2710,11 @@ function updatePrey(dt){
       return;
     }
 
-    // nearest predator (lion, gorilla, or player) — prey flee all of them
+    // nearest predator (lion, gorilla, wild dog, or player) — prey flee all of them
     let threat=null, td=Infinity;
     lionMeshes.forEach(L=>{ const d=L.pos.distanceTo(P.pos); if(d<td){td=d;threat=L.pos;} });
     gorillaMeshes.forEach(G=>{ if(G.state==='perched'||G.state==='sleeping') return; const d=G.pos.distanceTo(P.pos); if(d<td){td=d;threat=G.pos;} });
+    dogMeshes.forEach(D=>{ const d=D.pos.distanceTo(P.pos); if(d<td){td=d;threat=D.pos;} });
     const pd=player.pos.distanceTo(P.pos);
     // Grass/crouch (stealth.visMul) hide you from the herd too — creep up to ambush.
     if(pd<td && !player.inTree && pd < P.fleeDist*stealth.visMul){ td=pd; threat=player.pos; }
@@ -3806,6 +3809,226 @@ function updateRhinos(dt){
 }
 
 // =====================================================================
+//  AFRICAN WILD DOGS  (fast pack predator — relentless vendetta if provoked)
+// =====================================================================
+// Squishy alone (25 hp), lethal as a pack. Roam loosely, hunt prey, and hunt an
+// EXPOSED player cautiously (crouch-in-grass hides you, × stealth.visMul). Wound
+// ANY dog and the WHOLE pack goes berserk (wildDogsVendetta) — they path straight
+// to you at a speed that OUTRUNS a sprint and never disengage until the pack is
+// wiped or you die (a tree or a wall is the only escape). Rivals with lions: they
+// trade small nips on contact (kept off the pride-retaliation watchdog so it stays
+// a skirmish, not a pride war — lion AI untouched). No body-part drop (challenge only).
+const DOG = {
+  MAX: 15,                // hard cap on simultaneous dogs (the 10/day dawn wave fills toward this)
+  PACK: 10,               // spawned per dawn wave
+  HEALTH: 25,             // squishy — a spear/bolt/boomerang one-shots, ~2 rocks
+  BITE_DMG: 11,           // moderate bite vs the player (10-12)
+  PREY_BITE: 22,          // vs prey (the pack pulls a kill down fast)
+  BITE_CD: 1.5,           // seconds between one dog's bites
+  MELEE_RANGE: 2.2,       // bites inside this
+  SPEED_ROAM: 5,          // loose amble in pack formation
+  SPEED_HUNT: 14,         // cautious hunt (~1.3× lion base ~10.5) — a sprint (16) still outruns this
+  SPEED_CHASE: 18,        // VENDETTA berserk — faster than a sprinting player (16) & any lion; can't be outrun
+  DETECT: 24,             // baseline sight of an exposed player (× stealth.visMul → crouch-in-grass hides you)
+  LEASH: 40,              // baseline give-up range (VENDETTA ignores the leash entirely)
+  TURN: 7,                // nimble — turns quickly
+  HUNT_PREY_RANGE: 26,    // grabs the nearest prey inside this while roaming
+  SKIRMISH_RANGE: 3.4,    // nips an adjacent lion this close (incidental — dogs don't SEEK lions)
+  SKIRMISH_CD: 1.6,
+  DOG_NIP: 3,             // dmg a dog does to a lion (small — a skirmish, not a war)
+  LION_NIP: 8,            // dmg a lion does back (lions win skirmishes → dogs give ground)
+  FLEE_HP: 0.28,          // a hurt NON-vendetta dog backs off; vendetta dogs never flee
+  BODY_R: 0.5,            // wall-collision radius (a wall stops the pack — your cover)
+  KB: 5, STUN: 0.15,      // small knockback + micro-stagger on a bite
+  ROCK_STUN: 0.9,         // a rock briefly freezes one
+};
+
+function makeWildDog(x, z){
+  const group = new THREE.Group();
+  // Mottled "painted dog" palette — patchy tan / dark-brown / black / cream.
+  const tan   = new THREE.MeshLambertMaterial({color:0xb0692b});
+  const brown = new THREE.MeshLambertMaterial({color:0x5c3a1d});
+  const black = new THREE.MeshLambertMaterial({color:0x201509});
+  const cream = new THREE.MeshLambertMaterial({color:0xd8c69a});
+  const dark  = new THREE.MeshLambertMaterial({color:0x111111});  // eyes / nose
+  const box = (w,h,d,mat,px,py,pz)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); m.position.set(px,py,pz); group.add(m); return m; };
+  const cyl = (rt,rb,h,mat,px,py,pz,rx)=>{ const m=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,7),mat); m.position.set(px,py,pz); if(rx) m.rotation.x=rx; group.add(m); return m; };
+  const cone= (r,h,mat,px,py,pz,rx)=>{ const m=new THREE.Mesh(new THREE.ConeGeometry(r,h,6),mat); m.position.set(px,py,pz); if(rx) m.rotation.x=rx; group.add(m); return m; };
+
+  // Body — a horizontal cylinder ~2 long, split into mottled segments (axis Z).
+  const seg=(rt,rb,len,mat,pz)=>{ const m=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,len,8),mat); m.position.set(0,0.86,pz); m.rotation.x=Math.PI/2; group.add(m); return m; };
+  seg(0.34,0.32,0.72, tan,   0.55);            // chest
+  seg(0.34,0.34,0.72, brown, -0.05);           // mid — brown patch
+  seg(0.32,0.26,0.72, tan,   -0.66);           // rump — tan patch
+  box(0.34,0.30,0.5, black, 0.0,1.00,-0.15);   // dark saddle across the back
+  box(0.30,0.24,0.42,cream, 0.13,0.72,0.35);   // off-centre cream flank patch (mottle)
+
+  // Neck + tapered head.
+  cyl(0.19,0.25,0.55, tan,  0,0.98,1.02, Math.PI/2.3);   // neck (angled up toward the head)
+  box(0.30,0.30,0.42, brown, 0,1.12,1.35);               // skull
+  box(0.19,0.17,0.34, tan,   0,1.05,1.63);               // tapered muzzle
+  box(0.12,0.10,0.10, dark,  0,1.03,1.83);               // nose
+  box(0.055,0.055,0.05,dark,-0.10,1.19,1.5);             // eyes
+  box(0.055,0.055,0.05,dark, 0.10,1.19,1.5);
+  cone(0.15,0.32, black, -0.14,1.36,1.26, -0.12);        // big upright round ears (painted-dog signature)
+  cone(0.15,0.32, black,  0.14,1.36,1.26, -0.12);
+
+  // Stump tail with a white tip.
+  cyl(0.08,0.05,0.42, brown, 0,0.94,-1.06, -0.7);
+  cone(0.075,0.18, cream, 0,0.86,-1.30, -0.9);
+
+  // Four slender cone legs on hip pivots (tip down; pivot baked to the hip so the
+  // gait swings them like the rhino's legs).
+  const legGeo = new THREE.ConeGeometry(0.12,0.86,6); legGeo.rotateX(Math.PI); legGeo.translate(0,-0.42,0);
+  const legMats=[brown,tan,tan,brown];
+  const legs=[];
+  [[-0.24,0.5],[0.24,0.5],[-0.24,-0.52],[0.24,-0.52]].forEach(([lx,lz],i)=>{
+    const l=new THREE.Mesh(legGeo, legMats[i]); l.position.set(lx,0.64,lz); group.add(l); legs.push(l);
+  });
+
+  group.children.forEach(c=>{ if(c.isMesh) c.userData.origMat = c.material; });   // hit-flash restore refs
+  const ty = terrainY(x,z);
+  group.position.set(x,ty,z); group.scale.setScalar(0.92); group.castShadow=true; group.name='wilddog';   // ~2/3 the bulk of a lion
+  scene.add(group);
+
+  const D = {
+    mesh:group, legs, pos:new THREE.Vector3(x,ty,z),
+    health:DOG.HEALTH, maxHealth:DOG.HEALTH,
+    heading:rand(0,Math.PI*2), biteCd:rand(0,DOG.BITE_CD), skirmishCd:0,
+    stunTimer:0, flashTimer:0, _preyTarget:null,
+    wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(), wanderTimer:rand(1,3),
+    legPhase:Math.random()*Math.PI*2,
+  };
+  group.rotation.y = D.heading;
+  setHitbox(D); attachHealthBar(D); dogMeshes.push(D);
+  return D;
+}
+
+function spawnWildDog(){ const a=rand(0,Math.PI*2), r=rand(55,95); makeWildDog(clamp(player.pos.x+Math.cos(a)*r,-MAPR,MAPR), clamp(player.pos.z+Math.sin(a)*r,-MAPR,MAPR)); }
+
+function animateDog(D, dt, gait){
+  D.legPhase += dt*(7 + (gait||0)*7);   // quick canid turnover
+  D.legs.forEach((l,i)=>{ l.rotation.x = Math.sin(D.legPhase + i*Math.PI/2) * (0.18 + (gait||0)*0.5); });
+}
+
+// Smooth-face the heading toward (dx,dz).
+function faceDog(D, dx, dz, dt){
+  const a=Math.atan2(dx,dz); let dd=a-D.heading;
+  while(dd>Math.PI)dd-=Math.PI*2; while(dd<-Math.PI)dd+=Math.PI*2;
+  D.heading += dd*Math.min(1,DOG.TURN*dt); D.mesh.rotation.y=D.heading;
+}
+// Step toward (tx,tz): move, clamp to world, BLOCK on walls (a wall is your cover),
+// drop to terrain, face the heading.
+function dogStep(D, tx, tz, speed, dt){
+  const bx=D.pos.x, bz=D.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
+  if(d>0.001){ const step=Math.min(speed*dt,d); D.pos.x+=dx/d*step; D.pos.z+=dz/d*step; }
+  D.pos.x=clamp(D.pos.x,-HALF+1,HALF-1); D.pos.z=clamp(D.pos.z,-HALF+1,HALF-1);
+  collideWalls(D.pos, DOG.BODY_R);
+  D.pos.y=terrainY(D.pos.x,D.pos.z); D.mesh.position.copy(D.pos);
+  faceDog(D, tx-bx, tz-bz, dt);
+}
+// Land a bite on the current target (player or prey). A treed / walled-off player
+// is safe — the pack mills at the base but can't reach you.
+function dogBite(D, what){
+  if(what==='player'){
+    if(playerOffGround() || segHitsWall(D.pos.x,D.pos.z, player.pos.x,player.pos.z)) return;
+    player.health -= DOG.BITE_DMG;
+    const ax=player.pos.x-D.pos.x, az=player.pos.z-D.pos.z, al=Math.hypot(ax,az)||1;
+    player.knockback.x=(ax/al)*DOG.KB; player.knockback.z=(az/al)*DOG.KB;
+    player.stunTimer = Math.max(player.stunTimer||0, DOG.STUN);
+    shakeTime=Math.max(shakeTime,0.16); shakeAmt=0.005; playSound('spotted');
+    showKillfeed(wildDogsVendetta ? '🐕 The pack tears into you!' : '🐕 A wild dog bites you!');
+  } else if(what==='prey' && D._preyTarget && D._preyTarget.health>0){
+    const P=D._preyTarget;
+    P.health -= DOG.PREY_BITE; P.flashTimer=0.2; P.state='flee'; P.alertTimer=3;
+    if(P.species==='elephant') P.aggroT = ELE.RAGE_TIME;
+    if(P.health<=0) showKillfeed('🐕 The pack pulls down a '+P.label+'!');
+  }
+}
+
+function updateWildDogs(dt){
+  if(gameState!=='playing') return;
+  // (Wild dogs arrive in the daily dawn wave — see spawnDailyWave.)
+
+  // Pack centroid — dogs drift toward it when roaming so they stay a loose pack.
+  let cx=0,cz=0; if(dogMeshes.length){ dogMeshes.forEach(D=>{ cx+=D.pos.x; cz+=D.pos.z; }); cx/=dogMeshes.length; cz/=dogMeshes.length; }
+
+  dogMeshes.forEach(D=>{
+    D.biteCd=Math.max(0,D.biteCd-dt); D.skirmishCd=Math.max(0,D.skirmishCd-dt);
+    if(D.flashTimer>0){ D.flashTimer-=dt; const f=D.flashTimer>0; D.mesh.children.forEach(c=>{ if(c.isMesh) c.material=f?FLASH_MAT:c.userData.origMat; }); }
+
+    // STUNNED by a rock — brief freeze.
+    if((D.stunTimer||0)>0){ D.stunTimer-=dt; D.pos.y=terrainY(D.pos.x,D.pos.z); D.mesh.position.copy(D.pos); animateDog(D,dt,0); return; }
+
+    // ---- Lion skirmish (rivals) — only when NOT on a vendetta, and only if a lion
+    // is already adjacent (dogs don't hunt lions). Small mutual nip; the nip to the
+    // lion is HIDDEN from the pride-retaliation watchdog (_prevHealth adjusted) so a
+    // skirmish never spins up a pride war and the lion AI stays untouched.
+    if(!wildDogsVendetta && D.skirmishCd<=0){
+      let lion=null, ld=DOG.SKIRMISH_RANGE;
+      lionMeshes.forEach(L=>{ if(L.health<=0) return; const d=L.pos.distanceTo(D.pos); if(d<ld){ ld=d; lion=L; } });
+      if(lion){
+        lion.health -= DOG.DOG_NIP; lion.flashTimer=Math.max(lion.flashTimer||0,0.2);
+        if(lion._prevHealth!=null) lion._prevHealth -= DOG.DOG_NIP;   // keep this off the vendetta watchdog
+        D.health -= DOG.LION_NIP; D.flashTimer=0.2; D.skirmishCd=DOG.SKIRMISH_CD;
+      }
+    }
+
+    // ---- Pick a target ----
+    let tgtPos=null, chaseSpd=DOG.SPEED_HUNT, biteWhat=null, leashed=true;
+    if(wildDogsVendetta){
+      // BERSERK: straight at the player, relentless — ignore hunger, danger, day/night, leash.
+      tgtPos=player.pos; chaseSpd=DOG.SPEED_CHASE; biteWhat='player'; leashed=false;
+    } else if(D.health < D.maxHealth*DOG.FLEE_HP){
+      // Hurt (and not avenging the pack) → give ground from the nearest lion / exposed player.
+      let fx=0,fz=0,bd=Infinity,found=false;
+      const consider=p=>{ const d=Math.hypot(p.x-D.pos.x,p.z-D.pos.z); if(d<bd){bd=d;fx=p.x;fz=p.z;found=true;} };
+      lionMeshes.forEach(L=>{ if(L.health>0) consider(L.pos); });
+      if(!playerOffGround()) consider(player.pos);
+      if(found && bd<16){ const ax=D.pos.x-fx, az=D.pos.z-fz, al=Math.hypot(ax,az)||1; dogStep(D, D.pos.x+ax/al*10, D.pos.z+az/al*10, DOG.SPEED_CHASE, dt); animateDog(D,dt,1.5); return; }
+      // nothing close → fall through to roam
+    } else {
+      // Cautiously hunt an exposed player (crouch-in-grass shrinks DETECT), else the nearest prey.
+      if(!playerOffGround()){
+        const dp=Math.hypot(player.pos.x-D.pos.x, player.pos.z-D.pos.z);
+        if(dp < DOG.DETECT*stealth.visMul){ tgtPos=player.pos; chaseSpd=DOG.SPEED_HUNT; biteWhat='player'; }
+      }
+      if(!tgtPos){
+        let prey=null, pd=DOG.HUNT_PREY_RANGE;
+        preyMeshes.forEach(P=>{ if(P.health<=0) return; const d=P.pos.distanceTo(D.pos); if(d<pd){ pd=d; prey=P; } });
+        if(prey){ tgtPos=prey.pos; chaseSpd=DOG.SPEED_HUNT; biteWhat='prey'; D._preyTarget=prey; }
+      }
+    }
+
+    if(tgtPos && !(leashed && Math.hypot(tgtPos.x-D.pos.x, tgtPos.z-D.pos.z) > DOG.LEASH)){
+      const dx=tgtPos.x-D.pos.x, dz=tgtPos.z-D.pos.z, d=Math.hypot(dx,dz);
+      if(d > DOG.MELEE_RANGE){
+        dogStep(D, tgtPos.x, tgtPos.z, chaseSpd, dt); animateDog(D, dt, 1.6); return;
+      } else {
+        faceDog(D, dx, dz, dt); D.pos.y=terrainY(D.pos.x,D.pos.z); D.mesh.position.copy(D.pos); animateDog(D, dt, 0.4);
+        if(D.biteCd<=0){ dogBite(D, biteWhat); D.biteCd=DOG.BITE_CD; }
+        return;
+      }
+    }
+
+    // ---- ROAM in a loose pack ----
+    D.wanderTimer-=dt;
+    if(D.wanderTimer<0){ D.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); D.wanderTimer=rand(2,4); }
+    let tx=D.pos.x+D.wanderDir.x*8, tz=D.pos.z+D.wanderDir.z*8;
+    if(dogMeshes.length>1){ const kx=cx-D.pos.x, kz=cz-D.pos.z, kd=Math.hypot(kx,kz); if(kd>12){ tx+=kx*0.5; tz+=kz*0.5; } }
+    if(Math.hypot(D.pos.x,D.pos.z) > HALF-6){ tx=-D.pos.x; tz=-D.pos.z; }
+    dogStep(D, tx, tz, DOG.SPEED_ROAM, dt); animateDog(D, dt, 0.6);
+  });
+
+  // Downed dog → just vanish (no carcass, no drop — pure challenge). Wiping the whole
+  // pack ends the vendetta (a fresh dawn pack starts calm again until you provoke it).
+  for(let i=dogMeshes.length-1;i>=0;i--){
+    if(dogMeshes[i].health<=0){ killObj(dogMeshes[i].mesh); dogMeshes.splice(i,1); showKillfeed('🐕 A wild dog is down!'); }
+  }
+  if(wildDogsVendetta && dogMeshes.length===0) wildDogsVendetta=false;
+}
+
+// =====================================================================
 //  GRAPPLE
 // =====================================================================
 function drawGrappleLine(pt){
@@ -4112,7 +4335,7 @@ function updateHealthBars(dt){
     if(Math.max(0, Math.ceil(o.health)) !== hb.drawn) drawHealthBar(o);
   };
   lionMeshes.forEach(step); preyMeshes.forEach(step);
-  gorillaMeshes.forEach(step); rhinoMeshes.forEach(step);
+  gorillaMeshes.forEach(step); rhinoMeshes.forEach(step); dogMeshes.forEach(step);
 }
 
 function updateThrownRocks(dt){
@@ -4169,6 +4392,16 @@ function updateThrownRocks(dt){
         R.stunTimer = Math.max(R.stunTimer||0, (r.spear||r.crossbow) ? RHINO.SPEAR_STUN : RHINO.ROCK_STUN);
         R.target = player; R.targetKind = 'player'; R.aggroTimer = RHINO.AGGRO_TIME;   // it locks onto you
         hit = true; showKillfeed(R.health<=0 ? ic+' The rhino is down!' : '🦏 The rhino wheels on you!');
+      }
+    });
+    // Wild dogs — squishy: a spear/bolt one-shots, a rock takes ~2. ANY hit sets the
+    // whole-pack vendetta (they avenge their own, relentless, until wiped or you die).
+    if(!hit) dogMeshes.forEach(D=>{
+      if(projHit(r, D)){
+        D.health -= r.crossbow ? 50 : r.spear ? D.maxHealth : 15*m;   // spear/bolt one-shot; rock ~2
+        D.flashTimer = 0.25; D.stunTimer = Math.max(D.stunTimer||0, DOG.ROCK_STUN);
+        wildDogsVendetta = true;                                       // ← the whole pack turns on you
+        hit = true; showKillfeed(D.health<=0 ? ic+' Wild dog down — the pack turns on you!' : '🐕 You wound a dog — the pack turns on you!');
       }
     });
 
@@ -4436,6 +4669,7 @@ function updateBoomerang(r, dt, i){
   strike(preyMeshes,'prey');
   strike(gorillaMeshes,'gorilla', G=>G.state==='perched'||G.state==='sleeping');
   strike(rhinoMeshes,'rhino');
+  strike(dogMeshes,'dog');
   if(r.t >= r.life){ killObj(r.mesh); thrownRocks.splice(i,1); playSound('collect'); }   // caught
 }
 // Apply the boomerang's 100-dmg hit, reusing each animal's wound + retaliation hooks.
@@ -4457,6 +4691,10 @@ function boomerangStrike(kind, o){
     o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, RHINO.SPEAR_STUN);
     o.target = player; o.targetKind = 'player'; o.aggroTimer = RHINO.AGGRO_TIME;   // it wheels on you
     showKillfeed(o.health<=0 ? '🪃 Boomerang kill — rhino!' : '🪃 Boomerang cracks the rhino!');
+  } else if(kind==='dog'){
+    o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, DOG.ROCK_STUN);
+    wildDogsVendetta = true;                                          // the whole pack turns on you
+    showKillfeed(o.health<=0 ? '🪃 Boomerang kill — wild dog! The pack turns on you!' : '🪃 Boomerang cracks a dog — the pack turns on you!');
   }
 }
 // ---- Rhino Crossbow: a flat, long-range bolt (50 dmg) with a scope-zoom ----
@@ -4603,6 +4841,7 @@ function nearestAnimalInFront(range, minDot){
   scan(preyMeshes,'prey');
   scan(gorillaMeshes,'gorilla', G=>G.state==='perched'||G.state==='sleeping');
   scan(rhinoMeshes,'rhino');
+  scan(dogMeshes,'dog');
   return best;
 }
 // Melee tool identity for kill/hit messages — the equipped tool names ITSELF and its
@@ -4639,6 +4878,11 @@ function dealKitMelee(hit, dmg, tool){
     o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, RHINO.ROCK_STUN);
     o.target = player; o.targetKind = 'player'; o.aggroTimer = RHINO.AGGRO_TIME;   // it wheels on you
     showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the rhino — it wheels on you!');
+  } else if(hit.kind==='dog'){
+    t='wild dog';
+    o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, DOG.ROCK_STUN);
+    wildDogsVendetta = true;                                          // the whole pack turns on you
+    showKillfeed(o.health<=0 ? kill()+' The pack turns on you!' : tool.icon+' The '+tool.name+' '+tool.hit+' a dog — the pack turns on you!');
   }
 }
 function kitAxe(){
@@ -5175,6 +5419,7 @@ function spawnDailyWave(){
   for(let i=0;i<3 && lionMeshes.length    < 14;       i++) spawnLion(Math.random()<0.75?'lioness':'male');
   for(let i=0;i<2 && gorillaMeshes.length < GOR.MAX;  i++) spawnGorilla();
   for(let i=0;i<2 && rhinoMeshes.length   < RHINO.MAX;i++) spawnRhino();   // 2 rhinos/day (was 1)
+  for(let i=0;i<DOG.PACK && dogMeshes.length < DOG.MAX;  i++) spawnWildDog();   // 10 wild dogs/day (cap 15)
 }
 
 // At each day↔night turn every animal recovers to full health (the herds and
@@ -5184,6 +5429,7 @@ function healAllAnimals(){
   preyMeshes.forEach(P=>{ P.health=P.maxHealth; });
   gorillaMeshes.forEach(G=>{ G.health=G.maxHealth; });
   rhinoMeshes.forEach(R=>{ R.health=R.maxHealth; });
+  dogMeshes.forEach(D=>{ D.health=D.maxHealth; });
 }
 
 function updateDayNight(dt){
@@ -5505,6 +5751,13 @@ function drawMinimap(){
     mmCtx.beginPath(); mmCtx.arc(px,py,5.5,0,Math.PI*2); mmCtx.fill();
   });
 
+  // Wild dogs — small quick dots; red-hot when the pack is on a vendetta (hunting you).
+  dogMeshes.forEach(D=>{
+    mmCtx.fillStyle = wildDogsVendetta ? '#ff2d2d' : '#e6772a';
+    const [px,py]=toMM(D.pos.x-player.pos.x, D.pos.z-player.pos.z);
+    mmCtx.beginPath(); mmCtx.arc(px,py,3,0,Math.PI*2); mmCtx.fill();
+  });
+
   // Player dot
   mmCtx.fillStyle='#00ff88';
   mmCtx.beginPath(); mmCtx.arc(C,C,5,0,Math.PI*2); mmCtx.fill();
@@ -5569,6 +5822,7 @@ function resetGame(){
   [...preyMeshes].forEach(P=>killObj(P.mesh));
   [...gorillaMeshes].forEach(G=>killObj(G.mesh));
   [...rhinoMeshes].forEach(R=>killObj(R.mesh));
+  [...dogMeshes].forEach(D=>killObj(D.mesh));
   [...carcasses].forEach(c=>{ removeVultures(c); killObj(c.mesh); });
   [..._dustPuffs].forEach(d=>killObj(d.mesh));
   if(grapple.line){ killObj(grapple.line); }
@@ -5586,6 +5840,8 @@ function resetGame(){
   vultures.length   = 0;
   gorillaMeshes.length = 0;
   rhinoMeshes.length = 0;
+  dogMeshes.length = 0;
+  wildDogsVendetta = false;   // fresh run → the pack starts calm again
   _dustPuffs.length = 0;
 
   grapple   = { active:false, point:null, line:null, mode:null, perch:null, tree:null };
@@ -5658,6 +5914,7 @@ function animate(){
   updatePrey(dt);             // herbivores: graze / herd / flee (Phase 6)
   updateGorillas(dt);         // territorial gorilla (Phase 7)
   updateRhinos(dt);           // neutral rhinos — roam, charge when provoked
+  updateWildDogs(dt);         // fast pack predator — hunt/roam, relentless vendetta if provoked
   updateHealthBars(dt);       // floating HP bars (after every animal has moved)
   updateCarcasses(dt);
   updateVultures(dt);
