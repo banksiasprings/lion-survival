@@ -154,6 +154,7 @@ body.touch .kb-only{display:none}
   font-family:inherit;padding:0}
 .tc-btn:active,.tc-btn.on{background:rgba(241,196,15,0.28);border-color:#f1c40f;
   box-shadow:0 0 12px rgba(241,196,15,0.5)}
+.tc-btn.disabled{opacity:0.32;border-color:#555;box-shadow:none}
 .tc-btn .tc-lab{position:absolute;bottom:-13px;left:50%;transform:translateX(-50%);
   font-size:8px;letter-spacing:0.5px;opacity:0.7;white-space:nowrap;text-shadow:0 1px 2px #000}
 /* big primary — Use active tool */
@@ -371,6 +372,11 @@ let dn = {
 // (The old wood-cost tool hotbar was removed 2026-07-16 in favour of the side kit.)
 let woodCount  = 0;
 let rockCount  = 0;  // held rocks
+// Craft materials (run-scoped like wood/rock; the crafted item, once unlocked, persists).
+// Lion teeth drop from lions YOU kill → craft the Lion Tooth Necklace (gates pounce).
+// Elephant tusks drop from any elephant death → craft the Tusk Boomerang.
+let toothCount = 0;
+let tuskCount  = 0;
 
 // =====================================================================
 //  SHOP / ABILITY-ACCESSORY META-PROGRESSION
@@ -410,7 +416,13 @@ const SHOP_ITEMS = [
     desc:'Drop a permanent STONE barrier — elephants and gorillas CANNOT smash it (only a Hammer brings it down). Up to 10 walls total. Costs 5 rocks. No cooldown.', cd:0 },
   { id:'kit_hammer',  type:'ability', icon:'🔨', name:'Hammer',
     desc:'Swing a heavy maul: smash a stone OR wood wall, or land a crushing blow (67) on the animal in front. 1.4s cooldown.', cd:1.4 },
+  { id:'kit_boomerang', type:'ability', icon:'🪃', name:'Tusk Boomerang',
+    desc:'Hurl a carved elephant-tusk boomerang: 100 damage, arcs out and RETURNS to your hand. 20s cooldown. Craft: 1 elephant tusk.',
+    cd:20, craft:{ tusk:1 } },
   // ---- Accessories (passive while equipped; 2 slots) ----
+  { id:'lion_necklace', type:'accessory', icon:'🦷', name:'Lion Tooth Necklace',
+    desc:'Strung from a lion\'s fang. While worn you can POUNCE ([Q] / pounce button) — without it, no pounce. Craft: 1 lion tooth.',
+    craft:{ tooth:1 } },
   { id:'camo_cloak',    type:'accessory', icon:'🧥', name:'Camo Cloak',
     desc:'Muted hides break your outline — 30% harder for anything to see you.', starter:true },
   { id:'swift_boots',   type:'accessory', icon:'👟', name:'Swift Boots',
@@ -430,6 +442,8 @@ let buffs = { adrenaline:0, smoke:0, eagleEye:0 };   // seconds remaining on tim
 let abilityFX = { fireTorch:null }; // { group, light, flame, on } — a disposable Three object
 let kitWalls  = [];                 // { mesh } permanent Palisade Wall chunks (mesh also lives in wallMeshes)
 let kitSwings = [];                 // { mesh, t } transient Hand Axe swing arcs — self-dispose
+let skyHammers = [];                // { grp,... } Hammer "from the sky" VFX — fall, impact, fade
+let _impactFlashes = [];            // { mesh,mat,life } bright ground bursts under a landing sky hammer
 let EQUIP = { speedMul:1, visMul:1, healthRegenMul:1, hungerDrainMul:1 };  // per-frame passive modifiers
 let uiPaused = false;               // true while the in-game loadout overlay is open (sim frozen)
 let shopContext = 'menu';           // 'menu' | 'game' — where Close returns to
@@ -1399,7 +1413,7 @@ function registerControls(){
 //  give us unified touch/mouse + real multi-touch (move with one thumb, look/
 //  fire with the other) via pointerId + setPointerCapture.
 // =====================================================================
-let _tcSprintBtn=null, _tcCrouchBtn=null, _tcAttack=null;
+let _tcSprintBtn=null, _tcCrouchBtn=null, _tcAttack=null, _tcPounceBtn=null;
 function initTouchControls(){
   const forced = /[?&]touch=1/.test(location.search);
   IS_TOUCH = forced || ('ontouchstart' in window) || (navigator.maxTouchPoints||0) > 0;
@@ -1460,6 +1474,7 @@ function initTouchControls(){
   }, {passive:false});
   _tcSprintBtn = document.querySelector('[data-touch="sprint"]');
   _tcCrouchBtn = document.querySelector('[data-touch="crouch"]');
+  _tcPounceBtn = document.querySelector('[data-touch="pounce"]');
   _tcAttack    = document.getElementById('tc-attack');
 
   // ---- Ability toolbar taps (reuses #abilitybar; renderAbilityBar rebuilds the slots,
@@ -1498,6 +1513,7 @@ function updateTouchUI(){
   if(!IS_TOUCH) return;
   if(_tcSprintBtn) _tcSprintBtn.classList.toggle('on', !!keys['ShiftLeft']);
   if(_tcCrouchBtn) _tcCrouchBtn.classList.toggle('on', !!keys['KeyC'] || player.crouching);
+  if(_tcPounceBtn) _tcPounceBtn.classList.toggle('disabled', !hasNecklace());   // greyed until the necklace is worn
   // Big attack button mirrors the active tool's icon (spear/axe/hammer/…), so
   // it reads as "use this". Falls back to a paw when no ability is equipped.
   if(_tcAttack){
@@ -2242,11 +2258,15 @@ function updateLions(dt){
   // Remove dead lions
   for(let i=lionMeshes.length-1;i>=0;i--){
     if(lionMeshes[i].health<=0){
-      spawnCorpse(lionMeshes[i].pos.clone());
-      killObj(lionMeshes[i].mesh);
+      const L=lionMeshes[i];
+      spawnCorpse(L.pos.clone());
+      // A lion YOU killed drops a tooth (craft material for the Lion Tooth Necklace).
+      // Gated on lastHitKind so gorilla/rhino kills across the map can't be farmed.
+      if(L.lastHitKind==='player'){ toothCount++; showKillfeed('🦁 Lion down! 🦷 +1 lion tooth'); }
+      else showKillfeed('🦁 Lion down!');
+      killObj(L.mesh);
       lionMeshes.splice(i,1);
       kills++;
-      showKillfeed('🦁 Lion down!');
     }
   }
 
@@ -2696,7 +2716,11 @@ function updatePrey(dt){
 
   // dead prey → edible carcass
   for(let i=preyMeshes.length-1;i>=0;i--){ if(preyMeshes[i].health<=0){
-    const P=preyMeshes[i]; spawnCarcass(P.pos.clone(), P.food, P.species); killObj(P.mesh); preyMeshes.splice(i,1);
+    const P=preyMeshes[i];
+    // A downed elephant drops a tusk (craft material for the Tusk Boomerang). No player-gate:
+    // a 300-HP bull that fights back is virtually never killed by anything but the player.
+    if(P.species==='elephant'){ tuskCount++; showKillfeed('🐘 Elephant down! 🦴 +1 elephant tusk'); }
+    spawnCarcass(P.pos.clone(), P.food, P.species); killObj(P.mesh); preyMeshes.splice(i,1);
   }}
 
   // keep the ecosystem stocked
@@ -2748,8 +2772,11 @@ function updateVultures(dt){
 // ---- player hunting (Phase 6) ----
 // Pounce: a melee lunge at the prey you're facing. A hidden grass ambush hits
 // 3× (stealth kill on small prey); a standing pounce is weak. Warthogs gore back.
+// True while the Lion Tooth Necklace accessory is worn — the gate that unlocks pounce.
+function hasNecklace(){ return progress.accessories.includes('lion_necklace'); }
 function pouncePrey(){
   if(player.inTree || player._pounceCd>0) return;
+  if(!hasNecklace()){ showKillfeed('🦷 Need the Lion Tooth Necklace to pounce'); return; }
   player._pounceCd = 0.8;
   const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
   fwd.y=0; if(fwd.lengthSq()<0.001){ fwd.set(0,0,-1); } fwd.normalize();
@@ -3905,6 +3932,20 @@ function buildSpearMesh(){
 
 // (buildSpearMesh is used by the Spear kit ability — see kitThrowSpear.)
 
+// Carved elephant-tusk boomerang: two ivory arms meeting at a right angle, lying flat
+// in the XZ plane so it whirls about the vertical axis like a thrown boomerang.
+function buildBoomerangMesh(){
+  const g = new THREE.Group();
+  const ivory   = new THREE.MeshLambertMaterial({color:0xe8e0cc});   // polished tusk
+  const bandMat = new THREE.MeshLambertMaterial({color:0xbfa27a});   // carved tip band
+  const arm1 = new THREE.Mesh(new THREE.BoxGeometry(0.92,0.09,0.2), ivory);   arm1.position.x = 0.34;
+  const arm2 = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.09,0.92), ivory);   arm2.position.z = 0.34;
+  const tip1 = new THREE.Mesh(new THREE.BoxGeometry(0.14,0.1,0.22), bandMat); tip1.position.x = 0.78;
+  const tip2 = new THREE.Mesh(new THREE.BoxGeometry(0.22,0.1,0.14), bandMat); tip2.position.z = 0.78;
+  g.add(arm1); g.add(arm2); g.add(tip1); g.add(tip2);
+  return g;
+}
+
 // Measure an animal's hit cylinder from its actual mesh (so thrown weapons hit the
 // WHOLE body, not a tiny sphere at its feet). Called once per spawn.
 function setHitbox(o){
@@ -4011,6 +4052,7 @@ function updateHealthBars(dt){
 function updateThrownRocks(dt){
   for(let i=thrownRocks.length-1;i>=0;i--){
     const r = thrownRocks[i];
+    if(r.boomerang){ updateBoomerang(r, dt, i); continue; }   // returning arc — its own physics + hit model
     r.mesh.position.addScaledVector(r.vel, dt);
     r.dist += r.vel.length()*dt;
     r.vel.y -= 5*dt; // light gravity → flatter, faster-feeling throw
@@ -4175,6 +4217,7 @@ function useActiveAbility(){
     buffs.eagleEye = 8;
     showKillfeed('🦅 Eagle eye — the savanna revealed');
   } else if(id==='kit_spear'){ did = kitThrowSpear();      quiet = true; }
+  else if(id==='kit_boomerang'){ did = kitThrowBoomerang();quiet = true; }
   else if(id==='kit_wall'){      did = kitPlaceWall();      quiet = true; }
   else if(id==='kit_stonewall'){ did = kitPlaceStoneWall();quiet = true; }
   else if(id==='kit_fire'){      did = kitPlaceCampfire();  quiet = true; }
@@ -4249,6 +4292,73 @@ function kitThrowSpear(){
   thrownRocks.push({ mesh, vel:dir.clone().multiplyScalar(52), dist:0, mult:5, spear:true });
   playSound('throw');
   return true;
+}
+// ---- Tusk Boomerang: 100 dmg, arcs out and RETURNS to the player's hand ----
+// Rides thrownRocks[] (same disposal path as the spear) but flies a parametric out-
+// and-back curve rather than the ballistic rock physics. Hits each target once per
+// throw (hitSet), so a single throw is one 100-dmg strike (one-shots a lion; two
+// throws down a gorilla; three down an elephant). 20s cooldown (generic gate).
+const BOOM = { life:1.8, reach:26, spread:8 };   // ~1.8s round trip, out ~26m, lateral swing ~8m
+function kitThrowBoomerang(){
+  const dir = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation); dir.y=0;
+  if(dir.lengthSq()<1e-4) dir.set(0,0,-1); dir.normalize();
+  const side = new THREE.Vector3(dir.z, 0, -dir.x);   // left-perpendicular → the curve's lateral swing
+  const mesh = buildBoomerangMesh();
+  mesh.position.copy(camera.position);
+  scene.add(mesh);
+  thrownRocks.push({ mesh, boomerang:true, t:0, life:BOOM.life,
+                     origin:player.pos.clone(),
+                     fwd:dir, side, hitSet:new Set() });
+  playSound('throw');
+  return true;
+}
+// Drive one boomerang along its arc; splice it (caught) when the round trip completes.
+function updateBoomerang(r, dt, i){
+  r.t += dt;
+  const p = Math.min(1, r.t / r.life);
+  const along = Math.sin(p*Math.PI)   * BOOM.reach;    // out then back (0 at both ends)
+  const lat   = Math.sin(p*Math.PI*2) * BOOM.spread;   // S-swing, returns to 0 at ends
+  const pos = r.origin.clone().addScaledVector(r.fwd, along).addScaledVector(r.side, lat);
+  // Curl the return toward wherever the player is NOW so it lands back in hand.
+  const homing = clamp((p-0.55)/0.45, 0, 1) * 0.7;
+  pos.x += (player.pos.x - pos.x)*homing;
+  pos.z += (player.pos.z - pos.z)*homing;
+  // Terrain-follow at body height (~1m over the ground it's crossing) so it reliably
+  // intersects animal hit cylinders instead of sailing over their heads.
+  pos.y = terrainY(pos.x, pos.z) + 1.0 + Math.sin(p*Math.PI)*0.4;
+  r.mesh.position.copy(pos);
+  r.mesh.rotation.y += dt*26;                          // whirl (lies flat → spins about vertical)
+  // 100 dmg to anything it passes over, once each per throw.
+  const strike = (list, kind, skip)=>list.forEach(o=>{
+    if(r.hitSet.has(o) || (skip && skip(o)) || !projHit(r, o)) return;
+    r.hitSet.add(o); boomerangStrike(kind, o);
+  });
+  strike(lionMeshes,'lion');
+  strike(preyMeshes,'prey');
+  strike(gorillaMeshes,'gorilla', G=>G.state==='perched'||G.state==='sleeping');
+  strike(rhinoMeshes,'rhino');
+  if(r.t >= r.life){ killObj(r.mesh); thrownRocks.splice(i,1); playSound('collect'); }   // caught
+}
+// Apply the boomerang's 100-dmg hit, reusing each animal's wound + retaliation hooks.
+function boomerangStrike(kind, o){
+  const D = 100;
+  o.flashTimer = 0.25;
+  if(kind==='lion'){
+    o.health -= D; o.stunTimer = 5; o.state='stunned';
+    o.lastHitBy=player; o.lastHitKind='player';                 // pride vendetta (watchdog reads the HP drop)
+    showKillfeed(o.health<=0 ? '🪃 Boomerang kill — lion!' : '🪃 Boomerang cracks a lion!');
+  } else if(kind==='prey'){
+    o.health -= D; o.stunTimer = 2.5; o.state='flee'; o.alertTimer = 3;
+    if(o.species==='elephant') o.aggroT = ELE.RAGE_TIME;        // enrages the bull
+    showKillfeed(o.health<=0 ? '🪃 Boomerang kill — '+o.label+'!' : '🪃 Boomerang hits the '+o.label);
+  } else if(kind==='gorilla'){
+    o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, GOR.SPEAR_STUN);
+    showKillfeed(o.health<=0 ? '🪃 Boomerang kill — gorilla!' : '🪃 Boomerang staggers the gorilla!');
+  } else if(kind==='rhino'){
+    o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, RHINO.SPEAR_STUN);
+    o.target = player; o.targetKind = 'player'; o.aggroTimer = RHINO.AGGRO_TIME;   // it wheels on you
+    showKillfeed(o.health<=0 ? '🪃 Boomerang kill — rhino!' : '🪃 Boomerang cracks the rhino!');
+  }
 }
 const KIT_WALL_MAX = 10;   // active-wall cap (permanent walls — bounds VRAM; enemies smashing them frees space)
 const WALL_HP = { wood:120, stone:200 };   // player structure HP: axe(42) fells wood in 3, hammer(67) in 2; hammer smashes stone in 3
@@ -4428,20 +4538,30 @@ function kitAxe(){
 // that, a crushing melee blow (67, harder than the axe's 42) on the animal ahead.
 function kitHammer(){
   spawnHammerSwing();
+  let impact = null;                          // where the sky-hammer VFX will crash down
   // Priority 1: smash a wall in front — wood or stone. This is the hammer's whole job.
   const wi = wallInFront(3.6, 0.30);
   if(wi>=0){
+    impact = wallMeshes[wi].position.clone();
     damageWall(wi, 67, '🔨');
     shakeTime = Math.max(shakeTime, 0.16); shakeAmt = 0.006;
-    return true;
+  } else {
+    // Priority 2: crushing melee on an animal in front. Reach = PLAYER.pounceRange so the
+    // hammer's swing lands as far as the lion's signature pounce (was a stubby 3.6).
+    const target = nearestAnimalInFront(PLAYER.pounceRange, 0.30);
+    if(target){
+      impact = target.o.pos.clone();
+      dealKitMelee(target, 67, MELEE_TOOL.hammer);
+      shakeTime = Math.max(shakeTime, 0.18); shakeAmt = 0.007;
+    }
   }
-  // Priority 2: crushing melee on an animal in front. Reach = PLAYER.pounceRange so the
-  // hammer's swing lands as far as the lion's signature pounce (was a stubby 3.6).
-  const target = nearestAnimalInFront(PLAYER.pounceRange, 0.30);
-  if(target){
-    dealKitMelee(target, 67, MELEE_TOOL.hammer);
-    shakeTime = Math.max(shakeTime, 0.18); shakeAmt = 0.007;
+  // Sky-hammer VFX lands on the struck target (or just ahead on a whiff). The swing's
+  // damage already applied above — this is the showy follow-through, not a replacement.
+  if(!impact){
+    const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+    impact = player.pos.clone().addScaledVector(fwd, 4);
   }
+  spawnSkyHammer(impact);
   playSound('throw');
   return true;
 }
@@ -4471,6 +4591,73 @@ function spawnHammerSwing(){
   g.add(haft); g.add(head);
   scene.add(g);
   kitSwings.push({ mesh:g, t:0.2, life:0.2 });
+}
+// ---- Hammer "from the sky": a big procedural maul crashes down onto the swing's
+//      impact point. Purely cosmetic — the swing's damage already landed; this is the
+//      showy follow-through (crash → flash + dust + screen shake). Procedural Group,
+//      threaded through killObj via updateSkyHammers / clearKitFX (no leak). ----
+const SKY_HEIGHT = 11;    // spawn height above the ground
+const SKY_FALL   = 0.32;  // fall time (Steven: 300–400ms — tuned to 320ms)
+function spawnSkyHammer(impact){
+  const s = 4.2;                                           // ~4× the in-hand hammer (Steven: 4–6×)
+  const grp = new THREE.Group();
+  const haftMat = new THREE.MeshLambertMaterial({color:0x6b4a2a});
+  const headMat = new THREE.MeshLambertMaterial({color:0xb9bec8, flatShading:true});
+  const bandMat = new THREE.MeshLambertMaterial({color:0x8a9099, flatShading:true});
+  const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.07*s,0.085*s,2.1*s,8), haftMat);
+  haft.position.y = 1.2*s;                                 // long handle rises well above the head (reads as a maul)
+  const head = new THREE.Mesh(new THREE.BoxGeometry(1.35*s,0.62*s,0.8*s), headMat);
+  head.position.y = 0;                                     // wide flat maul head at group origin → strikes the ground point
+  const collar = new THREE.Mesh(new THREE.BoxGeometry(0.42*s,0.5*s,0.42*s), bandMat);
+  collar.position.y = 0.32*s;                              // where the haft seats into the head
+  grp.add(haft); grp.add(head); grp.add(collar);
+  const groundY = terrainY(impact.x, impact.z);
+  grp.position.set(impact.x, groundY + SKY_HEIGHT, impact.z);
+  grp.rotation.y = Math.random()*Math.PI;
+  scene.add(grp);
+  skyHammers.push({ grp, x:impact.x, z:impact.z, groundY, t:0, landed:false });
+  playSound('throw');
+}
+function onSkyHammerImpact(h){
+  shakeTime = Math.max(shakeTime, 0.15); shakeAmt = Math.max(shakeAmt, 0.008);   // ~150ms shake
+  spawnImpactFlash(h.x, h.groundY, h.z);                                          // bright ground burst
+  for(let k=0;k<5;k++){                                                           // dust ring (crater puff)
+    const a=Math.random()*6.28, rr=Math.random()*1.3;
+    spawnDustPuff(new THREE.Vector3(h.x+Math.cos(a)*rr, 0, h.z+Math.sin(a)*rr));
+  }
+  playSound('place');
+}
+function updateSkyHammers(dt){
+  for(let i=skyHammers.length-1;i>=0;i--){
+    const h = skyHammers[i]; h.t += dt;
+    if(!h.landed){
+      const p = Math.min(1, h.t/SKY_FALL), e = p*p;        // ease-in → gravity-like acceleration
+      h.grp.position.y = h.groundY + SKY_HEIGHT*(1-e);
+      if(p>=1){ h.landed=true; h.t=0; h.grp.position.y=h.groundY; onSkyHammerImpact(h); }
+    } else {                                               // sit briefly, then fade out ~120ms & dispose
+      const f = 1 - h.t/0.12;
+      h.grp.traverse(o=>{ if(o.material){ o.material.transparent=true; o.material.opacity=Math.max(0,f); } });
+      if(h.t>=0.12){ killObj(h.grp); skyHammers.splice(i,1); }
+    }
+  }
+}
+function spawnImpactFlash(x, y, z){
+  const geo = new THREE.CircleGeometry(1.0, 20);
+  const mat = new THREE.MeshBasicMaterial({color:0xfff2c0, transparent:true, opacity:0.9,
+                depthWrite:false, side:THREE.DoubleSide, blending:THREE.AdditiveBlending});
+  const m = new THREE.Mesh(geo, mat);
+  m.rotation.x = -Math.PI/2; m.position.set(x, y+0.08, z); m.name='hammerflash';
+  scene.add(m);
+  _impactFlashes.push({ mesh:m, mat, life:0.35, max:0.35 });
+}
+function updateImpactFlashes(dt){
+  for(let i=_impactFlashes.length-1;i>=0;i--){
+    const f=_impactFlashes[i]; f.life-=dt;
+    const p = 1 - f.life/f.max;
+    f.mesh.scale.setScalar(1 + p*5);                       // expanding ring
+    f.mat.opacity = Math.max(0, (f.life/f.max)*0.9);
+    if(f.life<=0){ killObj(f.mesh); _impactFlashes.splice(i,1); }
+  }
 }
 
 // ---- Per-frame ability tick: cooldowns, buff timers, EQUIP mods, torch flicker, kit FX ----
@@ -4508,6 +4695,8 @@ function updateAbilities(dt){
     const frac = s.t / s.life;                          // fade each material off its own base opacity (handles the hammer Group)
     s.mesh.traverse(o=>{ if(o.material){ const m=o.material; if(m.userData.op0==null) m.userData.op0=m.opacity; m.opacity=m.userData.op0*frac; } });
   }
+  updateSkyHammers(dt);      // big "hammer from the sky" VFX (fall → impact → fade)
+  updateImpactFlashes(dt);   // bright ground bursts under a landed sky hammer
 
   tickAbilityBar();
 }
@@ -4517,6 +4706,10 @@ function updateAbilities(dt){
 function clearKitFX(){
   [...kitSwings].forEach(s=>killObj(s.mesh));
   kitSwings.length = 0;
+  [...skyHammers].forEach(h=>killObj(h.grp));        // sky-hammer VFX Groups
+  skyHammers.length = 0;
+  [..._impactFlashes].forEach(f=>killObj(f.mesh));   // ground-burst discs
+  _impactFlashes.length = 0;
   kitWalls.length  = 0;   // meshes disposed with wallMeshes in resetGame
 }
 // Dispose every placed Palisade Wall right now (used when the Wall ability is
@@ -4617,6 +4810,11 @@ function renderShop(){
   const lab=document.createElement('div'); lab.className='lo-lab'; lab.style.marginTop='6px';
   lab.textContent='ACCESSORIES — up to '+ACCESSORY_SLOTS+' (optional) · passive'; row.appendChild(lab);
   for(let i=0;i<ACCESSORY_SLOTS;i++) row.appendChild(makeLoadoutSlot('accessory', i));
+  // Crafting materials readout (the shop is fullscreen, so the HUD counters aren't visible here).
+  const mats=document.createElement('div'); mats.className='lo-lab'; mats.style.marginTop='6px';
+  mats.textContent='CRAFTING MATERIALS — 🦷 '+toothCount+' lion '+(toothCount===1?'tooth':'teeth')+
+                   ' · 🦴 '+tuskCount+' elephant '+(tuskCount===1?'tusk':'tusks');
+  row.appendChild(mats);
 
   // Catalogue grid
   const grid = document.getElementById('shop-grid');
@@ -4628,7 +4826,12 @@ function renderShop(){
     card.className='sc-card'+(equipped?' equipped':'');
     let btns='';
     if(!unlocked){
-      btns=`<button class="sc-btn unlock" data-act="unlock" data-id="${it.id}">Unlock (free)</button>`;
+      if(it.craft){
+        const ok=canCraft(it);
+        btns=`<button class="sc-btn ${ok?'unlock':'locked'}" data-act="unlock" data-id="${it.id}">Craft (${craftCostStr(it)})</button>`;
+      } else {
+        btns=`<button class="sc-btn unlock" data-act="unlock" data-id="${it.id}">Unlock (free)</button>`;
+      }
     } else if(equipped){
       btns=`<button class="sc-btn unequip" data-act="unequip" data-id="${it.id}">Unequip</button>`;
     } else {
@@ -4689,15 +4892,41 @@ function equipToSlot(kind, index, id){
   reconcileKitWalls();
   saveProgress(); renderShop(); renderAbilityBar();
 }
+// Craft-cost helpers. `craft` items cost gathered materials (teeth/tusks) instead of
+// being free — the game's first crafting sink. canCraft gates the button; the strings
+// name the cost in the catalogue and in the refusal message.
+function canCraft(it){
+  if(!it.craft) return true;
+  if(it.craft.tooth && toothCount < it.craft.tooth) return false;
+  if(it.craft.tusk  && tuskCount  < it.craft.tusk ) return false;
+  return true;
+}
+function craftCostStr(it){
+  const p=[];
+  if(it.craft.tooth) p.push(it.craft.tooth+' 🦷');
+  if(it.craft.tusk)  p.push(it.craft.tusk+' 🦴');
+  return p.join(' + ');
+}
 function unlockItem(id){
-  if(!progress.unlocked.has(id)){
-    progress.unlocked.add(id);
-    // Auto-equip only into a genuinely FREE slot — never displaces what you chose.
-    const it=SHOP_BY_ID[id];
-    const arr=it.type==='ability'?progress.abilities:progress.accessories;
-    const free=arr.indexOf(null); if(free>=0) equipToSlot(it.type, free, id);
-    saveProgress(); renderShop(); renderAbilityBar();
+  if(progress.unlocked.has(id)) return;
+  const it=SHOP_BY_ID[id];
+  if(it.craft){                                   // craftable — must pay materials
+    if(!canCraft(it)){
+      const need=[];
+      if(it.craft.tooth && toothCount<it.craft.tooth) need.push(it.craft.tooth+' lion tooth (have '+toothCount+')');
+      if(it.craft.tusk  && tuskCount <it.craft.tusk ) need.push(it.craft.tusk +' elephant tusk (have '+tuskCount +')');
+      flashShopMsg('🔒 Craft '+it.name+' needs '+need.join(' + '));
+      return;
+    }
+    if(it.craft.tooth) toothCount -= it.craft.tooth;
+    if(it.craft.tusk)  tuskCount  -= it.craft.tusk;
+    showKillfeed(it.icon+' Crafted the '+it.name+'!');
   }
+  progress.unlocked.add(id);
+  // Auto-equip only into a genuinely FREE slot — never displaces what you chose.
+  const arr=it.type==='ability'?progress.abilities:progress.accessories;
+  const free=arr.indexOf(null); if(free>=0) equipToSlot(it.type, free, id);
+  saveProgress(); renderShop(); renderAbilityBar();
 }
 function equipFromCard(id){
   const it=SHOP_BY_ID[id];
@@ -4945,11 +5174,15 @@ function updateHUD(){
   const timeLeft = dn.isDay
     ? HALF_CYCLE - dn.time
     : CYCLE - dn.time;
+  // Craft-material counters appear once you've picked one up (kept out of the way otherwise).
+  let mats='';
+  if(toothCount>0) mats += `<br>🦷 Teeth: ${toothCount}`;
+  if(tuskCount>0)  mats += (toothCount>0?' &nbsp; ':'<br>')+`🦴 Tusks: ${tuskCount}`;
   document.getElementById('topright').innerHTML =
     `${dn.isDay?'☀️ DAY':'🌙 NIGHT'} ${fmtTime(Math.max(0,timeLeft))}<br>`+
     (weather.intensity>0.15?`⛈️ STORM<br>`:'')+
     `🦁 Lions: ${lionMeshes.length}<br>`+
-    `🪨 Rocks: ${rockCount} &nbsp; 🪵 Wood: ${woodCount}`;
+    `🪨 Rocks: ${rockCount} &nbsp; 🪵 Wood: ${woodCount}`+mats;
 
   // Vignette
   const vig = document.getElementById('vignette');
@@ -4976,7 +5209,8 @@ function updateHUD(){
   else if(player.climbing) promptText = '…climbing…';
   else {
     let nearPrey=false; for(const P of preyMeshes){ if(P.pos.distanceTo(player.pos)<PLAYER.pounceRange){ nearPrey=true; break; } }
-    if(nearPrey) promptText = player._hidden ? '[Q] Pounce (ambush ×3!)' : '[Q] Pounce';
+    if(nearPrey) promptText = !hasNecklace() ? '🦷 Craft a Lion Tooth Necklace to pounce'
+                            : player._hidden  ? '[Q] Pounce (ambush ×3!)' : '[Q] Pounce';
   }
   treeObjects.forEach(t=>{ if(t.pos.distanceTo(player.pos)<3.5 && t.cooldown<=0) promptText='[E] Collect Wood'; });
   rockSpawns.forEach(r=>{ if(r.available && r.pos.distanceTo(player.pos)<3) promptText='[E] Pick up Rock'; });
@@ -5213,6 +5447,8 @@ function resetGame(){
 
   woodCount  = 20;   // starter stock: 10 wood walls (2 wood each) buildable from a fresh spawn
   rockCount  = 10;   // starter stock: 2 stone walls (5 rock each) OR throwing ammo — rocks are scarce/premium
+  toothCount = 0;    // craft materials are run-scoped (the crafted item, once unlocked, persists across runs)
+  tuskCount  = 0;
   kills      = 0;
   elapsed    = 0;
   shakeTime  = 0;

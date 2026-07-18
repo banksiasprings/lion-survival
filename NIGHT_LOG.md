@@ -2,6 +2,45 @@
 
 Running log of changes, newest first. One line per change.
 
+## 2026-07-18 — Necklace-gated pounce, tusk boomerang & sky-hammer VFX (Steven's 4 asks)
+- **🦷 Lion Tooth Necklace (accessory) now GATES pounce.** Fresh saves can't pounce until they've killed a
+  lion, harvested its tooth, and crafted the necklace (Steven's "option b" harder start). Modelled as an
+  **accessory** (passive enabler, takes an accessory slot) rather than an ability, because pounce stays on
+  its own `[Q]` / pounce-button control — the necklace is a gate, not an activated tool. `pouncePrey()`
+  early-returns with "🦷 Need the Lion Tooth Necklace to pounce" when `!hasNecklace()`; the desktop prompt
+  and the mobile 🐆 pounce button both grey out / relabel until it's worn. **⚠ Applies to existing saves
+  too** — Steven's live phone loadout persists but has no necklace, so his next run starts with pounce
+  locked until he crafts one. That's the intended harder start, now retroactive.
+- **🦷 lion teeth** drop from lions **YOU** kill (gated on `lastHitKind==='player'` so gorilla-vs-lion
+  carnage across the map can't be farmed — teeth are the necklace's one-time cost). **🦴 elephant tusks**
+  drop from any elephant death (a 300-HP bull that fights back is virtually never killed by anything but
+  the player, so no gate needed). Both are **run-scoped** counters (reset in `resetGame` like wood/rock);
+  the crafted item, once unlocked, persists across runs via the existing `localStorage` kit save.
+- **First crafting sink.** `unlockItem` now honours a `craft:{tooth|tusk}` cost — refuses + names the
+  shortfall if you can't afford it, consumes the materials on success. Necklace = 1 🦷, Boomerang = 1 🦴.
+  Shop cards show **"Craft (1 🦷)"** (greyed via the existing `.sc-btn.locked` when unaffordable); the shop
+  screen shows a **CRAFTING MATERIALS** readout (it's fullscreen, so the HUD counters aren't visible there).
+  HUD `#topright` gains 🦷/🦴 counters that appear once you've picked one up.
+- **🪃 Tusk Boomerang (ability).** New ranged weapon: **100 dmg**, arcs **out ~26 m and RETURNS** to your
+  hand (parametric out-and-back curve + homing toward your *live* position so it comes back even if you
+  moved), **20 s cooldown**. Hits each target **once per throw** (`hitSet`) → one-shots a lion, two throws
+  down a gorilla (160), three down an elephant (300) — matches the brief. Rides `thrownRocks[]` (same
+  disposal path as the spear); flies **terrain-following at body height** so it intersects hit cylinders
+  instead of sailing over heads. Reuses each animal's wound + retaliation hooks (`boomerangStrike`).
+- **🔨 Hammer "from the sky" VFX.** On a hammer swing, a **big procedural maul (~4.2×)** now spawns 11 units
+  above the struck point and **crashes straight down in ~0.32 s** (ease-in gravity), then: **screen shake
+  (~150 ms) + a bright additive ground-flash disc + a 5-puff dust burst**, then fades + disposes ~120 ms
+  after impact. The **in-hand hammer is untouched** — this is a VFX layer on top of the swing; the swing's
+  67 dmg still applies immediately (the sky-hammer is the showy follow-through, not the damage source, so
+  the target can't step out of a delayed hit). Impact point = the wall/animal struck, or 4 m ahead on a whiff.
+- **"fire → burned" kill verb:** already absent. `MELEE_TOOL` only ever held `axe`/`hammer`; spear/rock/
+  pounce/gore name themselves inline — there was no fire verb to remove. Confirmed by grep; ask #4 was a no-op.
+- **Disposal:** two new FX arrays (`skyHammers`, `_impactFlashes`) + the boomerang all thread through
+  `killObj`. Verified in-engine (frozen-sim stepping): boomerang throw→arc(26 m)→return→hit-once(100)→
+  despawn leaves scene children back at baseline (1035); sky-hammer spawn→land(frame 10)→shake+5 dust+1
+  flash→dispose returns to baseline; `resetGame` mid-flight frees all three arrays + resets tooth/tusk; GL
+  context stays alive. **Zero console errors** across the whole test pass.
+
 ## 2026-07-18 — Wall economy, tool reach & correct kill-message names (Steven's 6 asks)
 - **Walls: zero cooldown** — `kit_wall`/`kit_stonewall` `cd` 8/10 → **0**. Placement is now gated by materials, not a timer (verified: 3 walls placed in a single tick, no cooldown-block).
 - **Wood walls cost 2 wood; stone walls cost 5 rocks** (`WALL_COST`). `placeKitWall` checks the counter first (refuses + tells you what's short, no lockout on a failed place) then deducts on success. Rocks are dual-use (throw ammo *or* premium stone walls) → real build-vs-throw tension.

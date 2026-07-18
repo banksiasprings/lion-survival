@@ -1,6 +1,6 @@
 # Lion Survival — Bestiary & Rules (canonical reference)
 
-*The plain-English "how the world works" doc. Kept current — last updated 2026-07-16.*
+*The plain-English "how the world works" doc. Kept current — last updated 2026-07-18.*
 *Exact numbers live in `index.html`: `SPECIES`, `GOR`, `RHINO`, `ELE`, `PLAYER` configs.*
 
 ---
@@ -35,10 +35,22 @@
 **Your weapons & hunting:**
 - **Rocks** (`F`, hold up to 10): chip damage + a long **stun**. Your main tool for stunning big threats.
 - **Spear** (equip the **Spear** kit ability, then **LMB**/`Z`): hurls far harder than a rock, no crafting.
-- **Pounce** (`Q`): a long lunge (range 9, 54 damage); from a **hidden crouch-in-grass ambush it's ×3**
-  (~162 — one-shots most prey). The stealth-hunter play.
+- **Tusk Boomerang** (equip the **🪃 Tusk Boomerang** ability — **craft it from 1 elephant tusk** first):
+  **LMB**/`Z` hurls a carved boomerang that arcs **out ~26 m and RETURNS to your hand** for **100 damage**,
+  20 s cooldown. One-shots a lion, downs a gorilla in 2 throws, an elephant in 3. Hits each target once per throw.
+- **Pounce** (`Q` / pounce button): a long lunge (range 9, 54 damage); from a **hidden crouch-in-grass ambush
+  it's ×3** (~162 — one-shots most prey). The stealth-hunter play. **Requires the 🦷 Lion Tooth Necklace
+  equipped** — without it you *cannot* pounce (the key/button is greyed out). Craft the necklace from **1 lion
+  tooth**, so a **fresh save must kill its first lion the hard way** (axe/hammer/spear/rock) before pouncing prey.
 - **Hitboxes cover the whole body** now — a thrown weapon connects anywhere on an animal (no more having
   to hit its feet).
+
+**Loot drops (craft materials):**
+- **🦷 Lion tooth** — drops from **every lion you kill** (kills by a gorilla/rhino don't count). Feeds the
+  Lion Tooth Necklace. Shown in the HUD once you hold one; carried within a run (reset on death).
+- **🦴 Elephant tusk** — drops from **every elephant that dies**. Feeds the Tusk Boomerang.
+- Crafting spends the material in the **🛒 SHOP** ("Craft" button, greyed if you can't afford it). The
+  crafted item then **persists across runs** like the rest of your kit; the raw teeth/tusks do not.
 
 **Spears-to-kill:** gazelle/impala/warthog/zebra/wildebeest **1** · kudu **2** · giraffe **3** ·
 lion **5** · gorilla **10** · rhino **14** · **elephant 15**.
@@ -72,13 +84,15 @@ Unlocks are **free** (no currency yet) and — like the equipped loadout — **p
 - 🧱 **Stone Wall** — drop a **permanent** stone barrier the gorilla & elephant **cannot smash** — only a Hammer brings it down. Shares the 10-wall cap, 10 s cooldown. 200 HP (hammer fells in 3).
 - 🪝 **Grappling Hook** — reel up into a climbable tree or yank toward any surface in range (same as the tool grapple).
 - 🪓 **Hand Axe** — swing: chop a nearby tree for wood, **fell a wood wall** (42), or land a **heavy melee** blow (42) on the animal in front, 1.2 s cooldown. Can't cut stone.
-- 🔨 **Hammer** — swing: **smash a stone OR wood wall** (67), or land a **crushing melee** blow (67) on the animal in front, 1.4 s cooldown. The demolition tool.
+- 🔨 **Hammer** — swing: **smash a stone OR wood wall** (67), or land a **crushing melee** blow (67) on the animal in front, 1.4 s cooldown. The demolition tool. On each swing a **giant hammer crashes down from the sky** onto the target (flash + dust + screen-shake) — pure spectacle on top of the swing.
+- 🪃 **Tusk Boomerang** — **craft from 1 elephant tusk.** Hurl a boomerang that flies out ~26 m and **returns to your hand** for **100 damage**, 20 s cooldown. One-shots a lion; 2 throws down a gorilla, 3 an elephant.
 - 🏕️ **Campfire** — build a wide, long-lived (~120 s) ring of light that **lions flee**, 12 s cooldown.
 
 *(These five are granted, material-free versions of the classic survival tools — they replaced the old
 bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks feed `F` throws.)*
 
 **Accessories** (passive while equipped):
+- 🦷 **Lion Tooth Necklace** — **craft from 1 lion tooth.** While worn it **unlocks pounce** (`Q` / pounce button); without it you can't pounce at all. The gate on the stealth-hunter play.
 - 🧥 **Camo Cloak** — 30 % harder to see (visMul ×0.7).
 - 👟 **Swift Boots** — 15 % faster on foot.
 - 🦴 **Bone Talisman** — health regen ×2.2.

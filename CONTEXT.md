@@ -328,6 +328,52 @@ currency this cut).
   printed a stagger/wheels-on-you, even on a killing blow). Spear/rock (`updateThrownRocks`) and pounce
   already named themselves correctly and were left alone.
 
+## Craft materials, necklace-gated pounce, tusk boomerang & sky-hammer VFX (2026-07-18c)
+The game's **first crafting economy**: two animal drops that unlock two new kit items.
+- **Craft counters** `toothCount` / `tuskCount` (near `woodCount`/`rockCount`) — **run-scoped** (reset in
+  `resetGame`, like wood/rock); the crafted *item* persists across runs via the existing kit `localStorage`.
+  HUD `#topright` shows 🦷/🦴 counters once you hold one; the fullscreen Shop shows a **CRAFTING MATERIALS**
+  readout in `renderShop` (the HUD isn't visible behind the shop overlay).
+- **Drops.** 🦷 lion teeth drop from lions **you** kill (gated on `L.lastHitKind==='player'` in the
+  `updateLions` dead-lion loop, so gorilla/rhino kills across the map can't be farmed for the one-time
+  necklace cost). 🦴 elephant tusks drop from **any** elephant death (the prey dead-loop, `species==='elephant'`)
+  — a 300-HP bull that fights back is virtually never killed by a non-player, so no gate needed.
+- **Crafting sink.** `unlockItem` honours a `craft:{tooth|tusk}` field on a `SHOP_ITEMS` entry: refuse +
+  `flashShopMsg` the shortfall if unaffordable (`canCraft`), else consume the materials. `craftCostStr`
+  renders "Craft (1 🦷)" on the card (greyed via the pre-existing `.sc-btn.locked` when you can't afford it).
+  All other kit stays free (`craft` absent).
+- **🦷 Lion Tooth Necklace** = an **accessory** (`craft:{tooth:1}`). Modelled as an accessory, NOT an
+  ability, because it's a *passive gate*, not an activated tool — pounce keeps its own `[Q]`/pounce-button
+  control. `hasNecklace()` = `progress.accessories.includes('lion_necklace')`. `pouncePrey()` early-returns
+  (before arming its cooldown) with a "need necklace" killfeed when it's not worn; the desktop pounce prompt
+  and the mobile 🐆 button (`_tcPounceBtn`, toggles `.tc-btn.disabled`) reflect the locked state. **Fresh
+  saves have no necklace → the first lion must be killed without pouncing (axe/hammer/spear/rock)** — Steven's
+  accepted "option b" harder start. Note: pounce only ever targeted *prey*, so the gate means "no prey
+  pouncing until you've earned a lion". Existing saves are affected retroactively (loadout persists, necklace
+  isn't in it).
+- **🪃 Tusk Boomerang** = an **ability** (`craft:{tusk:1}`, `cd:20`). 100 dmg, arcs **out ~26 m and RETURNS**
+  (`BOOM={life:1.8,reach:26,spread:8}`). `kitThrowBoomerang` pushes a `{boomerang:true,…,origin,fwd,side,
+  hitSet}` entry onto `thrownRocks[]`; `updateThrownRocks` routes `r.boomerang` to `updateBoomerang` (its own
+  parametric path: `along=sin(pπ)·reach`, `lat=sin(2pπ)·spread`, homing-lerp toward the live player pos past
+  p=0.55; **terrain-follows at body height** `terrainY+1.0` so it hits cylinders, not thin air). Hits each
+  target **once per throw** (`hitSet`) via `boomerangStrike`, which reuses each animal's wound + stun +
+  retaliation hooks. One-shots a lion; 2 throws down a gorilla, 3 an elephant. Freed on catch (`r.t≥life`)
+  or `resetGame`.
+- **🔨 Sky-hammer VFX.** `kitHammer` computes the impact point (struck wall/animal, or 4 m ahead on a whiff),
+  applies its 67 dmg **immediately as before**, then calls `spawnSkyHammer(impact)` — a big procedural maul
+  (`s=4.2`: wide flat head + collar + long haft) spawned `SKY_HEIGHT=11` up that falls in `SKY_FALL=0.32 s`
+  (ease-in). `updateSkyHammers` (called from `updateAbilities`) lands it → `onSkyHammerImpact`: `shakeTime`
+  bump (~150 ms) + `spawnImpactFlash` (additive `CircleGeometry` disc, `_impactFlashes`, expands+fades) +
+  5× `spawnDustPuff`, then fades the maul ~120 ms and `killObj`s it. The **in-hand swing (`spawnHammerSwing`)
+  is unchanged** — the sky-hammer is cosmetic, so the damage never waits on a 0.32 s fall (target can't dodge
+  it). New arrays `skyHammers` + `_impactFlashes` are torn down in `clearKitFX` (→ reset + game-over) and
+  self-dispose per-frame otherwise.
+- **⚠ Balance (report, not silently tuned):** no starting-stock or existing-damage numbers changed. The
+  necklace gate is the intended difficulty add; the boomerang is deliberately strong (100 dmg) but gated
+  behind killing an elephant (the hardest thing in the game). Autonomous impl choices flagged: necklace =
+  accessory (costs an accessory slot), tooth drop player-gated / tusk not, boomerang flies at body height.
+- **"fire → burned" verb:** never existed in code (`MELEE_TOOL` only had axe/hammer). Nothing to remove.
+
 ## Stone walls, Hammer & axe/hammer-on-walls (2026-07-18)
 Two new kit abilities + wall HP, all riding the existing wall/`kitSwings` disposal paths.
 - **Stone Wall (`kit_stonewall` 🧱)** — a second wall material. Placement shares `placeKitWall(stone)`
