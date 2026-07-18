@@ -92,7 +92,8 @@ not flavour.
       wind scent extends downwind detection; HIDDEN/EXPOSED + spotted-growl + rustle cues)
 - [x] Phase 4 — grappling hook to trees (aim-cone target on climbable acacia/baobab/marula →
       reel up to a branch perch; safe from lions + foliage concealment; staying perched costs no
-      stamina (and regens) so you can wait out any threat; Space/G/RMB drop; drop-attack deals
+      stamina (and regens) so you can wait out any threat; Space/RMB drop (G is scope-only as of
+      2026-07-18e — no longer bound to grapple); drop-attack deals
       damage+stun. Note: target via aim cone,
       NOT geometry raycast — LOD trees don't recurse in raycast.)
 - [x] Phase 5 — atmosphere picks (3): **watering hole** (focal landmark, grass-cleared, lions
@@ -400,8 +401,10 @@ The game's **first crafting economy**: two animal drops that unlock two new kit 
   between `BASE_FOV=75` (game default — untouched) and `SCOPE_FOV=30`, and toggles the `#scope` DOM overlay
   (radial optic vignette + centred green reticle, z-8 below the HUD). **Desktop:** RMB-**hold** zooms while
   the Crossbow is active (`mouseup` releases; else RMB keeps its grapple-drop role) **and [G] tap-toggles**
-  (`!e.repeat`-guarded so auto-repeat can't flutter it; else G keeps its grapple-toggle role — same
-  crossbow-active branch pattern as RMB). **Mobile:** the `[data-touch="scope"]` 🔭 button is a
+  (`!e.repeat`-guarded so auto-repeat can't flutter it). **[G] is scope-only** — as of 2026-07-18e it is no
+  longer bound to grapple at all: when the Crossbow isn't the active ability, G does nothing (grapple lives
+  on its own kit slot via LMB/Z, dropped by RMB/Space). RMB keeps its dual scope/grapple-drop role.
+  **Mobile:** the `[data-touch="scope"]` 🔭 button is a
   **tap-toggle** now (routed through the delegated tap handler → `doTouchAction('scope')` flips
   `scopeToggle`; the old press-and-hold listeners are gone). `updateTouchUI` shows it only while the
   Crossbow is active and clears **both** `scopeHeld` + `scopeToggle` when hidden. The toggle persists across

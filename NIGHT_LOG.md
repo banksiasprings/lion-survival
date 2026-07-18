@@ -2,6 +2,13 @@
 
 Running log of changes, newest first. One line per change.
 
+## 2026-07-18 — G is scope-only (Steven follow-up)
+- **[G] no longer does grapple at all.** Was context-sensitive (Crossbow→scope, else→grapple drop); now it's
+  **scope-toggle only** — when the Crossbow is the active ability it toggles the ADS zoom, otherwise G does
+  nothing. The `else` grapple branch (fire/release) is gone. Grapple is unchanged on its **kit slot** (select
+  it, LMB/Z to fire) and still **drops via RMB/Space**. Verified in-engine: non-Crossbow active → G is a
+  no-op (grapple not fired, scope unchanged); Crossbow active → G on/off. Help text + CONTEXT updated.
+
 ## 2026-07-18 — Crossbow ammo, rhino spawn rate, hold+toggle inputs (Steven's 3 tuning/UX asks)
 - **🏹 Crossbow now costs 1 rhino horn PER SHOT** (was craft-once/unlimited — Steven tested it, "too good").
   New `CROSSBOW_COST={horn:1}`; `kitFireCrossbow` gates like the spear — refuses with **"🏹 Crossbow needs 1

@@ -241,7 +241,7 @@ body.touch #crosshair{opacity:0.5}
     <span class="kb-only">
     WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hold, or tap to toggle — hides in grass)<br>
     <span style="color:#c39bd3">🛒 Your kit is on the LEFT — LMB or Z Use active ability &nbsp;·&nbsp; R Switch &nbsp;·&nbsp; Tab Loadout (pauses) &nbsp;·&nbsp; unlock &amp; equip in the SHOP</span><br>
-    G Grapple → tree (RMB/Space drop · safe from lions while perched) &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; Q Pounce (ambush from grass ×3) &nbsp;|&nbsp; E Eat kill / Collect wood &amp; rocks<br>
+    🪝 Grapple → tree is on your kit (select it, LMB/Z to fire · RMB/Space to drop · safe from lions while perched) &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; Q Pounce (ambush from grass ×3) &nbsp;|&nbsp; E Eat kill / Collect wood &amp; rocks<br>
     <span style="opacity:0.85">🏹 Crossbow equipped? Hold RMB or tap G to scope-zoom, LMB to fire. Each bolt costs 1 rhino horn.</span><br>
     </span>
     <span class="touch-only">
@@ -1394,11 +1394,9 @@ function registerControls(){
       const n = +e.code.slice(5);
       if(n>=1 && n<=ABILITY_SLOTS) setActiveAbility(n-1);
     }
-    if(e.code==='KeyG'){                          // Crossbow active → toggle scope zoom; else dedicated grapple toggle
-      if(progress.abilities[progress.activeAbility]==='kit_crossbow'){ if(!e.repeat) scopeToggle = !scopeToggle; }
-      else if(grapple.active || player.inTree || player.climbing) releaseGrapple();
-      else fireGrapple();
-    }
+    // G is a scope-only key now (Crossbow active → toggle zoom; otherwise nothing).
+    // Grapple is no longer bound to G — it lives on its kit slot (LMB/Z) and drops via RMB/Space.
+    if(e.code==='KeyG' && progress.abilities[progress.activeAbility]==='kit_crossbow' && !e.repeat) scopeToggle = !scopeToggle;
     if(e.code==='KeyC' && !e.repeat) _crouchDownT = performance.now();   // start timing — a brief C press = a tap (see keyup)
     if(e.code==='Space' && player.inTree) dropFromTree();   // drop off the branch
     if(e.code==='KeyF') throwRock();
