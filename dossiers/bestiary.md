@@ -26,7 +26,10 @@
 - Lions are most active at **dawn, dusk and through the night**; they laze in shade at midday.
 
 **Walls & fire:**
-- Player-built walls block most animals — **but the gorilla and the elephant SMASH straight through them.**
+- **Wood walls** (Palisade Wall) block most animals — **but the gorilla and the elephant SMASH straight
+  through them.** An axe fells a wood wall in 3 swings; a hammer in 2.
+- **Stone walls** (new) block everything the same way **but the gorilla and elephant CANNOT smash them** —
+  they're stopped cold. Only a **Hammer** brings a stone wall down (3 swings). A true fortress material.
 - Campfires scare lions off (they flee fire).
 
 **Your weapons & hunting:**
@@ -54,7 +57,7 @@ Unlocks are **free** (no currency yet) and — like the equipped loadout — **p
   abilities; empty slots show a `+` placeholder you can fill (or leave empty) any time. One *equipped*
   ability is *active* (slot 1 by default). You can equip/unequip freely, even mid-run — unequipping a lit
   Fire Torch puts it out.
-- **[Z]** uses the active ability · **[R]** switches which ability is active · **[Tab]** opens the loadout.
+- **[LMB]** or **[Z]** uses the active ability · **[1]–[5]** jump to a slot · **[R]** cycles to the next ability · **[Tab]** opens the loadout.
 - Tap any slot in the loadout screen to open a **quick-equip picker** (choose an item or "Empty this slot");
   each catalogue card has **Unlock/Equip/Unequip**. Slots never auto-fill against your choice.
 
@@ -65,9 +68,11 @@ Unlocks are **free** (no currency yet) and — like the equipped loadout — **p
 - 🌀 **Smoke Screen** — near-invisible (visMul ×0.15) for 6 s, 30 s cooldown.
 - 🦅 **Eagle Eye** — minimap zooms to the whole map and reveals **every** animal for 8 s, 20 s cooldown.
 - 🗡️ **Spear** — hurl a flint spear (heavy ranged damage), no crafting needed, 3 s cooldown.
-- 🪵 **Palisade Wall** — drop a **permanent** wooden barrier for cover (up to **10** up at once), 8 s cooldown. Blocks animals; the gorilla & elephant still smash through.
+- 🪵 **Palisade Wall** — drop a **permanent** wooden barrier for cover (up to **10** walls up at once), 8 s cooldown. Blocks animals; the gorilla & elephant still smash through. 120 HP (axe fells in 3, hammer in 2).
+- 🧱 **Stone Wall** — drop a **permanent** stone barrier the gorilla & elephant **cannot smash** — only a Hammer brings it down. Shares the 10-wall cap, 10 s cooldown. 200 HP (hammer fells in 3).
 - 🪝 **Grappling Hook** — reel up into a climbable tree or yank toward any surface in range (same as the tool grapple).
-- 🪓 **Hand Axe** — swing: chop a nearby tree for wood, or land a **heavy melee** blow (42) on the animal in front, 1.2 s cooldown.
+- 🪓 **Hand Axe** — swing: chop a nearby tree for wood, **fell a wood wall** (42), or land a **heavy melee** blow (42) on the animal in front, 1.2 s cooldown. Can't cut stone.
+- 🔨 **Hammer** — swing: **smash a stone OR wood wall** (67), or land a **crushing melee** blow (67) on the animal in front, 1.4 s cooldown. The demolition tool.
 - 🏕️ **Campfire** — build a wide, long-lived (~120 s) ring of light that **lions flee**, 12 s cooldown.
 
 *(These five are granted, material-free versions of the classic survival tools — they replaced the old

@@ -304,8 +304,28 @@ currency this cut).
   (from `resetGame`+`triggerGameOver`) disposes axe swings and drops kit-wall refs. Verified: walls persist
   60 s+; cap enforced at 10; enemy-smash prunes + keeps `wallMeshes`/`wallAABBs` lockstep; unequip disposes
   all placed walls (0 orphans); place-then-reset → 0 orphans.
-- **Controls:** `[Z]` `useActiveAbility`, `[R]` `cycleActiveAbility`, `[Tab]` open loadout. The keydown/
-  mousedown handlers early-return while `uiPaused` (only Tab/Esc close). All wired in `registerControls`.
+- **Controls:** `[LMB]`/`[Z]` `useActiveAbility`, `[1]`–`[5]` `setActiveAbility(n-1)` (jump to slot),
+  `[R]` `cycleActiveAbility` (cycle), `[Tab]` open loadout. The keydown/mousedown handlers early-return
+  while `uiPaused` (only Tab/Esc close). All wired in `registerControls`. The in-game ability bar shows a
+  numbered badge (1–5, active-highlighted) on each ability slot; accessories are unnumbered.
+
+## Stone walls, Hammer & axe/hammer-on-walls (2026-07-18)
+Two new kit abilities + wall HP, all riding the existing wall/`kitSwings` disposal paths.
+- **Stone Wall (`kit_stonewall` 🧱)** — a second wall material. Placement shares `placeKitWall(stone)`
+  (wood = `kitPlaceWall`, stone = `kitPlaceStoneWall`); both push to `wallMeshes`/`wallAABBs`/`kitWalls`
+  under the same `KIT_WALL_MAX`=10 cap. Each `kitWalls` entry now carries its `ability` so
+  `reconcileKitWalls`/`clearKitWalls(ability)` tear down each material independently on unequip.
+  **Unsmashable by gorilla/elephant:** `wallBlockingPath` skips `userData.stone` (so neither enters a
+  smash), and the gorilla — which has *no* normal wall collision — is stopped by the new
+  `collideStoneWalls(pos,r)` in `gorillaMoveToward`; the elephant is already stopped by its existing
+  all-walls `collideWalls`. Only the Hammer brings stone down.
+- **Wall HP** on the mesh (`userData.hp`/`maxHp`): wood 120, stone 200 (`WALL_HP`). `damageWall(idx,dmg,icon)`
+  subtracts and, at ≤0, fells via the shared `removeWallAt` (kept lockstep; `kitWalls` pruned next frame).
+- **Axe (`kitAxe`)** now fells **wood** walls (42/swing, `wallInFront`+`damageWall`) as a 3rd priority
+  (after tree-chop, animal-melee); refuses stone. **Hammer (`kit_hammer` 🔨, `kitHammer`)** smashes **any**
+  wall (67/swing) first, else 67 melee via `dealKitMelee`. Its swing model `spawnHammerSwing` is a
+  Group (wood haft + steel head); the `kitSwings` fade loop now traverses materials (was single-mesh) so
+  Groups fade+dispose correctly.
 - **Effects via small hooks** (grep `EQUIP`): `updateAbilities(dt)` (called first in `animate`) decays
   cooldowns/buffs and recomputes `EQUIP` {speedMul, visMul, healthRegenMul, hungerDrainMul} from
   accessories + timed buffs. Read in `updatePlayer` (speed), `updateStealth` (visMul), `updateHealth`

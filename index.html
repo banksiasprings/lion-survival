@@ -52,7 +52,11 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
   position:relative;font-size:22px;line-height:1}
 .ab-slot.acc{border-color:rgba(120,180,255,0.4)}
 .ab-slot.active{border-color:#f1c40f;box-shadow:0 0 10px #f1c40f88;background:rgba(255,200,0,0.16)}
-.ab-slot .ab-key{position:absolute;top:-1px;left:3px;font-size:8px;opacity:0.55}
+.ab-slot .ab-key{position:absolute;top:-8px;left:50%;transform:translateX(-50%);
+  font-size:11px;font-weight:700;color:#fff;background:rgba(15,15,15,0.92);
+  border:1px solid rgba(255,255,255,0.4);border-radius:6px;min-width:12px;padding:0 4px;
+  line-height:15px;text-align:center;opacity:0.95}
+.ab-slot.active .ab-key{background:#f1c40f;color:#111;border-color:#f1c40f;opacity:1}
 .ab-slot.empty{opacity:0.4;font-size:15px}
 .ab-slot .ab-cd{position:absolute;inset:0;border-radius:9px;background:rgba(0,0,0,0.64);
   display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff}
@@ -276,6 +280,10 @@ const SHOP_ITEMS = [
     desc:'Swing: chop a nearby tree for wood, or land a heavy melee blow on an animal in front. 1.2s cooldown.', cd:1.2 },
   { id:'kit_fire',    type:'ability', icon:'🏕️', name:'Campfire',
     desc:'Build a campfire — a wide, long-lived ring of light and warmth that lions flee. 12s cooldown.', cd:12 },
+  { id:'kit_stonewall', type:'ability', icon:'🧱', name:'Stone Wall',
+    desc:'Drop a permanent STONE barrier — elephants and gorillas CANNOT smash it (only a Hammer brings it down). Up to 10 walls total. 10s cooldown.', cd:10 },
+  { id:'kit_hammer',  type:'ability', icon:'🔨', name:'Hammer',
+    desc:'Swing a heavy maul: smash a stone OR wood wall, or land a crushing blow (67) on the animal in front. 1.4s cooldown.', cd:1.4 },
   // ---- Accessories (passive while equipped; 2 slots) ----
   { id:'camo_cloak',    type:'accessory', icon:'🧥', name:'Camo Cloak',
     desc:'Muted hides break your outline — 30% harder for anything to see you.', starter:true },
@@ -397,6 +405,24 @@ function collideWalls(pos, radius){
     const dx = pos.x-cx, dz = pos.z-cz, d = Math.sqrt(dx*dx+dz*dz);
     if(d > 0.0001){ if(d < radius){ pos.x += (dx/d)*(radius-d); pos.z += (dz/d)*(radius-d); } }
     else { pos.x += radius; }                            // dead-centre — shove out
+  }
+}
+
+// Push an XZ position out of STONE walls only. The gorilla (which normally smashes
+// straight through walls and so has no wall collision) and the elephant CANNOT
+// break stone, so they must instead be physically stopped by it — this is what
+// makes a stone wall an unbreakable barrier to them. wallMeshes[i] is the parallel
+// partner of wallAABBs[i]; a wall is stone iff its mesh carries userData.stone.
+function collideStoneWalls(pos, radius){
+  for(let i=0;i<wallAABBs.length;i++){
+    const w = wallMeshes[i];
+    if(!w || !w.userData.stone) continue;
+    const a = wallAABBs[i];
+    if(pos.y > a.max.y - 0.1) continue;                 // cleared the top — let it pass over
+    const cx = clamp(pos.x, a.min.x, a.max.x), cz = clamp(pos.z, a.min.z, a.max.z);
+    const dx = pos.x-cx, dz = pos.z-cz, d = Math.sqrt(dx*dx+dz*dz);
+    if(d > 0.0001){ if(d < radius){ pos.x += (dx/d)*(radius-d); pos.z += (dz/d)*(radius-d); } }
+    else { pos.x += radius; }
   }
 }
 
@@ -1199,8 +1225,12 @@ function registerControls(){
     keys[e.code] = true;
     if(e.code==='Tab'){ e.preventDefault(); openShop('game'); return; }   // open kit loadout (pauses)
     if(player.stunTimer > 0) return;   // dazed by a gorilla tree-grab — no actions
-    if(e.code==='KeyZ') useActiveAbility();      // kit: use the active ability
-    if(e.code==='KeyR') cycleActiveAbility();    // kit: switch active ability
+    if(e.code==='KeyZ') useActiveAbility();      // kit: use the active ability (LMB also does)
+    if(e.code==='KeyR') cycleActiveAbility();    // kit: cycle to the next ability slot
+    if(e.code.startsWith('Digit')){              // kit: jump straight to slot 1..5
+      const n = +e.code.slice(5);
+      if(n>=1 && n<=ABILITY_SLOTS) setActiveAbility(n-1);
+    }
     if(e.code==='KeyG'){                          // dedicated grapple toggle (also on the kit)
       if(grapple.active || player.inTree || player.climbing) releaseGrapple();
       else fireGrapple();
@@ -2794,6 +2824,7 @@ function gorillaMoveToward(G, tx, tz, speed, dt){
   }
   G.pos.x = clamp(G.pos.x, -HALF+0.5, HALF-0.5);
   G.pos.z = clamp(G.pos.z, -HALF+0.5, HALF-0.5);
+  collideStoneWalls(G.pos, 1.4);                     // stopped cold by stone walls (it can't smash them)
   G.pos.y = terrainY(G.pos.x, G.pos.z);
   G.mesh.position.copy(G.pos);
   gorillaFace(G, tx, tz, dt);
@@ -2900,6 +2931,7 @@ function wallBlockingPath(G, tx, tz){
   let bi = -1, bd = Infinity;
   for(let i=0; i<wallMeshes.length; i++){
     const w = wallMeshes[i];
+    if(w.userData.stone) continue;                       // stone can't be smashed — blocked (collideStoneWalls) instead
     const wx = w.position.x-gx, wz = w.position.z-gz;
     const wl = Math.hypot(wx, wz);
     if(wl > GOR.SMASH_RANGE) continue;                  // too far to reach
@@ -3888,10 +3920,12 @@ function useActiveAbility(){
   } else if(id==='eagle_eye'){
     buffs.eagleEye = 8;
     showKillfeed('🦅 Eagle eye — the savanna revealed');
-  } else if(id==='kit_spear'){ did = kitThrowSpear();    quiet = true; }
-  else if(id==='kit_wall'){    did = kitPlaceWall();     quiet = true; }
-  else if(id==='kit_fire'){    did = kitPlaceCampfire(); quiet = true; }
-  else if(id==='kit_axe'){     did = kitAxe();           quiet = true; }
+  } else if(id==='kit_spear'){ did = kitThrowSpear();      quiet = true; }
+  else if(id==='kit_wall'){      did = kitPlaceWall();      quiet = true; }
+  else if(id==='kit_stonewall'){ did = kitPlaceStoneWall();quiet = true; }
+  else if(id==='kit_fire'){      did = kitPlaceCampfire();  quiet = true; }
+  else if(id==='kit_axe'){       did = kitAxe();            quiet = true; }
+  else if(id==='kit_hammer'){    did = kitHammer();         quiet = true; }
   else { did = false; }
   if(did){
     abilityCd[id] = A.cd || 0;
@@ -3912,6 +3946,16 @@ function cycleActiveAbility(){
     }
   }
   showKillfeed('No abilities equipped');
+}
+// Number keys [1]–[5] — jump straight to that ability slot (the other way to
+// select, alongside [R] cycling). Empty slots just report themselves.
+function setActiveAbility(idx){
+  if(idx < 0 || idx >= ABILITY_SLOTS) return;
+  if(!progress.abilities[idx]){ showKillfeed('Slot '+(idx+1)+' is empty — [Tab] to equip'); return; }
+  progress.activeAbility = idx;
+  const A = SHOP_BY_ID[progress.abilities[idx]];
+  showKillfeed('▶ '+A.icon+' '+A.name);
+  saveProgress(); renderAbilityBar();
 }
 
 // ---- Fire Torch FX: one PointLight + a small flame that rides with the camera ----
@@ -3953,22 +3997,65 @@ function kitThrowSpear(){
   return true;
 }
 const KIT_WALL_MAX = 10;   // active-wall cap (permanent walls — bounds VRAM; enemies smashing them frees space)
-function kitPlaceWall(){
-  if(kitWalls.length >= KIT_WALL_MAX){ showKillfeed('🪵 Wall limit ('+KIT_WALL_MAX+') — smashed walls free up space'); return false; }
+const WALL_HP = { wood:120, stone:200 };   // player structure HP: axe(42) fells wood in 3, hammer(67) in 2; hammer smashes stone in 3
+// Place a player barrier. stone=false → wood palisade (elephants/gorillas smash it,
+// axe/hammer fell it); stone=true → stone wall (unbreakable by elephants/gorillas —
+// only a Hammer brings it down). Both share the permanent-wall cap + disposal path.
+function placeKitWall(stone){
+  if(kitWalls.length >= KIT_WALL_MAX){ showKillfeed((stone?'🧱':'🪵')+' Wall limit ('+KIT_WALL_MAX+') reached — hammer some down to free space'); return false; }
   const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
   const pos = player.pos.clone().addScaledVector(fwd, 2.5);
   pos.y = terrainY(pos.x, pos.z);
   const geo = new THREE.BoxGeometry(2.5, 2.2, 0.3);
-  const mat = new THREE.MeshLambertMaterial({color:0x9a6b45});   // fresh-cut palisade (lighter than a built wall)
+  const mat = new THREE.MeshLambertMaterial({color: stone?0x8b8e93:0x9a6b45, flatShading: stone});   // grey stone vs fresh-cut palisade
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(pos.x, pos.y+1.1, pos.z);
   mesh.rotation.y = yaw; mesh.castShadow = true; mesh.name = 'wall';
+  mesh.userData.stone = stone;
+  mesh.userData.maxHp = stone ? WALL_HP.stone : WALL_HP.wood;
+  mesh.userData.hp    = mesh.userData.maxHp;
   scene.add(mesh);
   wallMeshes.push(mesh);
   wallAABBs.push(new THREE.Box3().setFromObject(mesh));
-  kitWalls.push({ mesh });   // PERMANENT — stays until an enemy smashes it, or the run resets / the ability is unequipped
+  kitWalls.push({ mesh, ability: stone?'kit_stonewall':'kit_wall' });   // PERMANENT — until smashed / run reset / ability unequipped
   playSound('place');
   return true;
+}
+function kitPlaceWall(){      return placeKitWall(false); }
+function kitPlaceStoneWall(){ return placeKitWall(true);  }
+// Damage a wall (axe/hammer). Returns true if the swing connected. Wall HP lives on
+// the mesh (userData.hp/maxHp); at ≤0 it comes down via the shared removeWallAt path,
+// so wallMeshes/wallAABBs (and, next frame, kitWalls) stay in lockstep.
+function damageWall(idx, dmg, icon){
+  const w = wallMeshes[idx];
+  if(!w) return false;
+  w.userData.hp = (w.userData.hp==null ? (w.userData.maxHp||WALL_HP.wood) : w.userData.hp) - dmg;
+  const stone = w.userData.stone;
+  if(w.userData.hp <= 0){
+    removeWallAt(idx);
+    showKillfeed(stone ? '🔨 Smashed the stone wall!' : '🪓 Chopped the wood wall down!');
+    playSound('place');
+  } else {
+    showKillfeed(icon+' '+(stone?'Stone':'Wood')+' wall '+Math.max(0,Math.ceil(w.userData.hp))+'/'+w.userData.maxHp);
+    playSound('throw');
+  }
+  return true;
+}
+// Index of the nearest wall in a frontal cone within reach, or -1. filter(mesh)
+// lets the axe restrict to wood while the hammer takes any wall.
+function wallInFront(range, minDot, filter){
+  const fwd = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation); fwd.y=0;
+  if(fwd.lengthSq()<1e-4) return -1; fwd.normalize();
+  let best=-1, bd=range;
+  for(let i=0;i<wallMeshes.length;i++){
+    const w = wallMeshes[i];
+    if(filter && !filter(w)) continue;
+    const dx=w.position.x-player.pos.x, dz=w.position.z-player.pos.z;
+    const d=Math.hypot(dx,dz); if(d>bd) continue;
+    if((dx/(d||1))*fwd.x + (dz/(d||1))*fwd.z < minDot) continue;   // must be in front
+    bd=d; best=i;
+  }
+  return best;
 }
 function kitPlaceCampfire(){
   // A campfire granted free — bigger & longer-lived than the wood-cost tool version.
@@ -4044,9 +4131,37 @@ function kitAxe(){
   if(target){
     dealKitMelee(target, 42);
     shakeTime = Math.max(shakeTime, 0.12); shakeAmt = 0.004; playSound('throw');
-  } else {
-    playSound('throw');   // whiff — swing still animates
+    return true;
   }
+  // Priority 3: chop a WOOD wall in front (the axe fells wood; stone needs a Hammer).
+  const wi = wallInFront(3.4, 0.30);
+  if(wi>=0){
+    if(wallMeshes[wi].userData.stone){ showKillfeed('🪓 Axe can\'t cut stone — use a Hammer'); playSound('throw'); return true; }
+    damageWall(wi, 42, '🪓');
+    shakeTime = Math.max(shakeTime, 0.10); shakeAmt = 0.003;
+    return true;
+  }
+  playSound('throw');   // whiff — swing still animates
+  return true;
+}
+// Hammer — the demolition tool. Smashes ANY wall (stone or wood) in front; failing
+// that, a crushing melee blow (67, harder than the axe's 42) on the animal ahead.
+function kitHammer(){
+  spawnHammerSwing();
+  // Priority 1: smash a wall in front — wood or stone. This is the hammer's whole job.
+  const wi = wallInFront(3.6, 0.30);
+  if(wi>=0){
+    damageWall(wi, 67, '🔨');
+    shakeTime = Math.max(shakeTime, 0.16); shakeAmt = 0.006;
+    return true;
+  }
+  // Priority 2: crushing melee on an animal in front.
+  const target = nearestAnimalInFront(3.6, 0.30);
+  if(target){
+    dealKitMelee(target, 67);
+    shakeTime = Math.max(shakeTime, 0.18); shakeAmt = 0.007;
+  }
+  playSound('throw');
   return true;
 }
 function spawnAxeSwing(){
@@ -4056,6 +4171,25 @@ function spawnAxeSwing(){
   );
   scene.add(mesh);
   kitSwings.push({ mesh, t:0.18, life:0.18 });
+}
+// Procedural hammer (same simple-geometry style as the spear/axe): a wood haft + a
+// blocky steel head crossing its top. Transient — rides in front of the eye and
+// self-disposes via the kitSwings loop (killObj traverses the Group → frees both).
+function spawnHammerSwing(){
+  const g = new THREE.Group();
+  const haft = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.035, 0.04, 0.5, 6),
+    new THREE.MeshBasicMaterial({color:0x6b4a2a, transparent:true, opacity:0.9})
+  );
+  haft.rotation.z = Math.PI/2;                       // lay the handle horizontal
+  const head = new THREE.Mesh(
+    new THREE.BoxGeometry(0.16, 0.2, 0.22),
+    new THREE.MeshBasicMaterial({color:0xc2c7cf, transparent:true, opacity:0.95})
+  );
+  head.position.x = 0.27;                             // steel head at the end of the haft
+  g.add(haft); g.add(head);
+  scene.add(g);
+  kitSwings.push({ mesh:g, t:0.2, life:0.2 });
 }
 
 // ---- Per-frame ability tick: cooldowns, buff timers, EQUIP mods, torch flicker, kit FX ----
@@ -4090,7 +4224,8 @@ function updateAbilities(dt){
     const fwd = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation);
     s.mesh.position.copy(camera.position).addScaledVector(fwd, 1.0); s.mesh.position.y -= 0.2;
     s.mesh.lookAt(camera.position);
-    s.mesh.material.opacity = 0.85 * (s.t / s.life);
+    const frac = s.t / s.life;                          // fade each material off its own base opacity (handles the hammer Group)
+    s.mesh.traverse(o=>{ if(o.material){ const m=o.material; if(m.userData.op0==null) m.userData.op0=m.opacity; m.opacity=m.userData.op0*frac; } });
   }
 
   tickAbilityBar();
@@ -4105,15 +4240,20 @@ function clearKitFX(){
 }
 // Dispose every placed Palisade Wall right now (used when the Wall ability is
 // unequipped mid-run — permanent walls shouldn't outlive their tool).
-function clearKitWalls(){
-  for(const w of [...kitWalls]){
+// Dispose placed walls. Pass an ability id to clear only that material's walls
+// (used when one wall tool is unequipped while the other stays); omit to clear all.
+function clearKitWalls(ability){
+  for(let i=kitWalls.length-1;i>=0;i--){
+    const w = kitWalls[i];
+    if(ability && w.ability !== ability) continue;
     const idx = wallMeshes.indexOf(w.mesh);
     if(idx >= 0) removeWallAt(idx);   // disposes + keeps wallMeshes/wallAABBs lockstep
+    kitWalls.splice(i,1);
   }
-  kitWalls.length = 0;
 }
 function reconcileKitWalls(){
-  if(kitWalls.length && !progress.abilities.includes('kit_wall')) clearKitWalls();
+  if(!progress.abilities.includes('kit_wall'))      clearKitWalls('kit_wall');
+  if(!progress.abilities.includes('kit_stonewall')) clearKitWalls('kit_stonewall');
 }
 
 // ---- In-game ability bar rendering ----
@@ -4126,7 +4266,7 @@ function renderAbilityBar(){
   const div = document.createElement('div'); div.className='ab-div'; bar.appendChild(div);
   for(let i=0;i<ACCESSORY_SLOTS;i++) bar.appendChild(makeAbSlot('accessory', i));
   const hint = document.createElement('div'); hint.className='ab-hint';
-  hint.textContent='LMB / Z use · R switch · Tab loadout';
+  hint.textContent='1–5 / R select · LMB / Z use · Tab loadout';
   bar.appendChild(hint);
   tickAbilityBar();
 }
@@ -4135,7 +4275,7 @@ function makeAbSlot(kind, i){
   const id = (kind==='ability'?progress.abilities:progress.accessories)[i];
   el.className = 'ab-slot'+(kind==='accessory'?' acc':'')+(id?'':' empty');
   el.dataset.kind=kind; el.dataset.index=i;
-  el.innerHTML = `<span class="ab-key">${kind==='ability'?('A'+(i+1)):('•'+(i+1))}</span>`+
+  el.innerHTML = (kind==='ability' ? `<span class="ab-key">${i+1}</span>` : '')+
                  `<span class="ab-ic">${id?SHOP_BY_ID[id].icon:'+'}</span>`;
   _abSlots.push(el);
   return el;
