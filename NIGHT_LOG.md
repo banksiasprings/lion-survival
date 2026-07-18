@@ -2,6 +2,15 @@
 
 Running log of changes, newest first. One line per change.
 
+## 2026-07-18 — Wall economy, tool reach & correct kill-message names (Steven's 6 asks)
+- **Walls: zero cooldown** — `kit_wall`/`kit_stonewall` `cd` 8/10 → **0**. Placement is now gated by materials, not a timer (verified: 3 walls placed in a single tick, no cooldown-block).
+- **Wood walls cost 2 wood; stone walls cost 5 rocks** (`WALL_COST`). `placeKitWall` checks the counter first (refuses + tells you what's short, no lockout on a failed place) then deducts on success. Rocks are dual-use (throw ammo *or* premium stone walls) → real build-vs-throw tension.
+- **Starting stock** (fresh run, in `resetGame`): **wood 0 → 20** (a full 10-wall wood perimeter at 2 ea) and **rock 0 → 10** (2 stone walls, or throwing ammo). Rock cap left at 10 so stone stays scarce/premium — Steven's "rigged, walls forever" complaint. This is the tuned knob; dial in `resetGame`.
+- **Hammer melee reach = pounce** (`PLAYER.pounceRange` 9; was 3.6). **Axe melee reach = 6** (mid-screen; was 3.4) — a middle ground: old < axe(6) < hammer(9). Wall-smash/tree-chop reaches unchanged (demolition/gather stay close).
+- **Kill/hit messages name the RIGHT tool + verb** — the reported bug (hammer hit read "the axe…") is fixed. `dealKitMelee(hit,dmg,tool)` now takes a `MELEE_TOOL` descriptor: **hammer→crushed / axe→cleaved** on a kill (hit-verbs batters/chops), and **gorilla & rhino now have a kill line** (they only ever printed a stagger before). e.g. "🔨 The hammer crushed the gorilla!".
+- **⚠ Balance note (HITL):** with hammer reach = pounce reach, hammer (67 dmg, no material cost, 1.4 s cd) now rivals the lion's signature pounce at the same distance. Pounce keeps a 7-unit lunge impulse + the ×3 hidden-ambush multiplier, but this wants Steven's eye before any pounce compensation. No pounce numbers were touched.
+- Disposal: no new Three.js object types or paths — walls still ride `wallMeshes`/`wallAABBs`/`kitWalls`; message/cost changes are pure JS. Verified place-8-then-reset frees every wall geometry (0 positive leak, `kitWalls`=0), no console errors.
+
 ## 2026-07-18 — Mobile / touchscreen controls
 - **Full touch control scheme**, auto-detected (`'ontouchstart'` / `maxTouchPoints`) with a `?touch=1` debug override to force it on desktop. Desktop keyboard/mouse path is byte-for-byte unchanged — none of the touch handlers are attached unless `IS_TOUCH`.
 - **Left thumbstick** (analog): drag to move; push magnitude scales speed. Feeds a new `touchMove` vector that `updatePlayer` folds into the movement block.

@@ -399,7 +399,7 @@ const SHOP_ITEMS = [
   { id:'kit_spear',   type:'ability', icon:'🗡️', name:'Spear',
     desc:'Hurl a flint spear — heavy damage at range, no crafting needed. 3s cooldown.', cd:3 },
   { id:'kit_wall',    type:'ability', icon:'🪵', name:'Palisade Wall',
-    desc:'Drop a permanent wooden barrier in front of you for cover (up to 10 up at once). 8s cooldown.', cd:8 },
+    desc:'Drop a permanent wooden barrier in front of you for cover (up to 10 up at once). Costs 2 wood. No cooldown.', cd:0 },
   { id:'kit_grapple', type:'ability', icon:'🪝', name:'Grappling Hook',
     desc:'Launch a hook — reel up into a climbable tree, or yank yourself to any surface in range.', cd:0 },
   { id:'kit_axe',     type:'ability', icon:'🪓', name:'Hand Axe',
@@ -407,7 +407,7 @@ const SHOP_ITEMS = [
   { id:'kit_fire',    type:'ability', icon:'🏕️', name:'Campfire',
     desc:'Build a campfire — a wide, long-lived ring of light and warmth that lions flee. 12s cooldown.', cd:12 },
   { id:'kit_stonewall', type:'ability', icon:'🧱', name:'Stone Wall',
-    desc:'Drop a permanent STONE barrier — elephants and gorillas CANNOT smash it (only a Hammer brings it down). Up to 10 walls total. 10s cooldown.', cd:10 },
+    desc:'Drop a permanent STONE barrier — elephants and gorillas CANNOT smash it (only a Hammer brings it down). Up to 10 walls total. Costs 5 rocks. No cooldown.', cd:0 },
   { id:'kit_hammer',  type:'ability', icon:'🔨', name:'Hammer',
     desc:'Swing a heavy maul: smash a stone OR wood wall, or land a crushing blow (67) on the animal in front. 1.4s cooldown.', cd:1.4 },
   // ---- Accessories (passive while equipped; 2 slots) ----
@@ -4252,11 +4252,19 @@ function kitThrowSpear(){
 }
 const KIT_WALL_MAX = 10;   // active-wall cap (permanent walls — bounds VRAM; enemies smashing them frees space)
 const WALL_HP = { wood:120, stone:200 };   // player structure HP: axe(42) fells wood in 3, hammer(67) in 2; hammer smashes stone in 3
+const WALL_COST = { wood:2, rock:5 };      // per-placement material cost (no cooldown — materials ARE the limiter)
 // Place a player barrier. stone=false → wood palisade (elephants/gorillas smash it,
-// axe/hammer fell it); stone=true → stone wall (unbreakable by elephants/gorillas —
-// only a Hammer brings it down). Both share the permanent-wall cap + disposal path.
+// axe/hammer fell it, costs 2 wood); stone=true → stone wall (unbreakable by
+// elephants/gorillas — only a Hammer brings it down, costs 5 rocks). Both share the
+// permanent-wall cap + disposal path. Materials (not a cooldown) gate spamming.
 function placeKitWall(stone){
   if(kitWalls.length >= KIT_WALL_MAX){ showKillfeed((stone?'🧱':'🪵')+' Wall limit ('+KIT_WALL_MAX+') reached — hammer some down to free space'); return false; }
+  // Material gate — a failed check returns false so useActiveAbility skips the (zero) cooldown + sound.
+  if(stone){
+    if(rockCount < WALL_COST.rock){ showKillfeed('🧱 Need '+WALL_COST.rock+' rocks (have '+rockCount+')'); return false; }
+  } else {
+    if(woodCount < WALL_COST.wood){ showKillfeed('🪵 Need '+WALL_COST.wood+' wood (have '+woodCount+')'); return false; }
+  }
   const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
   const pos = player.pos.clone().addScaledVector(fwd, 2.5);
   pos.y = terrainY(pos.x, pos.z);
@@ -4272,6 +4280,8 @@ function placeKitWall(stone){
   wallMeshes.push(mesh);
   wallAABBs.push(new THREE.Box3().setFromObject(mesh));
   kitWalls.push({ mesh, ability: stone?'kit_stonewall':'kit_wall' });   // PERMANENT — until smashed / run reset / ability unequipped
+  if(stone){ rockCount -= WALL_COST.rock; updateRockHUD(); }             // deduct materials (HUD reads counters in updateHUD)
+  else     { woodCount -= WALL_COST.wood; updateWoodHUD(); }
   playSound('place');
   return true;
 }
@@ -4349,25 +4359,40 @@ function nearestAnimalInFront(range, minDot){
   scan(rhinoMeshes,'rhino');
   return best;
 }
+// Melee tool identity for kill/hit messages — the equipped tool names ITSELF and its
+// verb, so a hammer blow never mislabels itself as an axe. kill = the finishing verb
+// (Steven's table: hammer→crushed, axe→cleaved); hit = the glancing-blow verb.
+const MELEE_TOOL = {
+  axe:    { icon:'🪓', name:'axe',    kill:'cleaved', hit:'chops'   },
+  hammer: { icon:'🔨', name:'hammer', kill:'crushed', hit:'batters' },
+};
 // Apply a heavy melee blow, reusing each animal's proper wound + retaliation hooks.
-function dealKitMelee(hit, dmg){
+// `tool` is a MELEE_TOOL entry so the message carries the RIGHT tool name + verb, and
+// every entity (incl. gorilla & rhino, which had no kill line before) reports a kill.
+function dealKitMelee(hit, dmg, tool){
   const o = hit.o;
   o.flashTimer = 0.25;
+  let t;                                                                        // target noun, set per-branch
+  const kill = ()=> tool.icon+' The '+tool.name+' '+tool.kill+' the '+t+'!';
   if(hit.kind==='lion'){
+    t='lion';
     o.health -= dmg; o.stunTimer = 3; o.state='stunned';
     o.lastHitBy=player; o.lastHitKind='player';             // the whole pride turns on you (via the retaliation watchdog)
-    showKillfeed(o.health<=0?'🪓 Axe kill — lion down!':'🪓 Axe cracks the lion!');
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the lion!');
   } else if(hit.kind==='prey'){
+    t=o.label;
     o.health -= dmg; o.stunTimer = 2; o.state='flee'; o.alertTimer = 3;
     if(o.species==='elephant') o.aggroT = ELE.RAGE_TIME;    // enrages the bull
-    showKillfeed(o.health<=0?'🪓 Axe kill — '+o.label+'!':'🪓 Axe hits the '+o.label);
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the '+o.label);
   } else if(hit.kind==='gorilla'){
+    t='gorilla';
     o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, GOR.ROCK_STUN);
-    showKillfeed('🪓 Axe staggers the gorilla!');
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' staggers the gorilla!');
   } else if(hit.kind==='rhino'){
+    t='rhino';
     o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, RHINO.ROCK_STUN);
     o.target = player; o.targetKind = 'player'; o.aggroTimer = RHINO.AGGRO_TIME;   // it wheels on you
-    showKillfeed('🪓 Axe bites the rhino — it wheels on you!');
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the rhino — it wheels on you!');
   }
 }
 function kitAxe(){
@@ -4380,10 +4405,11 @@ function kitAxe(){
     showKillfeed('🪓 Chopped wood ('+woodCount+')'); playSound('collect');
     return true;
   }
-  // Priority 2: heavy melee on an animal in front.
-  const target = nearestAnimalInFront(3.4, 0.30);
+  // Priority 2: heavy melee on an animal in front. Reach 6.0 — mid-screen, longer than
+  // the old 3.4 but shorter than the hammer's pounce-equivalent (a middle-ground swing).
+  const target = nearestAnimalInFront(6.0, 0.30);
   if(target){
-    dealKitMelee(target, 42);
+    dealKitMelee(target, 42, MELEE_TOOL.axe);
     shakeTime = Math.max(shakeTime, 0.12); shakeAmt = 0.004; playSound('throw');
     return true;
   }
@@ -4409,10 +4435,11 @@ function kitHammer(){
     shakeTime = Math.max(shakeTime, 0.16); shakeAmt = 0.006;
     return true;
   }
-  // Priority 2: crushing melee on an animal in front.
-  const target = nearestAnimalInFront(3.6, 0.30);
+  // Priority 2: crushing melee on an animal in front. Reach = PLAYER.pounceRange so the
+  // hammer's swing lands as far as the lion's signature pounce (was a stubby 3.6).
+  const target = nearestAnimalInFront(PLAYER.pounceRange, 0.30);
   if(target){
-    dealKitMelee(target, 67);
+    dealKitMelee(target, 67, MELEE_TOOL.hammer);
     shakeTime = Math.max(shakeTime, 0.18); shakeAmt = 0.007;
   }
   playSound('throw');
@@ -5184,8 +5211,8 @@ function resetGame(){
 
   grapple   = { active:false, point:null, line:null, mode:null, perch:null, tree:null };
 
-  woodCount  = 0;
-  rockCount  = 0;
+  woodCount  = 20;   // starter stock: 10 wood walls (2 wood each) buildable from a fresh spawn
+  rockCount  = 10;   // starter stock: 2 stone walls (5 rock each) OR throwing ammo — rocks are scarce/premium
   kills      = 0;
   elapsed    = 0;
   shakeTime  = 0;

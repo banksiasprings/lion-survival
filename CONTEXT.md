@@ -290,10 +290,11 @@ currency this cut).
   as a tap-to-equip `+`. `equipFromCard` refuses (via `flashShopMsg`) rather than clobbering when full;
   `unlockItem` auto-equips only into a genuinely free slot. `reconcileFireTorch()` (called from
   `equipToSlot`/`unequipItem`) extinguishes + disposes the Fire Torch FX the moment it's unequipped.
-- **Basic-tool abilities (2026-07-16b):** five granted, material-free, cooldown-gated tools — `kit_spear`,
+- **Basic-tool abilities (2026-07-16b):** five granted, cooldown-gated tools — `kit_spear`,
   `kit_wall` (Palisade Wall), `kit_grapple`, `kit_axe` (Hand Axe: chop tree / heavy melee via
   `nearestAnimalInFront`+`dealKitMelee`, reusing each animal's wound+retaliation hooks), `kit_fire`
-  (bigger/longer campfire). Each **reuses an existing mesh + its disposal path** so nothing new leaks:
+  (bigger/longer campfire). Most are material-free; **the two walls now cost materials instead of a
+  cooldown** (see the wall-economy note under the 2026-07-18 section). Each **reuses an existing mesh + its disposal path** so nothing new leaks:
   spear→`thrownRocks[]`, campfire→`campfires[]`, wall→`wallMeshes`/`wallAABBs`, grapple→the grapple line.
   The only genuinely new FX is the transient axe-swing mesh (`kitSwings[]`, self-disposes ~0.18 s).
 - **Palisade Wall is PERMANENT (2026-07-16c):** placed walls persist for the whole run (no decay) — capped at
@@ -308,6 +309,24 @@ currency this cut).
   `[R]` `cycleActiveAbility` (cycle), `[Tab]` open loadout. The keydown/mousedown handlers early-return
   while `uiPaused` (only Tab/Esc close). All wired in `registerControls`. The in-game ability bar shows a
   numbered badge (1–5, active-highlighted) on each ability slot; accessories are unnumbered.
+
+## Wall economy, tool reach & kill-message tool names (2026-07-18b)
+- **Walls cost materials, no cooldown.** Both wall abilities have `cd:0`; spamming is gated by stock, not
+  time. `WALL_COST = {wood:2, rock:5}` — wood wall = 2 wood, stone wall = 5 rocks. `placeKitWall(stone)`
+  checks the counter first (refuses + names the shortfall, no lockout on a failed place — `did:false`
+  skips the zero cooldown + sound) then deducts on success. Rocks are dual-use (throw ammo *or* stone
+  walls), a deliberate build-vs-throw tension; rock cap stays 10 so stone walls remain scarce/premium.
+- **Starting stock** (`resetGame`): **wood 20** (a full 10-wall wood perimeter at 2 ea from spawn) and
+  **rock 10** (2 stone walls, or throwing ammo). This is the tuned balance knob — dial it in `resetGame`.
+- **Melee reach.** Hammer melee = `PLAYER.pounceRange` (9, was 3.6); axe melee = **6** (was 3.4) — a
+  middle ground (old 3.4 < axe 6 < hammer 9). Wall-smash + tree-chop reaches are unchanged (close-range).
+  ⚠ Balance-watch: hammer melee now matches the lion's signature pounce reach — pounce keeps its lunge
+  impulse + ×3 hidden-ambush multiplier as compensation, but no pounce numbers were changed (HITL).
+- **Correct tool name/verb in kill+hit messages.** `dealKitMelee(hit, dmg, tool)` takes a `MELEE_TOOL`
+  descriptor `{icon,name,kill,hit}` (hammer→crushed/batters, axe→cleaved/chops) so a hammer blow no
+  longer mislabels itself "the axe". **Gorilla & rhino gained a kill line** (they previously only ever
+  printed a stagger/wheels-on-you, even on a killing blow). Spear/rock (`updateThrownRocks`) and pounce
+  already named themselves correctly and were left alone.
 
 ## Stone walls, Hammer & axe/hammer-on-walls (2026-07-18)
 Two new kit abilities + wall HP, all riding the existing wall/`kitSwings` disposal paths.
