@@ -3845,12 +3845,15 @@ const DOG = {
 
 function makeWildDog(x, z){
   const group = new THREE.Group();
-  // Mottled "painted dog" palette — patchy tan / dark-brown / black / cream.
-  const tan   = new THREE.MeshLambertMaterial({color:0xb0692b});
-  const brown = new THREE.MeshLambertMaterial({color:0x5c3a1d});
-  const black = new THREE.MeshLambertMaterial({color:0x201509});
-  const cream = new THREE.MeshLambertMaterial({color:0xd8c69a});
-  const dark  = new THREE.MeshLambertMaterial({color:0x111111});  // eyes / nose
+  // Menacing "dire-wolf" palette — mottled but leaned DARK: burnt rust / near-black
+  // brown / black / a dingy grey-tan instead of cream. More nightmare than painted dog.
+  const tan   = new THREE.MeshLambertMaterial({color:0x7a451c});   // burnt rust (was bright tan)
+  const brown = new THREE.MeshLambertMaterial({color:0x3a2513});   // near-black brown
+  const black = new THREE.MeshLambertMaterial({color:0x140c05});   // deep saddle black
+  const cream = new THREE.MeshLambertMaterial({color:0x8f8262});   // dingy grey-tan (was cream)
+  const dark  = new THREE.MeshLambertMaterial({color:0x0a0a0a});   // eyes / nose
+  const bone  = new THREE.MeshLambertMaterial({color:0xeae4d0});   // bared teeth (off-white)
+  const spike = new THREE.MeshLambertMaterial({color:0x080808});   // spine crest spikes (near-black)
   const box = (w,h,d,mat,px,py,pz)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); m.position.set(px,py,pz); group.add(m); return m; };
   const cyl = (rt,rb,h,mat,px,py,pz,rx)=>{ const m=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,7),mat); m.position.set(px,py,pz); if(rx) m.rotation.x=rx; group.add(m); return m; };
   const cone= (r,h,mat,px,py,pz,rx)=>{ const m=new THREE.Mesh(new THREE.ConeGeometry(r,h,6),mat); m.position.set(px,py,pz); if(rx) m.rotation.x=rx; group.add(m); return m; };
@@ -3872,6 +3875,16 @@ function makeWildDog(x, z){
   box(0.055,0.055,0.05,dark, 0.10,1.19,1.5);
   cone(0.15,0.32, black, -0.14,1.36,1.26, -0.12);        // big upright round ears (painted-dog signature)
   cone(0.15,0.32, black,  0.14,1.36,1.26, -0.12);
+  // Bared TEETH — a row of white cone tips jutting from the mouth (rx=Math.PI → point down).
+  // Two longer corner fangs + a row of smaller teeth across the muzzle front.
+  cone(0.035,0.20, bone, -0.085,0.955,1.70, Math.PI);    // left fang
+  cone(0.035,0.20, bone,  0.085,0.955,1.70, Math.PI);    // right fang
+  [-0.055,0.0,0.055].forEach(tx=> cone(0.026,0.12, bone, tx,0.965,1.735, Math.PI));   // small front teeth
+
+  // Spine CREST — a black spike mohawk down the back (tallest at the shoulders,
+  // tapering to the rump) for a hyena-punk / dire-wolf silhouette.
+  [[0.62,0.050,0.30,1.34],[0.30,0.060,0.38,1.39],[-0.02,0.055,0.34,1.36],
+   [-0.36,0.045,0.26,1.30],[-0.68,0.035,0.20,1.24]].forEach(([sz,sr,sh,sy])=> cone(sr,sh, spike, 0,sy,sz));
 
   // Stump tail with a white tip.
   cyl(0.08,0.05,0.42, brown, 0,0.94,-1.06, -0.7);

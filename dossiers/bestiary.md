@@ -143,6 +143,8 @@ bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks f
 - **Everything fights it and it fights everything** — a rhino/gorilla/lion it tramples will turn on it.
 
 ### 🐕 African wild dogs — the fast pack (they run you down)
+- **Nightmare-fuel look** — a dark dire-wolf silhouette: **bared white fangs**, a **black spike crest down the
+  spine** (hyena-punk mohawk), and a menacing rust/near-black mottled coat. Not a cute doggo.
 - HP **25 each** — squishy alone (a spear/bolt/boomerang one-shots one, ~2 rocks), **lethal as a pack**.
 - **A pack of 10 spawns every dawn** (cap 15). They roam loosely, hunt prey, and hunt **you** cautiously
   when you're **visible standing/sprinting** — crouch-in-grass hides you from them like everything else.

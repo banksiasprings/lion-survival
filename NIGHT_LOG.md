@@ -2,6 +2,13 @@
 
 Running log of changes, newest first. One line per change.
 
+## 2026-07-18 — 🐕 Wild dogs: dire-wolf glow-up (Steven: "spikes and teeth")
+- Menacing mesh pass on `makeWildDog` (19 → **29 parts**): **bared white teeth** (2 fangs + a 3-tooth front
+  row jutting from the mouth), a **5-cone black spike crest down the spine** (hyena-punk mohawk, tallest at
+  the shoulders → tapering to the rump), and the coat **darkened** (bright tan/cream → burnt-rust / near-black
+  / dingy grey — dire-wolf, not cute doggo). Verified: 29 parts/dog, disposal still 0 orphans (new
+  `bone`/`spike` materials free cleanly), 0 console errors, silhouette confirmed via offline PIL render.
+
 ## 2026-07-18 — 🐕 African wild dogs (new pack predator)
 - **New animal: African wild dogs** — a fast pack predator (`DOG` config / `dogMeshes[]` / `makeWildDog` /
   `updateWildDogs`), self-contained like the rhino, riding every existing seam (hitbox, HP bar, killObj

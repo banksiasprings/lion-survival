@@ -449,10 +449,13 @@ floating HP bar, the daily dawn wave, the minimap). **Lion AI untouched.**
   at the player.
 - **Escape = tree or wall.** `dogStep` runs `collideWalls` (any wall stops the pack); `dogBite` refuses through
   `playerOffGround()`/`segHitsWall` — a treed or walled-off player is safe.
-- **Mesh:** ~19-part procedural mottled canid (tan/brown/black/cream segmented body cylinder, tapered head +
-  muzzle + nose, two upright ear cones, four hip-pivot cone legs that swing via `animateDog`, stump tail w/
-  cream tip), `scale 0.92` (~⅔ a lion), per-dog materials/geometries → freed by `killObj`. Verified 0 orphans
-  (objs/geo/tex all return to baseline on a spawn→dispose cycle). **No body-part drop** (pure challenge).
+- **Mesh:** ~29-part procedural **dire-wolf** canid (2026-07-18f "make them look cool" pass): a **dark
+  menacing** rust/near-black mottled body cylinder, tapered head + muzzle + nose, two upright ear cones, four
+  hip-pivot cone legs that swing via `animateDog`, stump tail — **plus a row of bared white teeth cones
+  (2 fangs + 3 front teeth) jutting from the mouth and a 5-cone black spike crest down the spine** (tallest at
+  the shoulders, tapering to the rump). `scale 0.92` (~⅔ a lion), per-dog materials/geometries (incl. the new
+  `bone`/`spike` mats) → freed by `killObj`. Verified 0 orphans (objs/geo/tex all return to baseline on a
+  spawn→dispose cycle). **No body-part drop** (pure challenge).
 - **Minimap:** small orange dots, **red when on a vendetta**. Reheal at each day/night turn (`healAllAnimals`).
 - **⚠ Balance (report, not silently tuned):** Steven flagged this himself — **10 relentless super-fast dogs
   from day 1, before the player has tools, can overwhelm a fresh run.** Kept as asked (the vendetta is the
