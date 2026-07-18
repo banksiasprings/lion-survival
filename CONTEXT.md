@@ -374,6 +374,37 @@ The game's **first crafting economy**: two animal drops that unlock two new kit 
   accessory (costs an accessory slot), tooth drop player-gated / tusk not, boomerang flies at body height.
 - **"fire → burned" verb:** never existed in code (`MELEE_TOOL` only had axe/hammer). Nothing to remove.
 
+## Spear cost, Rhino Crossbow + scope zoom (2026-07-18d)
+- **Spear costs materials now.** `SPEAR_COST={rock:1,wood:2}` per throw. `kitThrowSpear` mirrors the wall
+  gate: refuse + name the shortfall (`return false` → `useActiveAbility` skips cooldown/sound), deduct on
+  success. `abilityCost(id)`/`canAfford(id)` centralise the held-material cost of the three material-cost
+  abilities (spear + both walls); `tickAbilityBar` greys an unaffordable slot (`.ab-slot.poor`) and
+  `updateTouchUI` greys the mobile attack button the same way.
+- **🦏 rhino horn** drops from **any** rhino death (`updateRhinos` dead-loop; not player-gated — like the
+  tusk, a rhino fights back + flees near death so a non-player kill is rare). `hornCount` is the third
+  run-scoped craft counter (reset in `resetGame`); `canCraft`/`craftCostStr`/`unlockItem`/HUD/shop-materials
+  readout all handle `craft:{horn}`.
+- **🏹 Rhino Crossbow** = ability, `craft:{horn:1}`, `cd:2.5`. **Craft-once / unlimited bolts** (chosen over
+  Steven's literal "1 horn/shot", which is unfarmable — flagged to him). `kitFireCrossbow` pushes an
+  `{crossbow:true}` projectile onto `thrownRocks[]`; `updateThrownRocks` branches on `r.crossbow` for **flat
+  50 dmg** to every animal type (reusing the existing stun/retaliation per-branch), **flatter gravity (1.0
+  vs 5)**, `CROSSBOW_SPEED=110`, `CROSSBOW_RANGE=WORLD*0.65≈325` despawn, and 🏹 "Bolt" labels. Bolt flies
+  along the aim ray (mostly flat) → aim the reticle *at* a target; a level shot sails over close animals'
+  hitboxes (same eye-height geometry as the spear, but the scope makes precise aim easy). Freed on
+  hit/range/`resetGame`.
+- **Scope / ADS** (`scopeHeld` input + `scopeActive()` = held AND Crossbow is the active ability).
+  `updateScope` (called from `updateAbilities`) lerps `camera.fov` between `BASE_FOV=75` (game default —
+  untouched) and `SCOPE_FOV=30`, and toggles the `#scope` DOM overlay (radial optic vignette + centred
+  green reticle, z-8 below the HUD). **Desktop:** RMB-hold zooms when the Crossbow is active (else RMB keeps
+  its grapple-drop role); `mouseup` always releases. **Mobile:** a hold-based `[data-touch="scope"]` 🔭
+  button with its own pointerdown/up listeners (the delegated tap handler no-ops `scope`); `updateTouchUI`
+  shows it only while the Crossbow is active and force-releases `scopeHeld` when hidden. `resetGame` clears
+  `scopeHeld`, restores `camera.fov=BASE_FOV`, and hides the overlay.
+- **⚠ Balance (report, not silently tuned):** no existing numbers changed. Crossbow (50 dmg + ~325 range +
+  2.5 s + zoom) is strong but gated behind killing a 220-HP rhino; ammo is craft-once (flagged). Base FOV
+  stays 75 (changing it would reshape all gameplay) so the zoom reads as ~2.5× rather than the 2× Steven
+  estimated from an assumed 60° base.
+
 ## Stone walls, Hammer & axe/hammer-on-walls (2026-07-18)
 Two new kit abilities + wall HP, all riding the existing wall/`kitSwings` disposal paths.
 - **Stone Wall (`kit_stonewall` 🧱)** — a second wall material. Placement shares `placeKitWall(stone)`

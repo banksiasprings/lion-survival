@@ -2,6 +2,35 @@
 
 Running log of changes, newest first. One line per change.
 
+## 2026-07-18 — Spear cost, Rhino Crossbow + scope zoom (Steven's 3 follow-ups)
+- **Spear now costs 1 rock + 2 wood per throw** (`SPEAR_COST`), matching the wall economy. `kitThrowSpear`
+  refuses cleanly (names the shortfall, returns false → no cooldown/sound) when you can't afford it, deducts
+  on a successful throw. A new `canAfford(id)`/`abilityCost(id)` pair greys the toolbar slot (`.ab-slot.poor`)
+  and the mobile attack button whenever a material-cost ability (spear or either wall) is unaffordable.
+- **🏹 Rhino Crossbow (ability, craft: 1 rhino horn).** Fires a flat, long-range bolt: **50 dmg**,
+  **~325 range** (`WORLD*0.65` — almost across the map), **2.5 s cooldown**, **unlimited bolts**. Rides
+  `thrownRocks[]` with an `r.crossbow` flag (flatter gravity 1.0, `CROSSBOW_SPEED 110`, 🏹 "Bolt" labels,
+  its own long despawn range). Rhinos now **drop a 🦏 horn on death** (any death — like the tusk, a rhino
+  fights back + flees near death so non-player kills are rare). `unlockItem`/`canCraft`/`craftCostStr`/HUD/
+  shop-materials all extended for horns.
+- **Scope / ADS zoom** (`scopeHeld` + `scopeActive()` gated on the Crossbow being active). **Desktop:** hold
+  **RMB** to zoom (else RMB keeps the grapple-drop), release to zoom out. **Mobile:** a dedicated **🔭 SCOPE**
+  button (press-and-hold; auto-shown only while the Crossbow is the active tool). `updateScope` lerps
+  `camera.fov` **75 → 30** (~2.5× — game base is 75, left untouched; Steven's "~30° zoomed") and toggles a
+  `#scope` DOM overlay: radial optic vignette + a faint centred green reticle (z-8, below the HUD so
+  health/stamina still read). Firing (LMB / Attack) works zoomed or not.
+- **⚠ Ammo model — flagged for Steven:** he said "1 rhino horn per shot," which is unfarmable. I shipped the
+  **craft-once / unlimited-bolts** model instead (1 horn crafts the crossbow, then bolts are free, gated only
+  by the 2.5 s cooldown) — cleaner and matches the boomerang. Easy to switch to "1 horn = N bolts" if he
+  prefers scarcity. **⚠ Balance-watch:** 50 dmg + ~325 range + 2.5 s + zoom is strong — deliberately gated
+  behind killing a rhino (220 HP). Bolts fly along the aim ray (flat), so level shots sail over close animals'
+  heads unless you put the reticle on them — the scope makes that precise. See report for the full note.
+- Disposal: bolts ride `thrownRocks[]` (freed on hit/range/reset); scope is a stat + DOM overlay (no VRAM).
+  Verified in-engine: spear deduct/refuse, horn drop, craft, 50-dmg bolt, 325 range, 2.5 s cd, FOV 75↔30 +
+  overlay toggle + deactivate-on-tool-switch, `resetGame` frees bolts + restores FOV. Zero console errors.
+  (Live in-pane screenshots were unavailable — the Browser pane's compositing wedged mid-session; scope DOM
+  verified structurally instead, and the same pipeline captured cleanly earlier in the session.)
+
 ## 2026-07-18 — Necklace-gated pounce, tusk boomerang & sky-hammer VFX (Steven's 4 asks)
 - **🦷 Lion Tooth Necklace (accessory) now GATES pounce.** Fresh saves can't pounce until they've killed a
   lion, harvested its tooth, and crafted the necklace (Steven's "option b" harder start). Modelled as an

@@ -34,10 +34,15 @@
 
 **Your weapons & hunting:**
 - **Rocks** (`F`, hold up to 10): chip damage + a long **stun**. Your main tool for stunning big threats.
-- **Spear** (equip the **Spear** kit ability, then **LMB**/`Z`): hurls far harder than a rock, no crafting.
+- **Spear** (equip the **Spear** kit ability, then **LMB**/`Z`): hurls far harder than a rock. **Costs 1 rock
+  + 2 wood per throw** now (the toolbar slot greys out when you can't afford it).
 - **Tusk Boomerang** (equip the **🪃 Tusk Boomerang** ability — **craft it from 1 elephant tusk** first):
   **LMB**/`Z` hurls a carved boomerang that arcs **out ~26 m and RETURNS to your hand** for **100 damage**,
   20 s cooldown. One-shots a lion, downs a gorilla in 2 throws, an elephant in 3. Hits each target once per throw.
+- **Rhino Crossbow** (equip the **🏹 Rhino Crossbow** ability — **craft it from 1 rhino horn** first): **LMB**/`Z`
+  fires a bolt that flies **almost all the way across the map** for **50 damage**, 2.5 s cooldown, **unlimited
+  bolts**. **Hold [RMB] (or the 🔭 button on mobile) to scope-zoom** — the view narrows with a crosshair for
+  precise long shots. Fire while zoomed to snipe. Aim the crosshair *on* your target (the bolt flies flat/level).
 - **Pounce** (`Q` / pounce button): a long lunge (range 9, 54 damage); from a **hidden crouch-in-grass ambush
   it's ×3** (~162 — one-shots most prey). The stealth-hunter play. **Requires the 🦷 Lion Tooth Necklace
   equipped** — without it you *cannot* pounce (the key/button is greyed out). Craft the necklace from **1 lion
@@ -49,6 +54,7 @@
 - **🦷 Lion tooth** — drops from **every lion you kill** (kills by a gorilla/rhino don't count). Feeds the
   Lion Tooth Necklace. Shown in the HUD once you hold one; carried within a run (reset on death).
 - **🦴 Elephant tusk** — drops from **every elephant that dies**. Feeds the Tusk Boomerang.
+- **🦏 Rhino horn** — drops from **every rhino that dies**. Feeds the Rhino Crossbow.
 - Crafting spends the material in the **🛒 SHOP** ("Craft" button, greyed if you can't afford it). The
   crafted item then **persists across runs** like the rest of your kit; the raw teeth/tusks do not.
 
@@ -86,6 +92,7 @@ Unlocks are **free** (no currency yet) and — like the equipped loadout — **p
 - 🪓 **Hand Axe** — swing: chop a nearby tree for wood, **fell a wood wall** (42), or land a **heavy melee** blow (42) on the animal in front, 1.2 s cooldown. Can't cut stone.
 - 🔨 **Hammer** — swing: **smash a stone OR wood wall** (67), or land a **crushing melee** blow (67) on the animal in front, 1.4 s cooldown. The demolition tool. On each swing a **giant hammer crashes down from the sky** onto the target (flash + dust + screen-shake) — pure spectacle on top of the swing.
 - 🪃 **Tusk Boomerang** — **craft from 1 elephant tusk.** Hurl a boomerang that flies out ~26 m and **returns to your hand** for **100 damage**, 20 s cooldown. One-shots a lion; 2 throws down a gorilla, 3 an elephant.
+- 🏹 **Rhino Crossbow** — **craft from 1 rhino horn.** Fire a bolt almost across the map (**50 dmg**), unlimited bolts, 2.5 s cooldown. **Hold [RMB] / 🔭 to scope-zoom** for precise long shots. Deadly at range; aim carefully up close.
 - 🏕️ **Campfire** — build a wide, long-lived (~120 s) ring of light that **lions flee**, 12 s cooldown.
 
 *(These five are granted, material-free versions of the classic survival tools — they replaced the old

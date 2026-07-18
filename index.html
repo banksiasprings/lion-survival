@@ -33,6 +33,15 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
   border-radius:50%;border:2px solid rgba(255,255,255,0.3);overflow:hidden;background:#1a3a1a}
 #minimap canvas{position:static;inset:auto;z-index:auto;display:block;width:150px;height:150px}
 #vignette{position:fixed;inset:0;pointer-events:none;z-index:5}
+/* Rhino Crossbow scope (ADS): optic vignette + faint centred reticle. Below the HUD
+   (z-10) so health/stamina still read through the scope; above the game vignette. */
+#scope{position:fixed;inset:0;pointer-events:none;display:none;z-index:8;
+  background:radial-gradient(circle at center, rgba(0,0,0,0) 24%, rgba(0,0,0,0.5) 54%, rgba(0,0,0,0.93) 73%)}
+#scope-x{position:absolute;left:50%;top:50%;width:210px;height:210px;transform:translate(-50%,-50%);
+  border:1.5px solid rgba(130,255,160,0.3);border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,0.4) inset}
+#scope-x::before,#scope-x::after{content:'';position:absolute;background:rgba(150,255,175,0.6)}
+#scope-x::before{left:50%;top:0;width:1.5px;height:100%;transform:translateX(-50%)}
+#scope-x::after{top:50%;left:0;height:1.5px;width:100%;transform:translateY(-50%)}
 #overlay{position:fixed;inset:0;background:rgba(0,0,0,0.88);display:flex;
   flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:100}
 #overlay h1{font-size:42px;color:#f1c40f;text-shadow:0 0 20px #f1c40f88;margin-bottom:4px}
@@ -59,6 +68,7 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
   line-height:15px;text-align:center;opacity:0.95}
 .ab-slot.active .ab-key{background:#f1c40f;color:#111;border-color:#f1c40f;opacity:1}
 .ab-slot.empty{opacity:0.4;font-size:15px}
+.ab-slot.poor{opacity:0.42;filter:grayscale(0.7)}   /* can't afford this material-cost tool right now */
 .ab-slot .ab-cd{position:absolute;inset:0;border-radius:9px;background:rgba(0,0,0,0.64);
   display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff}
 .ab-slot .ab-on{position:absolute;bottom:-2px;right:-2px;font-size:10px}
@@ -207,6 +217,7 @@ body.touch #crosshair{opacity:0.5}
 </head>
 <body>
 <div id="vignette"></div>
+<div id="scope"><div id="scope-x"></div></div>
 <div id="hud">
   <div id="crosshair"></div>
   <div id="topleft"></div>
@@ -231,11 +242,12 @@ body.touch #crosshair{opacity:0.5}
     WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hide in grass)<br>
     <span style="color:#c39bd3">🛒 Your kit is on the LEFT — LMB or Z Use active ability &nbsp;·&nbsp; R Switch &nbsp;·&nbsp; Tab Loadout (pauses) &nbsp;·&nbsp; unlock &amp; equip in the SHOP</span><br>
     G Grapple → tree (RMB/Space drop · safe from lions while perched) &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; Q Pounce (ambush from grass ×3) &nbsp;|&nbsp; E Eat kill / Collect wood &amp; rocks<br>
+    <span style="opacity:0.85">🏹 Crossbow equipped? Hold RMB to scope-zoom, LMB to fire.</span><br>
     </span>
     <span class="touch-only">
     Left stick to move &nbsp;·&nbsp; swipe the right side to look &nbsp;·&nbsp; big button uses your active tool<br>
     <span style="color:#c39bd3">Tap a numbered tool up top to select it (tap it again to use) &nbsp;·&nbsp; ☰ top-left opens your loadout</span><br>
-    Side buttons: 💨 sprint · 🐾 crouch (hide) · 🪝 grapple a tree · ⤴️ jump/drop · 🪨 rock · 🐆 pounce · 🍖 eat<br>
+    Side buttons: 💨 sprint · 🐾 crouch (hide) · 🪝 grapple a tree · ⤴️ jump/drop · 🪨 rock · 🐆 pounce · 🍖 eat · 🔭 scope (Crossbow)<br>
     </span>
     <span style="opacity:0.8">Watch your 🍖 hunger — eat prey you hunt or scavenge lion kills (they'll fight you for it).</span>
   </div>
@@ -273,6 +285,7 @@ body.touch #crosshair{opacity:0.5}
     <button class="tc tc-btn" data-touch="crouch">🐾<span class="tc-lab">CROUCH</span></button>
     <button class="tc tc-btn" data-touch="sprint">💨<span class="tc-lab">SPRINT</span></button>
     <button class="tc tc-btn" data-touch="jump">⤴️<span class="tc-lab">JUMP</span></button>
+    <button class="tc tc-btn" data-touch="scope" style="display:none">🔭<span class="tc-lab">SCOPE</span></button>
   </div>
   <button id="tc-attack" class="tc tc-btn" data-touch="attack" aria-label="Use active tool">🐾</button>
 </div>
@@ -375,8 +388,10 @@ let rockCount  = 0;  // held rocks
 // Craft materials (run-scoped like wood/rock; the crafted item, once unlocked, persists).
 // Lion teeth drop from lions YOU kill → craft the Lion Tooth Necklace (gates pounce).
 // Elephant tusks drop from any elephant death → craft the Tusk Boomerang.
+// Rhino horns drop from any rhino death → craft the Rhino Crossbow.
 let toothCount = 0;
 let tuskCount  = 0;
+let hornCount  = 0;
 
 // =====================================================================
 //  SHOP / ABILITY-ACCESSORY META-PROGRESSION
@@ -419,6 +434,9 @@ const SHOP_ITEMS = [
   { id:'kit_boomerang', type:'ability', icon:'🪃', name:'Tusk Boomerang',
     desc:'Hurl a carved elephant-tusk boomerang: 100 damage, arcs out and RETURNS to your hand. 20s cooldown. Craft: 1 elephant tusk.',
     cd:20, craft:{ tusk:1 } },
+  { id:'kit_crossbow', type:'ability', icon:'🏹', name:'Rhino Crossbow',
+    desc:'Fire a bolt that flies almost across the map (50 dmg). [RMB]/🔭 hold to scope-zoom. Unlimited bolts, 2.5s cooldown. Craft: 1 rhino horn.',
+    cd:2.5, craft:{ horn:1 } },
   // ---- Accessories (passive while equipped; 2 slots) ----
   { id:'lion_necklace', type:'accessory', icon:'🦷', name:'Lion Tooth Necklace',
     desc:'Strung from a lion\'s fang. While worn you can POUNCE ([Q] / pounce button) — without it, no pounce. Craft: 1 lion tooth.',
@@ -444,6 +462,7 @@ let kitWalls  = [];                 // { mesh } permanent Palisade Wall chunks (
 let kitSwings = [];                 // { mesh, t } transient Hand Axe swing arcs — self-dispose
 let skyHammers = [];                // { grp,... } Hammer "from the sky" VFX — fall, impact, fade
 let _impactFlashes = [];            // { mesh,mat,life } bright ground bursts under a landing sky hammer
+let scopeHeld = false;              // Rhino Crossbow ADS: RMB / 🔭 button held (input state)
 let EQUIP = { speedMul:1, visMul:1, healthRegenMul:1, hungerDrainMul:1 };  // per-frame passive modifiers
 let uiPaused = false;               // true while the in-game loadout overlay is open (sim frozen)
 let shopContext = 'menu';           // 'menu' | 'game' — where Close returns to
@@ -1395,8 +1414,13 @@ function registerControls(){
     if(!isPointerLocked){ renderer.domElement.requestPointerLock(); return; }
     if(player.stunTimer > 0) return;   // dazed by a gorilla tree-grab — no actions
     if(e.button===0) useActiveAbility();   // LMB uses the active kit ability
-    if(e.button===2) onRightClick();
+    if(e.button===2){                      // RMB: scope-zoom while the Crossbow is active, else drop/release
+      if(progress.abilities[progress.activeAbility]==='kit_crossbow') scopeHeld = true;
+      else onRightClick();
+    }
   });
+  // RMB release always ends the scope zoom (harmless if it wasn't scoping).
+  document.addEventListener('mouseup', e=>{ if(e.button===2) scopeHeld = false; });
   document.addEventListener('contextmenu', e=>e.preventDefault());
 
   document.addEventListener('pointerlockchange', ()=>{
@@ -1413,7 +1437,7 @@ function registerControls(){
 //  give us unified touch/mouse + real multi-touch (move with one thumb, look/
 //  fire with the other) via pointerId + setPointerCapture.
 // =====================================================================
-let _tcSprintBtn=null, _tcCrouchBtn=null, _tcAttack=null, _tcPounceBtn=null;
+let _tcSprintBtn=null, _tcCrouchBtn=null, _tcAttack=null, _tcPounceBtn=null, _tcScopeBtn=null;
 function initTouchControls(){
   const forced = /[?&]touch=1/.test(location.search);
   IS_TOUCH = forced || ('ontouchstart' in window) || (navigator.maxTouchPoints||0) > 0;
@@ -1475,7 +1499,19 @@ function initTouchControls(){
   _tcSprintBtn = document.querySelector('[data-touch="sprint"]');
   _tcCrouchBtn = document.querySelector('[data-touch="crouch"]');
   _tcPounceBtn = document.querySelector('[data-touch="pounce"]');
+  _tcScopeBtn  = document.querySelector('[data-touch="scope"]');
   _tcAttack    = document.getElementById('tc-attack');
+
+  // Scope button is press-and-HOLD (not a tap), so it gets its own listeners.
+  // The delegated tap handler ignores 'scope' (see doTouchAction).
+  if(_tcScopeBtn){
+    const on  = e=>{ e.preventDefault(); if(gameState==='playing' && !uiPaused) scopeHeld = true; };
+    const off = e=>{ e.preventDefault(); scopeHeld = false; };
+    _tcScopeBtn.addEventListener('pointerdown', on, {passive:false});
+    _tcScopeBtn.addEventListener('pointerup', off);
+    _tcScopeBtn.addEventListener('pointercancel', off);
+    _tcScopeBtn.addEventListener('pointerleave', off);
+  }
 
   // ---- Ability toolbar taps (reuses #abilitybar; renderAbilityBar rebuilds the slots,
   //      so we delegate off the container, not the slots) ----
@@ -1505,6 +1541,7 @@ function doTouchAction(name, btn){
     case 'rock':    throwRock(); break;                                         // == F
     case 'pounce':  pouncePrey(); break;                                        // == Q
     case 'eat':     if(!eatNearbyCarcass()) doCollect(); break;                 // == E
+    case 'scope':   break;                                                      // hold-based — handled by its own listeners
   }
 }
 
@@ -1516,9 +1553,17 @@ function updateTouchUI(){
   if(_tcPounceBtn) _tcPounceBtn.classList.toggle('disabled', !hasNecklace());   // greyed until the necklace is worn
   // Big attack button mirrors the active tool's icon (spear/axe/hammer/…), so
   // it reads as "use this". Falls back to a paw when no ability is equipped.
+  const activeId = progress.abilities[progress.activeAbility];
   if(_tcAttack){
-    const id = progress.abilities[progress.activeAbility];
-    _tcAttack.textContent = id ? SHOP_BY_ID[id].icon : '🐾';
+    _tcAttack.textContent = activeId ? SHOP_BY_ID[activeId].icon : '🐾';
+    _tcAttack.classList.toggle('disabled', !!activeId && !canAfford(activeId));   // grey when you can't afford the throw
+  }
+  // Scope button: only visible while the Crossbow is the active tool.
+  if(_tcScopeBtn){
+    const show = activeId==='kit_crossbow';
+    _tcScopeBtn.style.display = show ? '' : 'none';
+    if(!show) scopeHeld = false;                    // can't hold a hidden button
+    _tcScopeBtn.classList.toggle('on', scopeActive());
   }
   tickAbilityBar();   // keep the toolbar's active-ring + cooldown numbers live on touch
 }
@@ -3746,12 +3791,15 @@ function updateRhinos(dt){
     else { rhinoStep(R, R.pos.x+R.wanderDir.x*8, R.pos.z+R.wanderDir.z*8, RHINO.SPEED_ROAM, dt, RHINO.TURN); animateRhino(R,dt,0.7); }
   });
 
-  // Downed rhino → a big edible carcass (and free the VRAM).
+  // Downed rhino → a big edible carcass (and free the VRAM). Drops a horn (craft
+  // material for the Rhino Crossbow). Not player-gated: like the elephant, a rhino
+  // fights back + flees near death, so a non-player kill is rare.
   for(let i=rhinoMeshes.length-1;i>=0;i--){
     if(rhinoMeshes[i].health<=0){
       spawnCarcass(rhinoMeshes[i].pos.clone(), 90, null);
       killObj(rhinoMeshes[i].mesh); rhinoMeshes.splice(i,1);
-      showKillfeed('🦏 The rhino is down!');
+      hornCount++;
+      showKillfeed('🦏 The rhino is down! 🦏 +1 rhino horn');
     }
   }
 }
@@ -3945,6 +3993,23 @@ function buildBoomerangMesh(){
   g.add(arm1); g.add(arm2); g.add(tip1); g.add(tip2);
   return g;
 }
+// Crossbow bolt: a thin dark shaft + steel point + a pair of small fletches. Built
+// along local -Z (point toward -Z) so the flight code's lookAt(velocity) leads with
+// the tip, exactly like the spear.
+function buildBoltMesh(){
+  const g = new THREE.Group();
+  const shaftMat  = new THREE.MeshLambertMaterial({color:0x3a2c1e});
+  const tipMat    = new THREE.MeshLambertMaterial({color:0x9aa0ab});
+  const fletchMat = new THREE.MeshLambertMaterial({color:0x8a2f28});
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,0.9,6), shaftMat);
+  shaft.rotation.x = Math.PI/2;                                  // lie along Z
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.055,0.2,6), tipMat);
+  tip.rotation.x = -Math.PI/2; tip.position.z = -0.53;           // point forward (-Z)
+  const f1 = new THREE.Mesh(new THREE.BoxGeometry(0.008,0.14,0.16), fletchMat); f1.position.z = 0.4;
+  const f2 = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.008,0.16), fletchMat); f2.position.z = 0.4;
+  g.add(shaft); g.add(tip); g.add(f1); g.add(f2);
+  return g;
+}
 
 // Measure an animal's hit cylinder from its actual mesh (so thrown weapons hit the
 // WHOLE body, not a tiny sphere at its feet). Called once per spawn.
@@ -4055,27 +4120,29 @@ function updateThrownRocks(dt){
     if(r.boomerang){ updateBoomerang(r, dt, i); continue; }   // returning arc — its own physics + hit model
     r.mesh.position.addScaledVector(r.vel, dt);
     r.dist += r.vel.length()*dt;
-    r.vel.y -= 5*dt; // light gravity → flatter, faster-feeling throw
-    if(r.spear) r.mesh.lookAt(r.mesh.position.clone().add(r.vel));   // tip follows the arc
+    r.vel.y -= (r.crossbow ? 1.0 : 5)*dt;  // crossbow bolt flies flat & far; rock/spear keep light gravity
+    if(r.spear || r.crossbow) r.mesh.lookAt(r.mesh.position.clone().add(r.vel));   // tip follows the arc
 
-    const m = r.mult || 1, ic = r.spear ? '🗡️' : '🪨';   // rocks use m; spear dmg is sized per target
+    const m = r.mult || 1;
+    const ic    = r.crossbow ? '🏹' : r.spear ? '🗡️' : '🪨';   // rocks use m; spear dmg per-target; bolt is flat 50
+    const wname = r.crossbow ? 'Bolt' : r.spear ? 'Spear' : 'Rock';
     let hit = false;
     lionMeshes.forEach(L=>{
       if(projHit(r, L)){                              // whole-body hit cylinder
-        L.health -= r.spear ? L.maxHealth/5 : m;     // spear: exactly 5 to down any lion
+        L.health -= r.crossbow ? 50 : r.spear ? L.maxHealth/5 : m;     // spear: exactly 5 to down a lion; bolt: 50 (one-shots)
         L.lastHitBy=player; L.lastHitKind='player';   // hit a lion → the whole pride turns on you (via the retaliation watchdog)
         L.stunTimer = 5;
         L.state = 'stunned';
         L.flashTimer = 0.25;
         hit = true;
-        if(L.health<=0){ showKillfeed(ic+' '+(r.spear?'Spear':'Rock')+' kill!'); }
+        if(L.health<=0){ showKillfeed(ic+' '+wname+' kill!'); }
       }
     });
     // Thrown weapons also wound + STUN prey (ranged hunting) and scatter the herd.
-    // A spear one-shots most animals; the kudu takes two, the tall tough giraffe three; rocks wound.
+    // A spear one-shots most animals; the kudu takes two, the tall tough giraffe three; rocks wound; a bolt does 50.
     if(!hit) preyMeshes.forEach(P=>{
       if(projHit(r, P)){
-        P.health -= r.spear ? (P.species==='kudu' ? P.maxHealth/2 : P.species==='giraffe' ? P.maxHealth/3 : P.species==='elephant' ? P.maxHealth/15 : P.maxHealth) : 9*m;
+        P.health -= r.crossbow ? 50 : r.spear ? (P.species==='kudu' ? P.maxHealth/2 : P.species==='giraffe' ? P.maxHealth/3 : P.species==='elephant' ? P.maxHealth/15 : P.maxHealth) : 9*m;
         P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
         if(P.species==='elephant') P.aggroT = ELE.RAGE_TIME;   // hitting it enrages it → it charges you
         hit = true;
@@ -4083,28 +4150,28 @@ function updateThrownRocks(dt){
       }
     });
     // They chip the gorilla too — far tankier than prey (skip a perched/sleeping
-    // one, up its tree). A spear takes ten throws to down it.
+    // one, up its tree). A spear takes ten throws to down it; a bolt does 50.
     if(!hit) gorillaMeshes.forEach(G=>{
       if(G.state!=='perched' && G.state!=='sleeping' && projHit(r, G)){
-        G.health -= r.spear ? G.maxHealth/10 : 8*m;   // spear: 10 to down the gorilla
+        G.health -= r.crossbow ? 50 : r.spear ? G.maxHealth/10 : 8*m;   // spear: 10 to down the gorilla; bolt: 50
         G.flashTimer = 0.25;
-        G.stunTimer = Math.max(G.stunTimer||0, r.spear ? GOR.SPEAR_STUN : GOR.ROCK_STUN);  // daze the brute
-        hit = true; showKillfeed(r.spear ? '🗡️ Spear staggers the gorilla!' : '🪨 Rock dazes the gorilla!');
+        G.stunTimer = Math.max(G.stunTimer||0, (r.spear||r.crossbow) ? GOR.SPEAR_STUN : GOR.ROCK_STUN);  // daze the brute
+        hit = true; showKillfeed(r.crossbow ? '🏹 Bolt punches the gorilla!' : r.spear ? '🗡️ Spear staggers the gorilla!' : '🪨 Rock dazes the gorilla!');
       }
     });
     // The rhino: tanky, takes many throws — and being hit reveals you exactly, so
     // it gets dazed, then makes one committed charge at where you were.
     if(!hit) rhinoMeshes.forEach(R=>{
       if(projHit(r, R)){
-        R.health -= r.spear ? RHINO.SPEAR_DMG : RHINO.ROCK_DMG;
+        R.health -= r.crossbow ? 50 : r.spear ? RHINO.SPEAR_DMG : RHINO.ROCK_DMG;
         R.flashTimer = 0.25;
-        R.stunTimer = Math.max(R.stunTimer||0, r.spear ? RHINO.SPEAR_STUN : RHINO.ROCK_STUN);
+        R.stunTimer = Math.max(R.stunTimer||0, (r.spear||r.crossbow) ? RHINO.SPEAR_STUN : RHINO.ROCK_STUN);
         R.target = player; R.targetKind = 'player'; R.aggroTimer = RHINO.AGGRO_TIME;   // it locks onto you
-        hit = true; showKillfeed(R.health<=0 ? (r.spear?'🗡️':'🪨')+' The rhino is down!' : '🦏 The rhino wheels on you!');
+        hit = true; showKillfeed(R.health<=0 ? ic+' The rhino is down!' : '🦏 The rhino wheels on you!');
       }
     });
 
-    if(hit || r.dist > 50){
+    if(hit || r.dist > (r.crossbow ? CROSSBOW_RANGE : 50)){
       killObj(r.mesh);
       thrownRocks.splice(i,1);
     }
@@ -4218,6 +4285,7 @@ function useActiveAbility(){
     showKillfeed('🦅 Eagle eye — the savanna revealed');
   } else if(id==='kit_spear'){ did = kitThrowSpear();      quiet = true; }
   else if(id==='kit_boomerang'){ did = kitThrowBoomerang();quiet = true; }
+  else if(id==='kit_crossbow'){  did = kitFireCrossbow();  quiet = true; }
   else if(id==='kit_wall'){      did = kitPlaceWall();      quiet = true; }
   else if(id==='kit_stonewall'){ did = kitPlaceStoneWall();quiet = true; }
   else if(id==='kit_fire'){      did = kitPlaceCampfire();  quiet = true; }
@@ -4283,14 +4351,40 @@ function clearFireTorch(){
 //  • Wall     → wallMeshes/wallAABBs (freed via removeWallAt + resetGame) + a despawn timer
 //  • Grapple  → the grapple line (freed on release/arrive + resetGame)
 //  • Axe      → a transient swing mesh in kitSwings[] (self-disposes; cleared on reset/game-over)
+const SPEAR_COST = { rock:1, wood:2 };   // per-throw material cost (matches the wall economy — no cooldown, materials gate it)
 function kitThrowSpear(){
+  // Material gate — refuse + name the shortfall, no lockout on a failed throw
+  // (return false → useActiveAbility skips cooldown + sound), then deduct on success.
+  if(rockCount < SPEAR_COST.rock || woodCount < SPEAR_COST.wood){
+    const short = [];
+    if(rockCount < SPEAR_COST.rock) short.push(SPEAR_COST.rock+' rock');
+    if(woodCount < SPEAR_COST.wood) short.push(SPEAR_COST.wood+' wood');
+    showKillfeed('🗡️ Spear needs '+short.join(' + ')+' (have 🪨'+rockCount+' 🪵'+woodCount+')');
+    return false;
+  }
   const dir  = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation);
   const mesh = buildSpearMesh();
   mesh.position.copy(camera.position);
   mesh.lookAt(mesh.position.clone().add(dir));         // tip leads the throw
   scene.add(mesh);
   thrownRocks.push({ mesh, vel:dir.clone().multiplyScalar(52), dist:0, mult:5, spear:true });
+  rockCount -= SPEAR_COST.rock; woodCount -= SPEAR_COST.wood;   // deduct (HUD reads the counters in updateHUD)
   playSound('throw');
+  return true;
+}
+// Which held-material cost an ability charges per use (spear + both walls), or null.
+// Read by the toolbar to grey a slot you can't currently afford (mirrors the
+// refuse-on-use behaviour) and by the mobile attack button.
+function abilityCost(id){
+  if(id==='kit_spear')     return SPEAR_COST;
+  if(id==='kit_wall')      return { wood:WALL_COST.wood };
+  if(id==='kit_stonewall') return { rock:WALL_COST.rock };
+  return null;
+}
+function canAfford(id){
+  const c = abilityCost(id); if(!c) return true;
+  if(c.rock && rockCount < c.rock) return false;
+  if(c.wood && woodCount < c.wood) return false;
   return true;
 }
 // ---- Tusk Boomerang: 100 dmg, arcs out and RETURNS to the player's hand ----
@@ -4359,6 +4453,35 @@ function boomerangStrike(kind, o){
     o.target = player; o.targetKind = 'player'; o.aggroTimer = RHINO.AGGRO_TIME;   // it wheels on you
     showKillfeed(o.health<=0 ? '🪃 Boomerang kill — rhino!' : '🪃 Boomerang cracks the rhino!');
   }
+}
+// ---- Rhino Crossbow: a flat, long-range bolt (50 dmg) with a scope-zoom ----
+// Rides thrownRocks[] like the spear (r.crossbow flag → flatter gravity, long range,
+// flat 50 dmg, 🏹 labels in updateThrownRocks). Unlimited bolts (craft-once model),
+// gated only by the 2.5s cooldown.
+const CROSSBOW_SPEED = 110;                       // fast, sniper-ish bolt
+const CROSSBOW_RANGE = Math.round(WORLD*0.65);    // ~325 — almost all the way across the map
+function kitFireCrossbow(){
+  const dir  = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation).normalize();
+  const mesh = buildBoltMesh();
+  mesh.position.copy(camera.position);
+  mesh.lookAt(mesh.position.clone().add(dir));    // tip leads (built along -Z like the spear)
+  scene.add(mesh);
+  thrownRocks.push({ mesh, vel:dir.clone().multiplyScalar(CROSSBOW_SPEED), dist:0, crossbow:true });
+  playSound('throw');
+  return true;
+}
+// ---- ADS scope zoom (Rhino Crossbow only) ----
+const BASE_FOV = 75, SCOPE_FOV = 30;              // base is the game default; zoomed ≈ 2.5× (Steven asked ~30°)
+function scopeActive(){ return scopeHeld && progress.abilities[progress.activeAbility]==='kit_crossbow'; }
+function updateScope(dt){
+  const want = scopeActive() ? SCOPE_FOV : BASE_FOV;
+  if(Math.abs(camera.fov - want) > 0.05){
+    camera.fov += (want - camera.fov) * Math.min(1, dt*14);
+    if(Math.abs(camera.fov - want) < 0.05) camera.fov = want;
+    camera.updateProjectionMatrix();
+  }
+  const sc = document.getElementById('scope');
+  if(sc){ const on = scopeActive(); if(sc._on!==on){ sc.style.display = on?'block':'none'; sc._on = on; } }
 }
 const KIT_WALL_MAX = 10;   // active-wall cap (permanent walls — bounds VRAM; enemies smashing them frees space)
 const WALL_HP = { wood:120, stone:200 };   // player structure HP: axe(42) fells wood in 3, hammer(67) in 2; hammer smashes stone in 3
@@ -4697,6 +4820,7 @@ function updateAbilities(dt){
   }
   updateSkyHammers(dt);      // big "hammer from the sky" VFX (fall → impact → fade)
   updateImpactFlashes(dt);   // bright ground bursts under a landed sky hammer
+  updateScope(dt);           // crossbow ADS: lerp camera FOV + toggle the scope overlay
 
   tickAbilityBar();
 }
@@ -4760,6 +4884,8 @@ function tickAbilityBar(){
     const kind=el.dataset.kind, i=+el.dataset.index;
     const id=(kind==='ability'?progress.abilities:progress.accessories)[i];
     el.classList.toggle('active', kind==='ability' && i===progress.activeAbility && !!id);
+    // grey a material-cost ability (spear/walls) you can't currently afford
+    el.classList.toggle('poor', kind==='ability' && !!id && !canAfford(id));
     // clear transient overlays
     const old=el.querySelector('.ab-cd'); if(old) old.remove();
     const oldOn=el.querySelector('.ab-on'); if(oldOn) oldOn.remove();
@@ -4813,7 +4939,8 @@ function renderShop(){
   // Crafting materials readout (the shop is fullscreen, so the HUD counters aren't visible here).
   const mats=document.createElement('div'); mats.className='lo-lab'; mats.style.marginTop='6px';
   mats.textContent='CRAFTING MATERIALS — 🦷 '+toothCount+' lion '+(toothCount===1?'tooth':'teeth')+
-                   ' · 🦴 '+tuskCount+' elephant '+(tuskCount===1?'tusk':'tusks');
+                   ' · 🦴 '+tuskCount+' elephant '+(tuskCount===1?'tusk':'tusks')+
+                   ' · 🦏 '+hornCount+' rhino '+(hornCount===1?'horn':'horns');
   row.appendChild(mats);
 
   // Catalogue grid
@@ -4899,12 +5026,14 @@ function canCraft(it){
   if(!it.craft) return true;
   if(it.craft.tooth && toothCount < it.craft.tooth) return false;
   if(it.craft.tusk  && tuskCount  < it.craft.tusk ) return false;
+  if(it.craft.horn  && hornCount  < it.craft.horn ) return false;
   return true;
 }
 function craftCostStr(it){
   const p=[];
   if(it.craft.tooth) p.push(it.craft.tooth+' 🦷');
   if(it.craft.tusk)  p.push(it.craft.tusk+' 🦴');
+  if(it.craft.horn)  p.push(it.craft.horn+' 🦏');
   return p.join(' + ');
 }
 function unlockItem(id){
@@ -4915,11 +5044,13 @@ function unlockItem(id){
       const need=[];
       if(it.craft.tooth && toothCount<it.craft.tooth) need.push(it.craft.tooth+' lion tooth (have '+toothCount+')');
       if(it.craft.tusk  && tuskCount <it.craft.tusk ) need.push(it.craft.tusk +' elephant tusk (have '+tuskCount +')');
+      if(it.craft.horn  && hornCount <it.craft.horn ) need.push(it.craft.horn +' rhino horn (have '+hornCount +')');
       flashShopMsg('🔒 Craft '+it.name+' needs '+need.join(' + '));
       return;
     }
     if(it.craft.tooth) toothCount -= it.craft.tooth;
     if(it.craft.tusk)  tuskCount  -= it.craft.tusk;
+    if(it.craft.horn)  hornCount  -= it.craft.horn;
     showKillfeed(it.icon+' Crafted the '+it.name+'!');
   }
   progress.unlocked.add(id);
@@ -5178,6 +5309,7 @@ function updateHUD(){
   let mats='';
   if(toothCount>0) mats += `<br>🦷 Teeth: ${toothCount}`;
   if(tuskCount>0)  mats += (toothCount>0?' &nbsp; ':'<br>')+`🦴 Tusks: ${tuskCount}`;
+  if(hornCount>0)  mats += ((toothCount>0||tuskCount>0)?' &nbsp; ':'<br>')+`🦏 Horns: ${hornCount}`;
   document.getElementById('topright').innerHTML =
     `${dn.isDay?'☀️ DAY':'🌙 NIGHT'} ${fmtTime(Math.max(0,timeLeft))}<br>`+
     (weather.intensity>0.15?`⛈️ STORM<br>`:'')+
@@ -5449,6 +5581,10 @@ function resetGame(){
   rockCount  = 10;   // starter stock: 2 stone walls (5 rock each) OR throwing ammo — rocks are scarce/premium
   toothCount = 0;    // craft materials are run-scoped (the crafted item, once unlocked, persists across runs)
   tuskCount  = 0;
+  hornCount  = 0;
+  scopeHeld  = false;                                        // drop any held crossbow scope on restart
+  if(camera){ camera.fov = BASE_FOV; camera.updateProjectionMatrix(); }
+  const sc = document.getElementById('scope'); if(sc){ sc.style.display='none'; sc._on=false; }
   kills      = 0;
   elapsed    = 0;
   shakeTime  = 0;
