@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Lion Survival</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-select:none}
-#game-canvas{display:block;position:fixed;inset:0;z-index:1}
+#game-canvas{display:block;position:fixed;inset:0;z-index:1;touch-action:none}
 #hud{position:fixed;inset:0;pointer-events:none;color:#fff;text-shadow:0 1px 3px #000;z-index:10}
 #crosshair{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:20px;height:20px;pointer-events:none}
 #crosshair::before,#crosshair::after{content:'';position:absolute;background:rgba(255,255,255,0.85)}
@@ -116,6 +117,91 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
 .pk-item .pk-ic{font-size:22px}
 .pk-item .pk-nm{font-size:13px}
 .pk-item .pk-d{font-size:10px;opacity:0.6}
+
+/* =====================================================================
+   TOUCH / MOBILE CONTROLS  — everything here is gated on `body.touch`
+   (added at load-time when a touchscreen is detected or ?touch=1). Desktop
+   never gets `body.touch`, so keyboard/mouse layout is 100% unchanged.
+   Safe-area insets keep the UI clear of notches / rounded corners / nav bars.
+   ===================================================================== */
+:root{
+  --sa-t:env(safe-area-inset-top,0px);   --sa-b:env(safe-area-inset-bottom,0px);
+  --sa-l:env(safe-area-inset-left,0px);   --sa-r:env(safe-area-inset-right,0px);
+}
+#touch{position:fixed;inset:0;z-index:15;pointer-events:none;display:none;
+  touch-action:none;font-family:'Courier New',monospace}
+body.touch #touch{display:block}
+/* start-overlay help text swaps keyboard ↔ touch instructions */
+.touch-only{display:none} body.touch .touch-only{display:inline}
+body.touch .kb-only{display:none}
+/* every actual control is opt-in to pointer events */
+#touch .tc{pointer-events:auto;touch-action:none;-webkit-user-select:none;user-select:none;
+  -webkit-tap-highlight-color:transparent}
+
+/* ---- Left thumbstick ---- */
+#tc-joy{position:absolute;left:calc(20px + var(--sa-l));bottom:calc(22px + var(--sa-b));
+  width:132px;height:132px;border-radius:50%;
+  background:radial-gradient(circle,rgba(255,255,255,0.12),rgba(0,0,0,0.42));
+  border:2px solid rgba(255,255,255,0.4);box-shadow:0 2px 10px rgba(0,0,0,0.4)}
+#tc-joy-knob{position:absolute;left:50%;top:50%;width:58px;height:58px;border-radius:50%;
+  margin:-29px 0 0 -29px;background:rgba(241,196,15,0.32);border:2px solid rgba(241,196,15,0.85);
+  box-shadow:0 0 12px rgba(241,196,15,0.4);transition:transform 0.04s linear}
+
+/* ---- Right-hand action buttons ---- */
+.tc-btn{position:absolute;border-radius:50%;background:rgba(0,0,0,0.42);
+  border:2px solid rgba(255,255,255,0.3);color:#fff;text-shadow:0 1px 3px #000;
+  display:flex;align-items:center;justify-content:center;line-height:1;
+  font-family:inherit;padding:0}
+.tc-btn:active,.tc-btn.on{background:rgba(241,196,15,0.28);border-color:#f1c40f;
+  box-shadow:0 0 12px rgba(241,196,15,0.5)}
+.tc-btn .tc-lab{position:absolute;bottom:-13px;left:50%;transform:translateX(-50%);
+  font-size:8px;letter-spacing:0.5px;opacity:0.7;white-space:nowrap;text-shadow:0 1px 2px #000}
+/* big primary — Use active tool */
+#tc-attack{right:calc(20px + var(--sa-r));bottom:calc(24px + var(--sa-b));
+  width:92px;height:92px;font-size:38px;border-color:rgba(231,76,60,0.7);
+  background:rgba(231,76,60,0.22)}
+#tc-attack:active{background:rgba(231,76,60,0.45);border-color:#e74c3c;
+  box-shadow:0 0 16px rgba(231,76,60,0.6)}
+/* secondary cluster — 2-wide grid tucked up-left of the attack button */
+#tc-actions{position:absolute;right:calc(122px + var(--sa-r));bottom:calc(24px + var(--sa-b));
+  display:grid;grid-template-columns:repeat(2,56px);gap:12px 10px;pointer-events:none}
+#tc-actions .tc-btn{position:static;width:56px;height:56px;font-size:24px}
+
+/* ---- Top-left menu button ---- */
+#tc-menu{position:absolute;left:calc(12px + var(--sa-l));top:calc(12px + var(--sa-t));
+  width:50px;height:50px;font-size:24px}
+
+/* ---- Repositioned HUD pieces (reuse the desktop elements) ---- */
+/* Ability toolbar becomes a horizontal, tappable strip across the top-centre. */
+body.touch #abilitybar{flex-direction:row;left:50%;right:auto;
+  bottom:auto;top:calc(8px + var(--sa-t));transform:translateX(-50%);
+  align-items:center;gap:7px;pointer-events:auto}
+body.touch #abilitybar .ab-slot{pointer-events:auto;width:50px;height:50px;font-size:24px}
+body.touch #abilitybar .ab-div{width:6px;height:auto}
+body.touch #abilitybar .ab-hint{display:none}          /* keyboard hint is irrelevant on touch */
+/* Minimap up to the top-right so the attack cluster owns the bottom-right. */
+body.touch #minimap{top:calc(72px + var(--sa-t));right:calc(10px + var(--sa-r));bottom:auto}
+/* Shift the day/time readout clear of the menu button. */
+body.touch #topleft{left:calc(70px + var(--sa-l));top:calc(16px + var(--sa-t))}
+/* Signals panel: smaller + capped height on touch so it clears the thumbstick. */
+body.touch #signals{top:calc(74px + var(--sa-t));font-size:10px;max-width:200px;
+  max-height:44vh;overflow:hidden;line-height:1.4}
+body.touch #topright{top:calc(14px + var(--sa-t));right:calc(168px + var(--sa-r))}
+/* Slimmer stat bars, lifted between the two thumb zones. */
+body.touch #bottombar{bottom:calc(14px + var(--sa-b))}
+body.touch #health-wrap,body.touch #stamina-wrap,body.touch #hunger-wrap{width:168px}
+/* Crosshair a touch smaller / dimmer — you aim by facing, not a pointer. */
+body.touch #crosshair{opacity:0.5}
+
+/* ---- Rotate-to-landscape nudge (touch + portrait only; pure CSS) ---- */
+#rotate-hint{position:fixed;inset:0;z-index:200;display:none;
+  background:rgba(6,10,6,0.97);color:#f1c40f;text-align:center;padding:30px;
+  flex-direction:column;align-items:center;justify-content:center;gap:16px}
+@media (orientation:portrait){ body.touch #rotate-hint{display:flex} }
+#rotate-hint .rot-ic{font-size:64px;animation:rot-wig 1.8s ease-in-out infinite;transform-origin:center}
+#rotate-hint .rot-t{font-size:22px}
+#rotate-hint .rot-s{font-size:13px;opacity:0.7;line-height:1.5;max-width:280px}
+@keyframes rot-wig{0%,100%{transform:rotate(-12deg)}50%{transform:rotate(78deg)}}
 </style>
 </head>
 <body>
@@ -140,9 +226,16 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
   <p>Survive the savanna. Lions hunt hardest at dawn, dusk and through the night — rest in shade by day.<br>
      Crouch in tall grass to hide (standing in it, they still see you), stay quiet, mind the wind, and grapple into a tree when the pride closes in.</p>
   <div style="font-size:12px;opacity:0.65;line-height:1.9;text-align:center">
+    <span class="kb-only">
     WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hide in grass)<br>
     <span style="color:#c39bd3">🛒 Your kit is on the LEFT — LMB or Z Use active ability &nbsp;·&nbsp; R Switch &nbsp;·&nbsp; Tab Loadout (pauses) &nbsp;·&nbsp; unlock &amp; equip in the SHOP</span><br>
     G Grapple → tree (RMB/Space drop · safe from lions while perched) &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; Q Pounce (ambush from grass ×3) &nbsp;|&nbsp; E Eat kill / Collect wood &amp; rocks<br>
+    </span>
+    <span class="touch-only">
+    Left stick to move &nbsp;·&nbsp; swipe the right side to look &nbsp;·&nbsp; big button uses your active tool<br>
+    <span style="color:#c39bd3">Tap a numbered tool up top to select it (tap it again to use) &nbsp;·&nbsp; ☰ top-left opens your loadout</span><br>
+    Side buttons: 💨 sprint · 🐾 crouch (hide) · 🪝 grapple a tree · ⤴️ jump/drop · 🪨 rock · 🐆 pounce · 🍖 eat<br>
+    </span>
     <span style="opacity:0.8">Watch your 🍖 hunger — eat prey you hunt or scavenge lion kills (they'll fight you for it).</span>
   </div>
   <button id="start-btn">▶ START GAME</button>
@@ -165,6 +258,31 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
 </div>
 <div id="picker"><div id="picker-box"></div></div>
 
+<!-- Touch / mobile controls. Hidden unless <body class="touch"> (set at load on a
+     touchscreen or with ?touch=1). Sits at z-15: above the HUD, below the menu/shop
+     overlays so those cover it when open. Icons are emoji (no image assets). -->
+<div id="touch">
+  <button id="tc-menu" class="tc tc-btn" data-touch="menu" aria-label="Menu / loadout">☰</button>
+  <div id="tc-joy" class="tc"><div id="tc-joy-knob"></div></div>
+  <div id="tc-actions">
+    <button class="tc tc-btn" data-touch="eat">🍖<span class="tc-lab">EAT</span></button>
+    <button class="tc tc-btn" data-touch="pounce">🐆<span class="tc-lab">POUNCE</span></button>
+    <button class="tc tc-btn" data-touch="rock">🪨<span class="tc-lab">ROCK</span></button>
+    <button class="tc tc-btn" data-touch="grapple">🪝<span class="tc-lab">GRAPPLE</span></button>
+    <button class="tc tc-btn" data-touch="crouch">🐾<span class="tc-lab">CROUCH</span></button>
+    <button class="tc tc-btn" data-touch="sprint">💨<span class="tc-lab">SPRINT</span></button>
+    <button class="tc tc-btn" data-touch="jump">⤴️<span class="tc-lab">JUMP</span></button>
+  </div>
+  <button id="tc-attack" class="tc tc-btn" data-touch="attack" aria-label="Use active tool">🐾</button>
+</div>
+
+<!-- Shown only on a touchscreen held in portrait — Lion Survival is a landscape game. -->
+<div id="rotate-hint">
+  <div class="rot-ic">📱</div>
+  <div class="rot-t">Rotate to landscape</div>
+  <div class="rot-s">Lion Survival plays widescreen — turn your device sideways to hunt.</div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 'use strict';
@@ -181,6 +299,14 @@ let keys = {};
 let mouseDX = 0, mouseDY = 0;
 let yaw = 0, pitch = 0;
 let isPointerLocked = false;
+
+// Touch / mobile input. `IS_TOUCH` gates the whole scheme; `touchMove` is the
+// analog thumbstick vector (screen space, x=right, y=down, each -1..1) that
+// updatePlayer folds into movement. Everything else feeds the SAME keys{} /
+// mouseDX|DY channels the keyboard/mouse use, so game logic stays untouched.
+let IS_TOUCH = false;
+let touchMove = { active:false, x:0, y:0 };
+const TOUCH_LOOK_GAIN = 2.2;   // scales swipe px → the same accumulator mouse movementX feeds
 
 // Player
 const PLAYER = {
@@ -1249,6 +1375,7 @@ function registerControls(){
   });
 
   document.addEventListener('mousedown', e=>{
+    if(IS_TOUCH) return;   // touch devices drive actions via the on-screen buttons
     if(gameState!=='playing') return;
     if(uiPaused) return;   // loadout overlay open — let the DOM handle its own clicks
     if(!isPointerLocked){ renderer.domElement.requestPointerLock(); return; }
@@ -1261,6 +1388,123 @@ function registerControls(){
   document.addEventListener('pointerlockchange', ()=>{
     isPointerLocked = !!document.pointerLockElement;
   });
+}
+
+// =====================================================================
+//  TOUCH / MOBILE CONTROLS
+//  A full on-screen scheme that drives the SAME keys{} / mouseDX|DY channels
+//  and gameplay functions the keyboard/mouse use — so nothing in the game
+//  logic had to change. Only wired up when IS_TOUCH; desktop attaches none of
+//  it, so the keyboard/mouse path is byte-for-byte unchanged. Pointer Events
+//  give us unified touch/mouse + real multi-touch (move with one thumb, look/
+//  fire with the other) via pointerId + setPointerCapture.
+// =====================================================================
+let _tcSprintBtn=null, _tcCrouchBtn=null, _tcAttack=null;
+function initTouchControls(){
+  const forced = /[?&]touch=1/.test(location.search);
+  IS_TOUCH = forced || ('ontouchstart' in window) || (navigator.maxTouchPoints||0) > 0;
+  if(!IS_TOUCH) return;
+  document.body.classList.add('touch');
+
+  // ---- Left thumbstick → analog touchMove ----
+  const joy  = document.getElementById('tc-joy');
+  const knob = document.getElementById('tc-joy-knob');
+  const R = 46;                       // knob travel radius (px)
+  let joyId=null, cx=0, cy=0;
+  const setJoy = (px,py)=>{
+    let dx=px-cx, dy=py-cy; const d=Math.hypot(dx,dy);
+    if(d>R){ dx=dx/d*R; dy=dy/d*R; }
+    knob.style.transform=`translate(${dx}px,${dy}px)`;
+    const nx=dx/R, ny=dy/R;
+    if(Math.hypot(nx,ny) < 0.18){ touchMove.active=false; touchMove.x=0; touchMove.y=0; }
+    else { touchMove.active=true; touchMove.x=nx; touchMove.y=ny; }
+  };
+  joy.addEventListener('pointerdown', e=>{
+    e.preventDefault(); joyId=e.pointerId;
+    try{ joy.setPointerCapture(joyId); }catch(_){}
+    const r=joy.getBoundingClientRect(); cx=r.left+r.width/2; cy=r.top+r.height/2;
+    setJoy(e.clientX,e.clientY);
+  });
+  joy.addEventListener('pointermove', e=>{ if(e.pointerId===joyId){ e.preventDefault(); setJoy(e.clientX,e.clientY); } });
+  const joyEnd = e=>{ if(e.pointerId!==joyId) return;
+    joyId=null; touchMove.active=false; touchMove.x=0; touchMove.y=0; knob.style.transform='translate(0,0)'; };
+  joy.addEventListener('pointerup', joyEnd);
+  joy.addEventListener('pointercancel', joyEnd);
+
+  // ---- Camera look — drag the open view (right ~60%) → the mouse-look accumulator ----
+  const cv = renderer.domElement;
+  let lookId=null, lx=0, ly=0;
+  cv.addEventListener('pointerdown', e=>{
+    if(lookId!==null || gameState!=='playing' || uiPaused) return;
+    if(e.clientX < innerWidth*0.4) return;         // left edge is the stick's turf
+    e.preventDefault();                            // also suppresses the synth click→pointer-lock
+    lookId=e.pointerId; lx=e.clientX; ly=e.clientY;
+    try{ cv.setPointerCapture(lookId); }catch(_){}
+  });
+  cv.addEventListener('pointermove', e=>{
+    if(e.pointerId!==lookId) return;
+    mouseDX += (e.clientX-lx)*TOUCH_LOOK_GAIN;
+    mouseDY += (e.clientY-ly)*TOUCH_LOOK_GAIN;
+    lx=e.clientX; ly=e.clientY;
+  });
+  const lookEnd = e=>{ if(e.pointerId===lookId) lookId=null; };
+  cv.addEventListener('pointerup', lookEnd);
+  cv.addEventListener('pointercancel', lookEnd);
+
+  // ---- Action buttons (delegated; #tc-joy has no data-touch so it's ignored here) ----
+  document.getElementById('touch').addEventListener('pointerdown', e=>{
+    const btn = e.target.closest('[data-touch]');
+    if(!btn) return;
+    e.preventDefault();
+    doTouchAction(btn.dataset.touch, btn);
+  }, {passive:false});
+  _tcSprintBtn = document.querySelector('[data-touch="sprint"]');
+  _tcCrouchBtn = document.querySelector('[data-touch="crouch"]');
+  _tcAttack    = document.getElementById('tc-attack');
+
+  // ---- Ability toolbar taps (reuses #abilitybar; renderAbilityBar rebuilds the slots,
+  //      so we delegate off the container, not the slots) ----
+  document.getElementById('abilitybar').addEventListener('click', e=>{
+    const slot = e.target.closest('.ab-slot');
+    if(!slot || gameState!=='playing' || uiPaused) return;
+    const kind=slot.dataset.kind, i=+slot.dataset.index;
+    if(kind!=='ability' || !progress.abilities[i]){ openShop('game'); return; } // empty / accessory → manage kit
+    if(i===progress.activeAbility) useActiveAbility();   // tap the ACTIVE tool again to fire it
+    else setActiveAbility(i);                            // otherwise select it (== the number keys)
+  });
+}
+
+// Route a touch button to the same call its keyboard key makes.
+function doTouchAction(name, btn){
+  // Menu toggles the loadout even while paused; everything else needs a live run.
+  if(name==='menu'){ if(uiPaused) closeShop(); else if(gameState==='playing') openShop('game'); return; }
+  if(gameState!=='playing' || uiPaused) return;
+  if(player.stunTimer > 0) return;                       // dazed by a gorilla tree-grab
+  switch(name){
+    case 'attack':  useActiveAbility(); break;                                   // == LMB / Z
+    case 'jump':    if(player.inTree) dropFromTree();                            // == Space
+                    else { keys['Space']=true; setTimeout(()=>{ keys['Space']=false; }, 130); } break;
+    case 'sprint':  keys['ShiftLeft'] = !keys['ShiftLeft']; break;              // toggle (== hold Shift)
+    case 'crouch':  keys['KeyC']      = !keys['KeyC'];      break;              // toggle (== hold C)
+    case 'grapple': if(grapple.active||player.inTree||player.climbing) releaseGrapple(); else fireGrapple(); break; // == G
+    case 'rock':    throwRock(); break;                                         // == F
+    case 'pounce':  pouncePrey(); break;                                        // == Q
+    case 'eat':     if(!eatNearbyCarcass()) doCollect(); break;                 // == E
+  }
+}
+
+// Per-frame touch UI sync (called from updateHUD, so only while playing).
+function updateTouchUI(){
+  if(!IS_TOUCH) return;
+  if(_tcSprintBtn) _tcSprintBtn.classList.toggle('on', !!keys['ShiftLeft']);
+  if(_tcCrouchBtn) _tcCrouchBtn.classList.toggle('on', !!keys['KeyC'] || player.crouching);
+  // Big attack button mirrors the active tool's icon (spear/axe/hammer/…), so
+  // it reads as "use this". Falls back to a paw when no ability is equipped.
+  if(_tcAttack){
+    const id = progress.abilities[progress.activeAbility];
+    _tcAttack.textContent = id ? SHOP_BY_ID[id].icon : '🐾';
+  }
+  tickAbilityBar();   // keep the toolbar's active-ring + cooldown numbers live on touch
 }
 
 function onRightClick(){
@@ -1296,7 +1540,7 @@ function updatePlayer(dt){
 
   // Sprinting + stamina (can't sprint while crouched)
   const wantSprint = !!keys['ShiftLeft'] && player.stamina > 0 && !player.crouching &&
-    (keys['KeyW']||keys['KeyA']||keys['KeyS']||keys['KeyD']);
+    (keys['KeyW']||keys['KeyA']||keys['KeyS']||keys['KeyD']||touchMove.active);
   if(player._grappleCd>0) player._grappleCd -= dt;
   if(player._pounceCd>0)  player._pounceCd  -= dt;
 
@@ -1322,8 +1566,18 @@ function updatePlayer(dt){
   if(keys['KeyS']) move.addScaledVector(forward,-1);
   if(keys['KeyA']) move.addScaledVector(right,  -1);
   if(keys['KeyD']) move.addScaledVector(right,   1);
+  if(move.lengthSq()>0) move.normalize();                   // keyboard = unit direction
+  // Touch thumbstick (analog): up = forward, and the push magnitude scales speed.
+  // When engaged it takes over the direction entirely (desktop path untouched
+  // because touchMove.active is only ever true on a touchscreen).
+  if(touchMove.active && !stunned){
+    move.set(0,0,0);
+    move.addScaledVector(forward, -touchMove.y);
+    move.addScaledVector(right,    touchMove.x);
+    if(move.lengthSq()>0) move.normalize().multiplyScalar(Math.min(1, Math.hypot(touchMove.x, touchMove.y)));
+  }
   if(stunned) move.set(0,0,0);                              // dazed — no walking
-  if(move.lengthSq()>0) move.normalize().multiplyScalar(speed);
+  move.multiplyScalar(speed);
 
   // ---- Grapple / climbing / perched (Phase 4) ----
   if(player.inTree){
@@ -4322,7 +4576,7 @@ function closeShop(){
   if(shopContext==='game'){
     uiPaused = false;
     clock.getDelta();   // discard the paused interval so dt doesn't spike
-    renderer.domElement.requestPointerLock().catch(()=>{});
+    if(!IS_TOUCH) renderer.domElement.requestPointerLock().catch(()=>{});
   } else {
     document.getElementById('overlay').style.display='flex';
   }
@@ -4645,6 +4899,7 @@ function showKillfeed(msg){
 
 function updateHUD(){
   if(gameState!=='playing') return;
+  updateTouchUI();          // no-op on desktop; syncs toggle buttons + attack icon on touch
   // Health / stamina / hunger
   document.getElementById('health-bar').style.width  = (player.health/PLAYER.maxHealth*100)+'%';
   document.getElementById('stamina-bar').style.width = (player.stamina/PLAYER.maxStamina*100)+'%';
@@ -5023,6 +5278,7 @@ createTrees();
 createRocks();
 createRockFormations();   // scenery boulders/standing stones/outcrops
 registerControls();
+initTouchControls();      // mobile: joystick / swipe-look / on-screen buttons (auto-detected)
 
 // Kit: load the persisted shop unlocks/loadout and wire the shop UI.
 loadProgress();
@@ -5056,8 +5312,9 @@ function startGame(){
     renderer.setSize(innerWidth, innerHeight);
     renderer.setClearColor(SKY.day.hor, 1);
     animate();
-    // Request pointer lock — must happen inside user gesture
-    renderer.domElement.requestPointerLock().catch(()=>{
+    // Request pointer lock — must happen inside user gesture (desktop only;
+    // touch drives look via swipe, so we never grab the pointer there).
+    if(!IS_TOUCH) renderer.domElement.requestPointerLock().catch(()=>{
       // Pointer lock rejected — game still runs, click canvas to re-try
     });
   }
@@ -5065,9 +5322,9 @@ function startGame(){
 
 document.getElementById('start-btn').addEventListener('click', startGame);
 
-// Also let clicking the canvas restart pointer lock if lost mid-game
+// Also let clicking the canvas restart pointer lock if lost mid-game (desktop only)
 renderer.domElement.addEventListener('click', ()=>{
-  if(gameState==='playing' && !uiPaused && !isPointerLocked){
+  if(!IS_TOUCH && gameState==='playing' && !uiPaused && !isPointerLocked){
     renderer.domElement.requestPointerLock().catch(()=>{});
   }
 });
