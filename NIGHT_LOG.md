@@ -2,6 +2,23 @@
 
 Running log of changes, newest first. One line per change.
 
+## 2026-07-19 — 🐕 Wild dogs: body-shape pass (Steven: "looks kinda like a barrel")
+- **Reshaped the `makeWildDog` torso only** — everything else (colours, coat mottle, teeth, face, ears,
+  legs, spike crest, tail) untouched, and **zero behaviour change** (10/day, cap 15, relentless vendetta,
+  speeds/HP/damage all identical). The old body was **three near-uniform circular cylinders** (r≈0.32–0.34) →
+  read as a **barrel** from every angle. Now each of the three horizontal segments is squashed to a **deep
+  oval** cross-section via `scale.set(sx,1,sd)` (after the `rotation.x=π/2`, local Z → world height, so
+  `sd>1` = taller-than-wide) and re-radiused into a real taper: **deep chest** (rt0.20→rb0.36, `sd 1.40`,
+  low brisket / high withers) → **sharply tucked waist** (`sx 0.80`, r0.23) → **loin tapering to the tail**
+  (rb0.15). Reads as a lean greyhound/wolf silhouette, not a pig.
+- **Stance pulled in** to ±0.22 (from ±0.24) so the legs still emerge cleanly from the leaner rump.
+- Verified: **live mesh params match intent exactly** (read back from the running scene), **child count
+  unchanged (30 → no orphans)**, **disposal clean** (each new segment geometry disposes exactly once via the
+  real death path `health=0; updateWildDogs`), before/after confirmed via offline PIL profile render
+  (`dossiers/render_wilddog_compare.py` → `wilddog_render.png`). (In-app WebGL compositor was wedged this
+  session — `document.hidden` stuck true — so the visual is the offline render, which is a faithful proxy
+  since its geometry params were checked against the live mesh.)
+
 ## 2026-07-18 — 🐕 Wild dogs: dire-wolf glow-up (Steven: "spikes and teeth")
 - Menacing mesh pass on `makeWildDog` (19 → **29 parts**): **bared white teeth** (2 fangs + a 3-tooth front
   row jutting from the mouth), a **5-cone black spike crest down the spine** (hyena-punk mohawk, tallest at

@@ -450,7 +450,10 @@ floating HP bar, the daily dawn wave, the minimap). **Lion AI untouched.**
 - **Escape = tree or wall.** `dogStep` runs `collideWalls` (any wall stops the pack); `dogBite` refuses through
   `playerOffGround()`/`segHitsWall` — a treed or walled-off player is safe.
 - **Mesh:** ~29-part procedural **dire-wolf** canid (2026-07-18f "make them look cool" pass): a **dark
-  menacing** rust/near-black mottled body cylinder, tapered head + muzzle + nose, two upright ear cones, four
+  menacing** rust/near-black mottled **deep-chested tapered torso** — three horizontal cylinder segments,
+  each squashed to a deep oval cross-section (`scale.set(sx,1,sd)`, `sd>1` → taller-than-wide): a **deep
+  chest** (low brisket) pinches into a **tucked waist**, then a fuller loin **tapers back toward the tail**
+  (2026-07-19 body-shape pass — no longer a uniform barrel) — tapered head + muzzle + nose, two upright ear cones, four
   hip-pivot cone legs that swing via `animateDog`, stump tail — **plus a row of bared white teeth cones
   (2 fangs + 3 front teeth) jutting from the mouth and a 5-cone black spike crest down the spine** (tallest at
   the shoulders, tapering to the rump). `scale 0.92` (~⅔ a lion), per-dog materials/geometries (incl. the new
