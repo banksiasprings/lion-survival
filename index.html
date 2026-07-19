@@ -353,6 +353,8 @@ let gorillaMeshes = [];   // Phase 6/7: advanced apex gorilla — FSM sleeping|p
 let rhinoMeshes = [];     // neutral megafauna — roams, charges only when provoked
 let dogMeshes   = [];     // African wild dogs — fast pack predator (see DOG / updateWildDogs)
 let wildDogsVendetta = false;  // set when the player wounds ANY dog → the WHOLE pack hunts you relentlessly until the pack is wiped or you die (never calms, unlike the lion pride)
+let skyVultureMeshes = [];  // sky vultures — big raptor that cruises high, dives on smaller prey, NEVER dies airborne (see SKYV / updateSkyVultures). Distinct from the small carcass-circling scavengers (vultures[]).
+let snakeMeshes = [];     // giant pythons — slither, 1000hp, collapse-by-segment death (see SNAKE / updateSnakes)
 
 // Savanna environment (Phase 1) — also feeds stealth (Phase 3) & grapple (Phase 4)
 let wind = { angle: rand(0, Math.PI*2), dirX: 0, dirZ: 0, speed: 0.55, time: 0 };
@@ -2715,6 +2717,7 @@ function updatePrey(dt){
     lionMeshes.forEach(L=>{ const d=L.pos.distanceTo(P.pos); if(d<td){td=d;threat=L.pos;} });
     gorillaMeshes.forEach(G=>{ if(G.state==='perched'||G.state==='sleeping') return; const d=G.pos.distanceTo(P.pos); if(d<td){td=d;threat=G.pos;} });
     dogMeshes.forEach(D=>{ const d=D.pos.distanceTo(P.pos); if(d<td){td=d;threat=D.pos;} });
+    snakeMeshes.forEach(S=>{ if(S.dying) return; const d=S.pos.distanceTo(P.pos); if(d<td){td=d;threat=S.pos;} });
     const pd=player.pos.distanceTo(P.pos);
     // Grass/crouch (stealth.visMul) hide you from the herd too — creep up to ambush.
     if(pd<td && !player.inTree && pd < P.fleeDist*stealth.visMul){ td=pd; threat=player.pos; }
@@ -3937,11 +3940,19 @@ function faceDog(D, dx, dz, dt){
 }
 // Step toward (tx,tz): move, clamp to world, BLOCK on walls (a wall is your cover),
 // drop to terrain, face the heading.
+// Walls are only 0.3 thick, so a fast dog (hunt 14 / vendetta chase 18 → up to ~0.9
+// units/frame) used to TUNNEL clean through in one step — collideWalls' nearest-face
+// push then shoved it out the FAR side, i.e. straight through your cover. Fix: a swept
+// guard (segHitsWall over the step) cancels any move that CROSSES a wall so the dog is
+// stopped on the near side, THEN collideWalls/collideStoneWalls resolve resting contact
+// (both wood AND stone — same as the lion/rhino wall pattern).
 function dogStep(D, tx, tz, speed, dt){
   const bx=D.pos.x, bz=D.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
   if(d>0.001){ const step=Math.min(speed*dt,d); D.pos.x+=dx/d*step; D.pos.z+=dz/d*step; }
   D.pos.x=clamp(D.pos.x,-HALF+1,HALF-1); D.pos.z=clamp(D.pos.z,-HALF+1,HALF-1);
+  if(segHitsWall(bx,bz, D.pos.x,D.pos.z)){ D.pos.x=bx; D.pos.z=bz; }   // swept anti-tunnel — no crossing a wall
   collideWalls(D.pos, DOG.BODY_R);
+  collideStoneWalls(D.pos, DOG.BODY_R);
   D.pos.y=terrainY(D.pos.x,D.pos.z); D.mesh.position.copy(D.pos);
   faceDog(D, tx-bx, tz-bz, dt);
 }
@@ -4044,6 +4055,475 @@ function updateWildDogs(dt){
     if(dogMeshes[i].health<=0){ killObj(dogMeshes[i].mesh); dogMeshes.splice(i,1); showKillfeed('🐕 A wild dog is down!'); }
   }
   if(wildDogsVendetta && dogMeshes.length===0) wildDogsVendetta=false;
+}
+
+// =====================================================================
+//  SKY VULTURE — a big raptor that CRUISES high (~2× tree height), periodically
+//  LANDS to rest/feed, and DIVES on smaller quarry (player, wild dogs, rhinos, and
+//  every prey species except the elephant) — but NEVER a lion, gorilla or elephant.
+//  It NEVER dies in the air: below 30% HP it drops everything, climbs to max altitude
+//  and cruises until healed. Only when it's LANDED (or low in a dive) can it be
+//  finished off. Self-contained module (config → mesh → spawn → FSM → dead-loop),
+//  riding setHitbox / attachHealthBar / killObj / the HP bar / the minimap like the
+//  rhino & dog. Distinct from the small carcass-circling scavengers (vultures[]).
+// =====================================================================
+const TREE_H = 6;                  // representative canopy height (acacias top ~4.5–5.5) — "above the trees"
+const SKYV = {
+  MAX: 4,                          // hard cap on simultaneous sky vultures
+  SPAWN: 2,                        // spawned per dawn wave
+  HEALTH: 80,
+  DIVE_DMG: 30,                    // talon strike
+  DIVE_CD: 15,                     // sec between one bird's dives
+  ALT: TREE_H*2,                   // cruise altitude (~12) — flies at ~2× tree height
+  ALT_HIGH: TREE_H*3,              // retreat-to-heal altitude (~18) — above everything
+  CRUISE_SPD: 20,                  // ~1.3× a player sprint (16) — faster than anything on the ground
+  DIVE_SPD: 34,                    // fast stoop
+  CLIMB_SPD: 20,                   // ascent (takeoff / climb-out after a strike)
+  DETECT: 42,                      // spots a dive target within this XZ range
+  STRIKE_R: 3.2,                   // talon reach at the bottom of a dive
+  LAND_MIN: 8, LAND_MAX: 15,       // sec spent grounded (LANDED)
+  CRUISE_MIN: 6, CRUISE_MAX: 12,   // sec of cruising before it looks for a place to land
+  DESCEND_T: 4.5,                  // spiral-down duration
+  TAKEOFF_T: 2.5,                  // wings-hard climb-out duration
+  RETREAT_HP: 0.30, HEAL_TO: 0.70, // drop to RETREAT below 30% HP; back to normal once healed to 70%
+  HEAL_RATE: 11,                   // hp/sec while retreating (24 → 56 in ~3s)
+  TURN: 2.6,
+  MELEE_CEIL: 3.0,                 // a melee weapon only reaches it when it's within this of the ground (landed / low dive)
+};
+
+function makeSkyVulture(x, z){
+  const group = new THREE.Group();
+  const dark  = new THREE.MeshLambertMaterial({color:0x241a10});  // dark brown body
+  const black = new THREE.MeshLambertMaterial({color:0x120d07});  // near-black flight feathers
+  const pale  = new THREE.MeshLambertMaterial({color:0xcabfa6});  // bald pale head/neck (condor/vulture)
+  const beakM = new THREE.MeshLambertMaterial({color:0x2a2018});  // hooked beak
+  const footM = new THREE.MeshLambertMaterial({color:0x6b5a3e});  // legs / talons
+  const eyeM  = new THREE.MeshLambertMaterial({color:0x0a0a0a});
+  const box=(w,h,d,mat,px,py,pz)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); m.position.set(px,py,pz); group.add(m); return m; };
+  const cone=(r,h,mat,px,py,pz,rx)=>{ const m=new THREE.Mesh(new THREE.ConeGeometry(r,h,7),mat); m.position.set(px,py,pz); if(rx!=null) m.rotation.x=rx; group.add(m); return m; };
+
+  // Fuselage body — a tapered barrel along Z (forward = +Z), ~1.5× a wild dog.
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(0.34,0.20,1.8,10), dark); body.rotation.x=Math.PI/2; group.add(body);
+  box(0.52,0.36,0.95, dark, 0,0.02,0.05);          // chest bulk
+  // Neck + bald head (pale) + hooked beak + eyes.
+  cone(0.15,0.5, pale, 0,0.14,0.9, -0.5);          // neck rising forward
+  box(0.28,0.26,0.32, pale, 0,0.32,1.12);          // small head
+  cone(0.09,0.28, beakM, 0,0.27,1.34, Math.PI/2+0.35);   // hooked beak (forward + down)
+  box(0.05,0.05,0.05, eyeM, -0.12,0.36,1.16); box(0.05,0.05,0.05, eyeM, 0.12,0.36,1.16);
+  // Tail — a fanned wedge of feathers trailing behind.
+  const tail=new THREE.Mesh(new THREE.BoxGeometry(0.75,0.05,0.8), black); tail.position.set(0,0,-1.35); group.add(tail);
+
+  // WINGS — a pivot Group per side at the shoulder holding an inner arm + a longer
+  // outer arm + feather tips (thin boxes reaching out along X). The whole group rolls
+  // about the body axis (rotation.z) to FLAP; span ≈ 3× body width.
+  const mkWing=(side)=>{
+    const w=new THREE.Group(); w.position.set(side*0.26, 0.14, 0.05);
+    const inner=new THREE.Mesh(new THREE.BoxGeometry(1.3,0.06,0.66), dark);  inner.position.set(side*0.72,0,0); w.add(inner);
+    const outer=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.05,0.46), black); outer.position.set(side*1.82,0,-0.08); outer.rotation.y=side*-0.16; w.add(outer);
+    const tip  =new THREE.Mesh(new THREE.BoxGeometry(0.72,0.04,0.16), black); tip.position.set(side*2.66,0,-0.22); w.add(tip);
+    group.add(w); return w;
+  };
+  const wingL=mkWing(1), wingR=mkWing(-1);
+
+  // FEET — a pivot Group per side at the belly: tucked flush while flying, swung down +
+  // splayed when landed. A slim leg + three cone-toes.
+  const mkFoot=(side)=>{
+    const f=new THREE.Group(); f.position.set(side*0.13,-0.14,-0.1);
+    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.44,6), footM); leg.position.y=-0.22; f.add(leg);
+    [-0.09,0,0.09].forEach(tx=>{ const toe=new THREE.Mesh(new THREE.ConeGeometry(0.03,0.2,5), footM); toe.position.set(tx,-0.46,0.07); toe.rotation.x=Math.PI-0.5; f.add(toe); });
+    group.add(f); return f;
+  };
+  const footL=mkFoot(1), footR=mkFoot(-1);
+
+  group.traverse(o=>{ if(o.isMesh) o.userData.origMat=o.material; });   // hit-flash restore refs (incl. wing/foot children)
+  const ty=terrainY(x,z);
+  group.position.set(x, ty+SKYV.ALT, z); group.name='skyvulture';
+  scene.add(group);
+
+  const V={
+    mesh:group, wings:[wingL,wingR], feet:[footL,footR],
+    pos:new THREE.Vector3(x, ty+SKYV.ALT, z),
+    health:SKYV.HEALTH, maxHealth:SKYV.HEALTH,
+    state:'CRUISE', stateT:0, diveCd:rand(3,SKYV.DIVE_CD), flashTimer:0,
+    heading:rand(0,Math.PI*2), wingPhase:Math.random()*Math.PI*2, footExt:0,
+    target:null, targetKind:null, land:null, landTimer:0, spiral:0,
+    wanderDest:null, wanderTimer:0, landDelay:rand(SKYV.CRUISE_MIN,SKYV.CRUISE_MAX),
+  };
+  group.rotation.y=V.heading;
+  setHitbox(V); attachHealthBar(V); skyVultureMeshes.push(V);
+  return V;
+}
+
+function spawnSkyVulture(){ const a=rand(0,Math.PI*2), r=rand(45,85); makeSkyVulture(clamp(player.pos.x+Math.cos(a)*r,-MAPR,MAPR), clamp(player.pos.z+Math.sin(a)*r,-MAPR,MAPR)); }
+
+// Wing flap (roll each wing about the body axis) + foot tuck/extend. flap = amplitude
+// (0 folds the wings tight for a landed bird); footTarget 0=tucked, 1=extended.
+function animateVulture(V, dt, flap, footTarget){
+  V.wingPhase += dt*(flap>0 ? 11 : 3);
+  if(flap>0){
+    const a=Math.sin(V.wingPhase)*flap;
+    V.wings[0].rotation.z =  0.12 + a;    // left wing tips up when a>0
+    V.wings[1].rotation.z = -0.12 - a;    // right wing mirrored → both tips rise together
+  } else {
+    V.wings[0].rotation.z = 1.15;         // folded up/back over the body
+    V.wings[1].rotation.z = -1.15;
+  }
+  V.footExt += clamp(footTarget - V.footExt, -dt*2.5, dt*2.5);
+  const tuck = -1.4*(1-V.footExt);        // rotate legs up flush when flying
+  V.feet[0].rotation.x = tuck; V.feet[1].rotation.x = tuck;
+}
+
+// Fly horizontally toward (tx,tz) and lerp altitude toward (ground + targetY).
+function vultureFly(V, tx, tz, targetY, spd, dt){
+  const dx=tx-V.pos.x, dz=tz-V.pos.z, d=Math.hypot(dx,dz);
+  if(d>0.01){ const step=Math.min(spd*dt,d); V.pos.x+=dx/d*step; V.pos.z+=dz/d*step; }
+  V.pos.x=clamp(V.pos.x,-HALF+2,HALF-2); V.pos.z=clamp(V.pos.z,-HALF+2,HALF-2);
+  const goalY=terrainY(V.pos.x,V.pos.z)+targetY;
+  V.pos.y += clamp(goalY-V.pos.y, -SKYV.CLIMB_SPD*dt, SKYV.CLIMB_SPD*dt);
+  V.mesh.position.copy(V.pos);
+  if(d>0.5){ const a=Math.atan2(dx,dz); let dd=a-V.heading; while(dd>Math.PI)dd-=Math.PI*2; while(dd<-Math.PI)dd+=Math.PI*2; V.heading+=dd*Math.min(1,SKYV.TURN*dt); V.mesh.rotation.y=V.heading; }
+}
+
+// Nearest VALID dive target (nearest overall; player is stealth-gated). Excludes
+// lion, gorilla, elephant and fellow vultures per the design.
+function vulturePickTarget(V){
+  let best=null, bd=SKYV.DETECT;
+  const test=(o,kind)=>{ if(!o||o.health<=0) return; const d=Math.hypot(o.pos.x-V.pos.x,o.pos.z-V.pos.z); if(d<bd){ bd=d; best={o,kind}; } };
+  if(!playerOffGround() && Math.hypot(player.pos.x-V.pos.x,player.pos.z-V.pos.z) < SKYV.DETECT*stealth.visMul) test(player,'player');
+  preyMeshes.forEach(P=>{ if(P.species!=='elephant') test(P,'prey'); });   // hits giraffe/zebra/kudu/etc — NOT the elephant
+  rhinoMeshes.forEach(R=>test(R,'rhino'));
+  dogMeshes.forEach(D=>test(D,'dog'));
+  return best;
+}
+
+// An open patch of ground to land on: clear of walls, big entities and the watering hole.
+function vulturePickLanding(V){
+  for(let a=0;a<7;a++){
+    const ang=rand(0,Math.PI*2), r=rand(6,22);
+    const x=clamp(V.pos.x+Math.cos(ang)*r,-MAPR,MAPR), z=clamp(V.pos.z+Math.sin(ang)*r,-MAPR,MAPR);
+    let bad=false;
+    for(const bb of wallAABBs){ if(x>bb.min.x-1 && x<bb.max.x+1 && z>bb.min.z-1 && z<bb.max.z+1){ bad=true; break; } }
+    if(bad) continue;
+    const near=(list,rad)=>list.some(o=>o.health>0 && Math.hypot(o.pos.x-x,o.pos.z-z)<rad);
+    if(near(lionMeshes,4)||near(gorillaMeshes,5)||near(rhinoMeshes,5)||near(preyMeshes,4)||near(dogMeshes,3)) continue;
+    if(wateringHole && Math.hypot(x-wateringHole.x,z-wateringHole.z)<wateringHole.r+2) continue;
+    return {x,z};
+  }
+  return null;
+}
+
+// Land a dive strike on whatever the bird was targeting, then it climbs straight back.
+function vultureStrike(V, T){
+  const kind=V.targetKind;
+  if(!T || T.health<=0) return;
+  T.flashTimer=0.25;
+  if(kind==='player'){
+    if(playerOffGround()) return;
+    player.health -= SKYV.DIVE_DMG;
+    const ax=player.pos.x-V.pos.x, az=player.pos.z-V.pos.z, al=Math.hypot(ax,az)||1;
+    player.knockback.x=(ax/al)*8; player.knockback.z=(az/al)*8;
+    shakeTime=Math.max(shakeTime,0.2); shakeAmt=0.006; playSound('spotted');
+    showKillfeed('🦅 The vulture rakes you with its talons!');
+  } else {
+    T.health -= SKYV.DIVE_DMG;
+    if(kind==='prey'){ T.state='flee'; T.alertTimer=3; if(T.species==='elephant') T.aggroT=ELE.RAGE_TIME; }
+    const nm = kind==='dog' ? 'wild dog' : (T.label || kind);
+    showKillfeed(T.health<=0 ? '🦅 The vulture kills a '+nm+'!' : '🦅 The vulture strikes a '+nm+'!');
+  }
+}
+
+function updateSkyVultures(dt){
+  if(gameState!=='playing') return;
+  skyVultureMeshes.forEach(V=>{
+    V.diveCd=Math.max(0,V.diveCd-dt); V.stateT+=dt;
+    if(V.flashTimer>0){ V.flashTimer-=dt; const f=V.flashTimer>0; V.mesh.traverse(o=>{ if(o.isMesh && !o.userData.noFlash) o.material=f?FLASH_MAT:o.userData.origMat; }); }
+
+    // NEVER dies in the air — the instant HP is low it drops EVERYTHING and climbs off
+    // to heal (overrides cruise/land/dive). It can only actually die once grounded.
+    if(V.state!=='RETREAT' && V.health>0 && V.health < V.maxHealth*SKYV.RETREAT_HP){
+      V.state='RETREAT'; V.stateT=0; V.target=null; V.land=null;
+      showKillfeed('🦅 The wounded vulture screeches and climbs away!');
+    }
+
+    if(V.state==='CRUISE'){
+      if(V.diveCd<=0 && !V.target){
+        const t=vulturePickTarget(V);
+        if(t){ V.target=t.o; V.targetKind=t.kind; V.state='DIVE'; V.stateT=0; }
+      }
+      if(V.state==='CRUISE'){
+        V.landDelay-=dt;
+        if(V.landDelay<=0){ const spot=vulturePickLanding(V); if(spot){ V.land=spot; V.state='DESCEND'; V.stateT=0; V.spiral=0; } else V.landDelay=rand(3,6); }
+      }
+      if(V.state==='CRUISE'){
+        V.wanderTimer-=dt;
+        if(V.wanderTimer<=0 || !V.wanderDest){ V.wanderDest={x:rand(-MAPR,MAPR),z:rand(-MAPR,MAPR)}; V.wanderTimer=rand(4,8); }
+        vultureFly(V, V.wanderDest.x, V.wanderDest.z, SKYV.ALT, SKYV.CRUISE_SPD, dt);
+        if(Math.hypot(V.wanderDest.x-V.pos.x,V.wanderDest.z-V.pos.z)<8) V.wanderTimer=0;
+        animateVulture(V, dt, 0.55, 0);
+      }
+    } else if(V.state==='DIVE'){
+      const T=V.target;
+      if(!T || T.health<=0){ V.target=null; V.state='CLIMB'; V.stateT=0; }
+      else {
+        const gy=terrainY(T.pos.x,T.pos.z);
+        vultureFly(V, T.pos.x, T.pos.z, (T.pos.y-gy)+1.6, SKYV.DIVE_SPD, dt);   // stoop to just above the target (never grounded)
+        animateVulture(V, dt, 0.95, 0.8);
+        if(V.pos.distanceTo(T.pos) < SKYV.STRIKE_R){ vultureStrike(V, T); V.diveCd=SKYV.DIVE_CD; V.target=null; V.state='CLIMB'; V.stateT=0; }
+        else if(V.stateT>3.5){ V.target=null; V.state='CLIMB'; V.stateT=0; }   // whiffed — climb out
+      }
+    } else if(V.state==='CLIMB'){
+      vultureFly(V, V.pos.x+Math.sin(V.heading)*5, V.pos.z+Math.cos(V.heading)*5, SKYV.ALT, SKYV.CLIMB_SPD, dt);
+      animateVulture(V, dt, 0.85, 0);
+      if(V.pos.y >= terrainY(V.pos.x,V.pos.z)+SKYV.ALT-0.6){ V.state='CRUISE'; V.stateT=0; V.landDelay=rand(SKYV.CRUISE_MIN,SKYV.CRUISE_MAX); }
+    } else if(V.state==='DESCEND'){
+      const spot=V.land||{x:V.pos.x,z:V.pos.z};
+      V.spiral += dt*2.4;
+      const p=Math.min(1, V.stateT/SKYV.DESCEND_T);
+      const sr=(1-p)*3.0;   // spiral radius shrinks toward the spot
+      vultureFly(V, spot.x+Math.cos(V.spiral)*sr, spot.z+Math.sin(V.spiral)*sr, lerp(SKYV.ALT,0.55,p), SKYV.CRUISE_SPD*0.7, dt);
+      animateVulture(V, dt, lerp(0.55,0.14,p), p);
+      if(p>=1){ V.state='LANDED'; V.stateT=0; V.landTimer=rand(SKYV.LAND_MIN,SKYV.LAND_MAX); }
+    } else if(V.state==='LANDED'){
+      V.pos.y=terrainY(V.pos.x,V.pos.z)+0.35; V.mesh.position.copy(V.pos);
+      V.mesh.rotation.y = V.heading + Math.sin(V.stateT*0.8)*0.35;   // idle look-about
+      animateVulture(V, dt, 0, 1);
+      carcasses.forEach(c=>{ if(Math.hypot(c.pos.x-V.pos.x,c.pos.z-V.pos.z)<3){ c.food=Math.max(0,c.food-dt*4); V.health=Math.min(V.maxHealth,V.health+dt*3); } });  // feeds on a nearby carcass
+      V.landTimer-=dt;
+      if(V.landTimer<=0){ V.state='TAKEOFF'; V.stateT=0; }
+    } else if(V.state==='TAKEOFF'){
+      const p=Math.min(1, V.stateT/SKYV.TAKEOFF_T);
+      vultureFly(V, V.pos.x+Math.sin(V.heading)*2, V.pos.z+Math.cos(V.heading)*2, lerp(0.5,SKYV.ALT,p), SKYV.CLIMB_SPD*0.8, dt);
+      animateVulture(V, dt, 1.0, 1-p);
+      if(p>=1){ V.state='CRUISE'; V.stateT=0; V.landDelay=rand(SKYV.CRUISE_MIN,SKYV.CRUISE_MAX); }
+    } else if(V.state==='RETREAT'){
+      V.health=Math.min(V.maxHealth, V.health + SKYV.HEAL_RATE*dt);
+      V.wanderTimer-=dt;
+      if(V.wanderTimer<=0 || !V.wanderDest){ V.wanderDest={x:rand(-MAPR,MAPR),z:rand(-MAPR,MAPR)}; V.wanderTimer=rand(4,8); }
+      vultureFly(V, V.wanderDest.x, V.wanderDest.z, SKYV.ALT_HIGH, SKYV.CRUISE_SPD, dt);
+      animateVulture(V, dt, 0.6, 0);
+      if(V.health >= V.maxHealth*SKYV.HEAL_TO){ V.state='CRUISE'; V.stateT=0; V.landDelay=rand(SKYV.CRUISE_MIN,SKYV.CRUISE_MAX); }
+    }
+  });
+
+  // Dead-loop: only a LANDED vulture actually dies. An airborne one that somehow hit
+  // ≤0 HP (a single big burst) is kept alive at 1 HP and forced to retreat — it never
+  // dies in the sky.
+  for(let i=skyVultureMeshes.length-1;i>=0;i--){
+    const V=skyVultureMeshes[i];
+    if(V.health<=0){
+      if(V.state==='LANDED'){ killObj(V.mesh); skyVultureMeshes.splice(i,1); kills++; showKillfeed('🦅 The vulture is down!'); }
+      else if(V.state!=='RETREAT'){ V.health=1; V.state='RETREAT'; V.stateT=0; V.target=null; V.land=null; showKillfeed('🦅 The wounded vulture screeches and climbs away!'); }
+      else { V.health=1; }
+    }
+  }
+}
+
+// =====================================================================
+//  GIANT SNAKE — a python about as long as an elephant. Head + a chain of body
+//  segments that FOLLOW the head through a spatial delay-buffer (each lags ~1 unit
+//  behind the one in front) with a sine LATERAL undulation, so the body slithers
+//  side-to-side as the head moves. Super tanky (1000 HP), fast bite (50 dmg / 1 s),
+//  slightly slower than a lion. Hunts prey + player, fights back when hit, and on
+//  death COLLAPSES segment-by-segment. The whole thing lives in one container Group
+//  (segments positioned in WORLD space each frame) so killObj frees it in one call.
+// =====================================================================
+const SNAKE = {
+  MAX: 2, SPAWN: 1,                // 1/day at dawn, cap 2 — rare
+  HEALTH: 1000,                    // super tanky
+  BITE_DMG: 50, BITE_CD: 1.0,      // fast, hard bite
+  MELEE_R: 3.0,                    // strikes ~2 units in front of the head (+ head reach)
+  SPEED_ROAM: 4.0, SPEED_HUNT: 9.0,// 0.85× lion base (~10.5); a sprint (16) outruns it
+  DETECT: 22,                      // spots an EXPOSED player within this (× stealth.visMul)
+  HUNT_PREY_R: 30,
+  AGGRO_TIME: 6,                   // stays locked on an attacker this long
+  SEGS: 14,                        // body segments trailing the head (→ ~11 units, elephant-length)
+  SEG_SPACING: 0.72,               // arc-length lag between segments
+  SLITHER_SPD: 4.5, AMP: 0.55,     // undulation rate + lateral amplitude
+  TURN: 2.2,
+  BODY_R: 0.8,                     // head wall-collision radius
+  ROCK_STUN: 0.6, SPEAR_DMG: 80,   // ~13 spears / 20 bolts / 10 boomerangs to slay
+};
+
+function makeSnake(x, z){
+  const group = new THREE.Group();   // container at origin; every part positioned in WORLD space each frame
+  const tan  = new THREE.MeshLambertMaterial({color:0xc2a878, transparent:true, opacity:1});  // sandy base
+  const tan2 = new THREE.MeshLambertMaterial({color:0xb0966a, transparent:true, opacity:1});  // slightly darker sandy (alt segments)
+  const blot = new THREE.MeshLambertMaterial({color:0x6e5636, transparent:true, opacity:1});  // carpet-python brown blotch
+  const dark = new THREE.MeshLambertMaterial({color:0x0a0a0a, transparent:true, opacity:1});  // eyes
+  const tongueM=new THREE.MeshLambertMaterial({color:0x8a2b2b, transparent:true, opacity:1});
+  const N=SNAKE.SEGS;
+  const segs=[];
+  for(let i=0;i<N;i++){
+    const t=i/(N-1);
+    const r=lerp(0.42,0.12,t);                                   // taper head → tail
+    const g=new THREE.CylinderGeometry(r, r*0.9, SNAKE.SEG_SPACING*1.55, 9); g.rotateX(Math.PI/2);   // lie along local +Z
+    const seg=new THREE.Mesh(g, (i%2===0)?tan:tan2); seg.castShadow=true; group.add(seg);
+    if(i%2===0 && i>0){ const b=new THREE.Mesh(new THREE.BoxGeometry(r*1.4,r*0.5,SNAKE.SEG_SPACING*0.9), blot); b.position.y=r*0.72; seg.add(b); }   // dorsal blotch (fakes the diamond pattern)
+    segs.push({mesh:seg});
+  }
+  // HEAD — a broad wedge with a snout, eyes and a flicking tongue.
+  const head=new THREE.Group();
+  const skull=new THREE.Mesh(new THREE.BoxGeometry(0.72,0.42,0.9), tan); skull.castShadow=true; head.add(skull);
+  const snout=new THREE.Mesh(new THREE.ConeGeometry(0.3,0.55,7), tan); snout.rotation.x=Math.PI/2; snout.position.set(0,0,0.62); head.add(snout);
+  const eyeL=new THREE.Mesh(new THREE.SphereGeometry(0.09,6,6), dark); eyeL.position.set(-0.27,0.16,0.2); head.add(eyeL);
+  const eyeR=new THREE.Mesh(new THREE.SphereGeometry(0.09,6,6), dark); eyeR.position.set(0.27,0.16,0.2); head.add(eyeR);
+  const tongue=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.02,0.42), tongueM); tongue.position.set(0,0,0.98); head.add(tongue);
+  group.add(head);
+
+  group.traverse(o=>{ if(o.isMesh) o.userData.origMat=o.material; });   // hit-flash restore refs
+  group.name='snake'; scene.add(group);   // container stays at world origin (identity) — parts carry world coords
+
+  const ty=terrainY(x,z);
+  const S={
+    mesh:group, segs, head, mats:[tan,tan2,blot,dark,tongueM],
+    pos:new THREE.Vector3(x,ty+0.5,z),          // o.pos = HEAD (drives hitbox/aim/minimap)
+    health:SNAKE.HEALTH, maxHealth:SNAKE.HEALTH,
+    heading:rand(0,Math.PI*2), biteCd:rand(0,SNAKE.BITE_CD), flashTimer:0, stunTimer:0,
+    target:null, targetKind:null, aggroTimer:0, _preyTarget:null,
+    wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(), wanderTimer:rand(2,5),
+    path:[], slither:rand(0,10), dying:false, deathT:0, _collapsed:false,
+  };
+  // Seed the path buffer with a straight tail behind the head so it doesn't snap on frame 1.
+  const back=new THREE.Vector3(-Math.sin(S.heading),0,-Math.cos(S.heading));
+  for(let k=0;k<N*3;k++){ S.path.push(new THREE.Vector3(x+back.x*k*0.4, ty, z+back.z*k*0.4)); }
+
+  // Hitbox is the HEAD region (o.pos is the head) — set manually, since the sprawling
+  // body would give setHitbox a huge bogus radius. Ranged uses a per-segment test
+  // (projHitSnake) so any part of the body can be struck.
+  S.hitR=1.7; S.hitTop=1.7;
+  const container=S.mesh; S.mesh=head; attachHealthBar(S); S.mesh=container;   // HP bar rides the (world-positioned) head, freed with the container
+  layoutSnake(S);
+  snakeMeshes.push(S);
+  return S;
+}
+
+function spawnSnake(){ const a=rand(0,Math.PI*2), r=rand(55,90); makeSnake(clamp(player.pos.x+Math.cos(a)*r,-MAPR,MAPR), clamp(player.pos.z+Math.sin(a)*r,-MAPR,MAPR)); }
+
+// Position the head + every body segment from the head's path trail, adding the
+// sine lateral undulation. Called every frame after the head moves.
+function layoutSnake(S){
+  const path=S.path, hp=path[0]||S.pos;
+  S.head.position.set(hp.x, terrainY(hp.x,hp.z)+0.5, hp.z);
+  S.head.rotation.y = S.heading;
+  const N=S.segs.length;
+  S.segs.forEach((s,i)=>{
+    const arc=(i+1)*SNAKE.SEG_SPACING;
+    // walk the trail back to the point 'arc' behind the head
+    let acc=0, p=path[0], q=path[Math.min(1,path.length-1)];
+    for(let k=1;k<path.length;k++){
+      const d=path[k-1].distanceTo(path[k]);
+      if(acc+d>=arc){ const t=(arc-acc)/(d||1); p=path[k-1].clone().lerp(path[k],t); q=path[k]; break; }
+      acc+=d; p=path[k]; q=path[k];
+    }
+    const fx=p.x-q.x, fz=p.z-q.z, fl=Math.hypot(fx,fz);
+    const dirx=fl>1e-4?fx/fl:Math.sin(S.heading), dirz=fl>1e-4?fz/fl:Math.cos(S.heading);
+    const perpx=-dirz, perpz=dirx;
+    const lat=Math.sin(S.slither + i*0.5)*SNAKE.AMP;      // side-to-side undulation
+    const gx=p.x+perpx*lat, gz=p.z+perpz*lat;
+    s.mesh.position.set(gx, terrainY(gx,gz)+lerp(0.5,0.3,i/N), gz);
+    s.mesh.rotation.set(0, Math.atan2(dirx,dirz), 0);
+  });
+}
+
+function faceSnake(S, dx, dz, dt){
+  if(Math.hypot(dx,dz)<0.001) return;
+  const a=Math.atan2(dx,dz); let dd=a-S.heading;
+  while(dd>Math.PI)dd-=Math.PI*2; while(dd<-Math.PI)dd+=Math.PI*2;
+  S.heading += dd*Math.min(1,SNAKE.TURN*dt);
+}
+// Move the head toward (tx,tz): swept anti-tunnel + wall collision (wood & stone), face.
+function snakeStep(S, tx, tz, spd, dt){
+  const bx=S.pos.x, bz=S.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
+  if(d>0.001){ const step=Math.min(spd*dt,d); S.pos.x+=dx/d*step; S.pos.z+=dz/d*step; }
+  S.pos.x=clamp(S.pos.x,-HALF+1,HALF-1); S.pos.z=clamp(S.pos.z,-HALF+1,HALF-1);
+  if(segHitsWall(bx,bz, S.pos.x,S.pos.z)){ S.pos.x=bx; S.pos.z=bz; }
+  collideWalls(S.pos, SNAKE.BODY_R); collideStoneWalls(S.pos, SNAKE.BODY_R);
+  S.pos.y=terrainY(S.pos.x,S.pos.z)+0.5;
+  faceSnake(S, tx-bx, tz-bz, dt);
+}
+function snakeBite(S, kind){
+  if(kind==='player'){
+    if(playerOffGround() || segHitsWall(S.pos.x,S.pos.z, player.pos.x,player.pos.z)) return;
+    player.health -= SNAKE.BITE_DMG;
+    const ax=player.pos.x-S.pos.x, az=player.pos.z-S.pos.z, al=Math.hypot(ax,az)||1;
+    player.knockback.x=(ax/al)*7; player.knockback.z=(az/al)*7;
+    player.stunTimer = Math.max(player.stunTimer||0, 0.4);
+    shakeTime=Math.max(shakeTime,0.22); shakeAmt=0.007; playSound('spotted');
+    showKillfeed('🐍 The giant snake sinks its fangs into you!');
+  } else if(kind==='prey' && S._preyTarget && S._preyTarget.health>0){
+    const P=S._preyTarget;
+    P.health -= SNAKE.BITE_DMG; P.flashTimer=0.2; P.state='flee'; P.alertTimer=3;
+    if(P.species==='elephant') P.aggroT=ELE.RAGE_TIME;
+    if(P.health<=0) showKillfeed('🐍 The snake swallows a '+P.label+'!');
+  }
+}
+
+function updateSnakes(dt){
+  if(gameState!=='playing') return;
+  snakeMeshes.forEach(S=>{
+    // Death collapse — segment-by-segment sink + flop, then fade, then the dead-loop frees it.
+    if(S.dying){
+      S.deathT+=dt;
+      S.segs.forEach((s,i)=>{
+        const lt=S.deathT - i*0.09;
+        if(lt>0){ const k=Math.min(1,lt/0.7);
+          const gy=terrainY(s.mesh.position.x,s.mesh.position.z)+0.12;
+          s.mesh.position.y=Math.max(gy, s.mesh.position.y-dt*2.2);
+          s.mesh.rotation.z=k*1.2*((i%2)?1:-1);
+        }
+      });
+      S.head.position.y=Math.max(terrainY(S.head.position.x,S.head.position.z)+0.12, S.head.position.y-dt*2.0);
+      const done=S.deathT > S.segs.length*0.09 + 0.9;
+      if(done){ const fade=Math.max(0,1-(S.deathT-(S.segs.length*0.09+0.9))/0.5); S.mats.forEach(m=>m.opacity=fade); if(fade<=0.01) S._collapsed=true; }
+      return;
+    }
+
+    S.biteCd=Math.max(0,S.biteCd-dt); S.aggroTimer=Math.max(0,S.aggroTimer-dt); S.slither+=dt*SNAKE.SLITHER_SPD;
+    if(S.flashTimer>0){ S.flashTimer-=dt; const f=S.flashTimer>0; S.mesh.traverse(o=>{ if(o.isMesh && !o.userData.noFlash) o.material=f?FLASH_MAT:o.userData.origMat; }); }
+    if((S.stunTimer||0)>0){ S.stunTimer-=dt; layoutSnake(S); return; }
+
+    // Pick a target: retaliate (locked-on attacker) > exposed nearby player > nearest prey > roam.
+    let tgt=null, spd=SNAKE.SPEED_HUNT, biteKind=null;
+    if(S.aggroTimer>0 && S.target && S.target.health>0){ tgt=S.target.pos; biteKind=S.targetKind; }
+    else {
+      if(!playerOffGround()){ const dp=Math.hypot(player.pos.x-S.pos.x,player.pos.z-S.pos.z); if(dp<SNAKE.DETECT*stealth.visMul){ tgt=player.pos; biteKind='player'; } }
+      if(!tgt){ let prey=null,pd=SNAKE.HUNT_PREY_R; preyMeshes.forEach(P=>{ if(P.health<=0) return; const d=P.pos.distanceTo(S.pos); if(d<pd){pd=d;prey=P;} }); if(prey){ tgt=prey.pos; biteKind='prey'; S._preyTarget=prey; } }
+    }
+
+    if(tgt){
+      const dx=tgt.x-S.pos.x, dz=tgt.z-S.pos.z, d=Math.hypot(dx,dz);
+      if(d>SNAKE.MELEE_R){ snakeStep(S, tgt.x, tgt.z, spd, dt); }
+      else { faceSnake(S, dx, dz, dt); S.pos.y=terrainY(S.pos.x,S.pos.z)+0.5; if(S.biteCd<=0){ snakeBite(S, biteKind); S.biteCd=SNAKE.BITE_CD; } }
+    } else {
+      S.wanderTimer-=dt;
+      if(S.wanderTimer<0){ S.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); S.wanderTimer=rand(3,6); }
+      let tx=S.pos.x+S.wanderDir.x*10, tz=S.pos.z+S.wanderDir.z*10;
+      if(Math.hypot(S.pos.x,S.pos.z)>HALF-6){ tx=-S.pos.x; tz=-S.pos.z; }
+      snakeStep(S, tx, tz, SNAKE.SPEED_ROAM, dt);
+    }
+
+    // Push the new head position onto the trail (only when it actually moved) + trim to body length.
+    const h=S.path[0];
+    if(!h || S.pos.distanceTo(h)>0.12) S.path.unshift(new THREE.Vector3(S.pos.x, S.pos.y, S.pos.z));
+    let tot=0, cut=S.path.length;
+    for(let k=1;k<S.path.length;k++){ tot+=S.path[k-1].distanceTo(S.path[k]); if(tot > SNAKE.SEGS*SNAKE.SEG_SPACING + 3){ cut=k+1; break; } }
+    if(cut<S.path.length) S.path.length=cut;
+    layoutSnake(S);
+  });
+
+  // Dead-loop: mark a slain snake dying (starts the collapse); free it once collapsed.
+  for(let i=snakeMeshes.length-1;i>=0;i--){
+    const S=snakeMeshes[i];
+    if(S.health<=0 && !S.dying){ S.dying=true; S.deathT=0; S.target=null; S.stunTimer=0; showKillfeed('🐍 The giant snake writhes and collapses!'); }
+    if(S._collapsed){ killObj(S.mesh); snakeMeshes.splice(i,1); kills++; }
+  }
+}
+// Per-segment ranged hit test for the snake (any part of the long body can be struck).
+function projHitSnake(r, S){
+  const test=(x,y,z,rad)=>{ const dx=r.mesh.position.x-x, dz=r.mesh.position.z-z; return (dx*dx+dz*dz)<rad*rad && Math.abs(r.mesh.position.y-y)<1.5; };
+  if(test(S.pos.x,S.pos.y,S.pos.z,1.3)) return true;
+  for(const s of S.segs){ const p=s.mesh.position; if(test(p.x,p.y,p.z,0.95)) return true; }
+  return false;
 }
 
 // =====================================================================
@@ -4354,6 +4834,7 @@ function updateHealthBars(dt){
   };
   lionMeshes.forEach(step); preyMeshes.forEach(step);
   gorillaMeshes.forEach(step); rhinoMeshes.forEach(step); dogMeshes.forEach(step);
+  skyVultureMeshes.forEach(step); snakeMeshes.forEach(step);
 }
 
 function updateThrownRocks(dt){
@@ -4420,6 +4901,28 @@ function updateThrownRocks(dt){
         D.flashTimer = 0.25; D.stunTimer = Math.max(D.stunTimer||0, DOG.ROCK_STUN);
         wildDogsVendetta = true;                                       // ← the whole pack turns on you
         hit = true; showKillfeed(D.health<=0 ? ic+' Wild dog down — the pack turns on you!' : '🐕 You wound a dog — the pack turns on you!');
+      }
+    });
+    // Sky vulture — ranged is the ONLY way to reach it while it's up high. It never dies
+    // airborne (updateSkyVultures keeps a low-HP flyer alive to retreat + heal), so we
+    // just wound it here; the dead-loop announces a grounded kill.
+    if(!hit) skyVultureMeshes.forEach(V=>{
+      if(V.health>0 && projHit(r, V)){
+        V.health -= r.crossbow ? 50 : r.spear ? 40 : 12*m;   // spear 40 (2 to force a retreat) / bolt 50 / rock chips
+        V.flashTimer = 0.25;
+        hit = true; showKillfeed(ic+' '+wname+' hits the vulture!');
+      }
+    });
+    // Giant snake — 1000 hp, super tanky. Per-segment hit so any part of the body counts.
+    // A hit makes it rear and lock onto you (fights back).
+    if(!hit) snakeMeshes.forEach(S=>{
+      if(S.health>0 && !S.dying && projHitSnake(r, S)){
+        const wasAggro = S.aggroTimer>0;
+        S.health -= r.crossbow ? 50 : r.spear ? SNAKE.SPEAR_DMG : 15*m;   // spear 80 / bolt 50 / rock ~15
+        S.flashTimer = 0.25; S.stunTimer = Math.max(S.stunTimer||0, SNAKE.ROCK_STUN);
+        S.target = player; S.targetKind = 'player'; S.aggroTimer = SNAKE.AGGRO_TIME;
+        hit = true;
+        if(S.health>0 && !wasAggro) showKillfeed('🐍 The giant snake rears and turns on you!');
       }
     });
 
@@ -4688,6 +5191,8 @@ function updateBoomerang(r, dt, i){
   strike(gorillaMeshes,'gorilla', G=>G.state==='perched'||G.state==='sleeping');
   strike(rhinoMeshes,'rhino');
   strike(dogMeshes,'dog');
+  strike(skyVultureMeshes,'skyvulture');   // ranged reaches the bird at any altitude (projHit tests its 3D pos)
+  snakeMeshes.forEach(S=>{ if(!r.hitSet.has(S) && !S.dying && projHitSnake(r,S)){ r.hitSet.add(S); boomerangStrike('snake', S); } });   // per-segment hit
   if(r.t >= r.life){ killObj(r.mesh); thrownRocks.splice(i,1); playSound('collect'); }   // caught
 }
 // Apply the boomerang's 100-dmg hit, reusing each animal's wound + retaliation hooks.
@@ -4713,6 +5218,13 @@ function boomerangStrike(kind, o){
     o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, DOG.ROCK_STUN);
     wildDogsVendetta = true;                                          // the whole pack turns on you
     showKillfeed(o.health<=0 ? '🪃 Boomerang kill — wild dog! The pack turns on you!' : '🪃 Boomerang cracks a dog — the pack turns on you!');
+  } else if(kind==='skyvulture'){
+    o.health -= D;   // an airborne vulture survives (retreats); the dead-loop announces a grounded kill
+    showKillfeed((o.health<=0 && o.state==='LANDED') ? '🪃 Boomerang kill — vulture!' : '🪃 Boomerang cracks the vulture!');
+  } else if(kind==='snake'){
+    o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, SNAKE.ROCK_STUN);
+    o.target = player; o.targetKind = 'player'; o.aggroTimer = SNAKE.AGGRO_TIME;
+    showKillfeed(o.health<=0 ? '🪃 Boomerang bites deep — the giant snake!' : '🪃 Boomerang cracks the giant snake!');
   }
 }
 // ---- Rhino Crossbow: a flat, long-range bolt (50 dmg) with a scope-zoom ----
@@ -4860,6 +5372,8 @@ function nearestAnimalInFront(range, minDot){
   scan(gorillaMeshes,'gorilla', G=>G.state==='perched'||G.state==='sleeping');
   scan(rhinoMeshes,'rhino');
   scan(dogMeshes,'dog');
+  scan(skyVultureMeshes,'skyvulture', V=>(V.pos.y - terrainY(V.pos.x,V.pos.z)) > SKYV.MELEE_CEIL);   // melee only reaches it when low (landed / diving)
+  scan(snakeMeshes,'snake', S=>S.dying);
   return best;
 }
 // Melee tool identity for kill/hit messages — the equipped tool names ITSELF and its
@@ -4901,6 +5415,15 @@ function dealKitMelee(hit, dmg, tool){
     o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, DOG.ROCK_STUN);
     wildDogsVendetta = true;                                          // the whole pack turns on you
     showKillfeed(o.health<=0 ? kill()+' The pack turns on you!' : tool.icon+' The '+tool.name+' '+tool.hit+' a dog — the pack turns on you!');
+  } else if(hit.kind==='skyvulture'){
+    t='vulture';
+    o.health -= dmg;   // it only truly dies when LANDED (else updateSkyVultures keeps it alive to retreat)
+    showKillfeed((o.health<=0 && o.state==='LANDED') ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the vulture!');
+  } else if(hit.kind==='snake'){
+    t='giant snake';
+    o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, SNAKE.ROCK_STUN);
+    o.target = player; o.targetKind = 'player'; o.aggroTimer = SNAKE.AGGRO_TIME;   // it whips around to bite you
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the giant snake!');
   }
 }
 function kitAxe(){
@@ -5438,6 +5961,8 @@ function spawnDailyWave(){
   for(let i=0;i<2 && gorillaMeshes.length < GOR.MAX;  i++) spawnGorilla();
   for(let i=0;i<2 && rhinoMeshes.length   < RHINO.MAX;i++) spawnRhino();   // 2 rhinos/day (was 1)
   for(let i=0;i<DOG.PACK && dogMeshes.length < DOG.MAX;  i++) spawnWildDog();   // 10 wild dogs/day (cap 15)
+  for(let i=0;i<SKYV.SPAWN && skyVultureMeshes.length < SKYV.MAX; i++) spawnSkyVulture();  // 2 sky vultures/day (cap 4)
+  for(let i=0;i<SNAKE.SPAWN && snakeMeshes.length < SNAKE.MAX;    i++) spawnSnake();        // 1 giant snake/day (cap 2)
 }
 
 // At each day↔night turn every animal recovers to full health (the herds and
@@ -5448,6 +5973,8 @@ function healAllAnimals(){
   gorillaMeshes.forEach(G=>{ G.health=G.maxHealth; });
   rhinoMeshes.forEach(R=>{ R.health=R.maxHealth; });
   dogMeshes.forEach(D=>{ D.health=D.maxHealth; });
+  skyVultureMeshes.forEach(V=>{ V.health=V.maxHealth; });
+  snakeMeshes.forEach(S=>{ if(!S.dying) S.health=S.maxHealth; });   // don't revive a collapsing snake
 }
 
 function updateDayNight(dt){
@@ -5776,6 +6303,20 @@ function drawMinimap(){
     mmCtx.beginPath(); mmCtx.arc(px,py,3,0,Math.PI*2); mmCtx.fill();
   });
 
+  // Sky vultures — indigo dots; hot pink while diving (incoming!).
+  skyVultureMeshes.forEach(V=>{
+    mmCtx.fillStyle = (V.state==='DIVE') ? '#ff5aa0' : '#9a6cff';
+    const [px,py]=toMM(V.pos.x-player.pos.x, V.pos.z-player.pos.z);
+    mmCtx.beginPath(); mmCtx.arc(px,py,3,0,Math.PI*2); mmCtx.fill();
+  });
+
+  // Giant snake — green marker at the head; brighter when it's locked onto you.
+  snakeMeshes.forEach(S=>{
+    mmCtx.fillStyle = (S.targetKind==='player' && S.aggroTimer>0) ? '#7dff4d' : '#4f9e3a';
+    const [px,py]=toMM(S.pos.x-player.pos.x, S.pos.z-player.pos.z);
+    mmCtx.beginPath(); mmCtx.arc(px,py,4,0,Math.PI*2); mmCtx.fill();
+  });
+
   // Player dot
   mmCtx.fillStyle='#00ff88';
   mmCtx.beginPath(); mmCtx.arc(C,C,5,0,Math.PI*2); mmCtx.fill();
@@ -5841,6 +6382,8 @@ function resetGame(){
   [...gorillaMeshes].forEach(G=>killObj(G.mesh));
   [...rhinoMeshes].forEach(R=>killObj(R.mesh));
   [...dogMeshes].forEach(D=>killObj(D.mesh));
+  [...skyVultureMeshes].forEach(V=>killObj(V.mesh));
+  [...snakeMeshes].forEach(S=>killObj(S.mesh));
   [...carcasses].forEach(c=>{ removeVultures(c); killObj(c.mesh); });
   [..._dustPuffs].forEach(d=>killObj(d.mesh));
   if(grapple.line){ killObj(grapple.line); }
@@ -5859,6 +6402,8 @@ function resetGame(){
   gorillaMeshes.length = 0;
   rhinoMeshes.length = 0;
   dogMeshes.length = 0;
+  skyVultureMeshes.length = 0;
+  snakeMeshes.length = 0;
   wildDogsVendetta = false;   // fresh run → the pack starts calm again
   _dustPuffs.length = 0;
 
@@ -5933,6 +6478,8 @@ function animate(){
   updateGorillas(dt);         // territorial gorilla (Phase 7)
   updateRhinos(dt);           // neutral rhinos — roam, charge when provoked
   updateWildDogs(dt);         // fast pack predator — hunt/roam, relentless vendetta if provoked
+  updateSkyVultures(dt);      // high-cruising raptor — dives on smaller prey, never dies airborne
+  updateSnakes(dt);           // giant python — slithers/hunts, 1000hp, collapse-by-segment death
   updateHealthBars(dt);       // floating HP bars (after every animal has moved)
   updateCarcasses(dt);
   updateVultures(dt);

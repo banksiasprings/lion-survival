@@ -1,6 +1,6 @@
 # Lion Survival — Bestiary & Rules (canonical reference)
 
-*The plain-English "how the world works" doc. Kept current — last updated 2026-07-18.*
+*The plain-English "how the world works" doc. Kept current — last updated 2026-07-19.*
 *Exact numbers live in `index.html`: `SPECIES`, `GOR`, `RHINO`, `ELE`, `PLAYER` configs.*
 
 ---
@@ -20,8 +20,9 @@
   invisible; running in the open makes you a target.**
 
 **Day / night (a 4-minute cycle — 2 min day, 2 min night):**
-- **Every dawn a fresh wave spawns: 3 lions, 2 gorillas, 2 rhinos, 10 wild dogs** (population caps: lions 14,
-  gorillas 5, rhinos 6, wild dogs 15). Elephants, giraffes and the plains herbivores arrive in herds.
+- **Every dawn a fresh wave spawns: 3 lions, 2 gorillas, 2 rhinos, 10 wild dogs, 2 sky vultures, 1 giant
+  snake** (population caps: lions 14, gorillas 5, rhinos 6, wild dogs 15, sky vultures 4, giant snakes 2).
+  Elephants, giraffes and the plains herbivores arrive in herds.
 - **At every day↔night turn, ALL animals heal to full.** Wearing something down resets each half-cycle.
 - Lions are most active at **dawn, dusk and through the night**; they laze in shade at midday.
 
@@ -154,8 +155,35 @@ bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks f
   and **NEVER disengages** — unlike the lion pride, they don't calm down. It ends only when **the whole pack
   is dead or you die.** Your only escape is to **climb a tree** (grapple) or **put a wall between you and them**.
 - Bite ~11 each, fast (~1.5 s). Ten of them at once shreds you. **A treed or walled-off player is safe** —
-  they mill at the base but can't reach you. **Rivals with lions** — they trade small nips on contact.
+  they mill at the base but can't reach you (both **wood AND stone** walls block the pack — even a fast
+  vendetta dog no longer tunnels through). **Rivals with lions** — they trade small nips on contact.
 - **No body-part drop** — they're pure challenge, no crafting reward.
+
+### 🦅 Sky vulture — the raptor that owns the sky
+- A **big dark raptor** (bigger than a wild dog), pale bald head, hooked beak, broad flapping wings.
+  **Cruises high** — at ~2× tree height — and fast (faster than anything on the ground).
+- HP **80**. Every so often it **DIVES**: swoops down, rakes a target with its talons for **30 damage**,
+  and immediately climbs back up (15 s between dives). It **attacks nearly everything** — you, wild dogs,
+  rhinos, and every prey species (gazelle→kudu, zebra, giraffe, wildebeest, warthog…) — but **never a
+  lion, gorilla or elephant** (too big to bother).
+- **You can only hit it with RANGED weapons while it's up high** (rock, spear, crossbow bolt, boomerang) —
+  aim *up*. Melee (axe/hammer/pounce) only reaches it when it's **LANDED** or in the low arc of a dive.
+- It periodically **descends and LANDS** in the open to rest (8–15 s), folding its wings and planting its
+  feet; it'll **feed on a nearby carcass** while grounded. Then it **takes off** again.
+- **It NEVER dies in the air.** Wound it below ~30% HP and it drops everything, climbs to max altitude and
+  cruises until it's healed back up — so the only way to kill one is to catch it **on the ground** and burst
+  it down fast. **No body-part drop.**
+
+### 🐍 Giant snake — the tanky slitherer
+- A **python about as long as an elephant** — a broad head + a chain of ~14 body segments that follow it in
+  an **S-slithering** undulation. **Sandy tan** with darker **carpet-python brown blotches**.
+- HP **1000** (**by far the tankiest thing in the game** — ~13 spears / 20 bolts / 10 boomerangs). **Bites
+  for 50** damage on a **fast 1 s cooldown** — it chews through you quickly if it reaches you.
+- **Slightly slower than a lion** (0.85× its pace) — a **sprint (16) outruns it**, and crouch-in-grass hides
+  you from it like everything else. It **cruises the map**, **hunts the nearest prey**, hunts **you** when
+  you're exposed and close, and **whips around to fight back** the moment you hit it.
+- **Blocked by walls** (wood & stone). On death its whole body **collapses segment-by-segment**. **No
+  body-part drop.**
 
 ### 🦒 Giraffe — tall prey, too fast to chase
 - HP 40 (~a lion). **Faster than you even sprinting** — you can't run it down; spear/rock or ambush it.
@@ -177,5 +205,11 @@ to sneak up for a pounce. All die to **1 spear** (kudu takes 2).
 - **Wild dogs** hunt you & prey; **rivals with lions** (small skirmishes on contact, not to the death);
   **avoid** the gorilla/rhino/elephant (too big). Wound one → the **whole pack hunts you relentlessly** until
   the pack is wiped or you die (they never calm, unlike the pride).
-- **Prey** (zebra→kudu, giraffe) just flee — except a cornered **warthog** gores back.
+- **Sky vulture** dives on you, wild dogs, rhinos and every prey species — but **never** a lion, gorilla or
+  elephant. Nothing on the ground can hit it back while it's high (it flees the ground and can't be melee'd
+  up there), and it retreats to heal rather than die in the air.
+- **Giant snake** hunts prey + you and fights back when attacked; it just coexists with the other big
+  predators (no special rivalry).
+- **Prey** (zebra→kudu, giraffe) just flee — except a cornered **warthog** gores back. They also flee the
+  giant snake and scatter when a vulture dives.
 - **Everything reheals at each day/night turn**, so bring enough firepower to finish a fight in one round.

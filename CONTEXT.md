@@ -501,4 +501,59 @@ Two new kit abilities + wall HP, all riding the existing wall/`kitSwings` dispos
   or remove it; currency/XP so unlocks cost something; more abilities (war-cry to scatter a pride, decoy);
   accessory rarity tiers; a "loadout preset" quick-swap; mobile/touch tap-to-use for the ability bar.
 
+## Wild-dog wall fix + sky vulture + giant snake (2026-07-19)
+Three additions, all in one commit. Two new self-contained creature modules were added right after the wild
+dog module (`config → mesh → spawn → FSM → dead-loop`, mirroring rhino/dog) so they ride every existing seam
+(`setHitbox`/`attachHealthBar`, `killObj` disposal, the floating HP bar, the daily dawn wave, the minimap,
+the thrown-weapon/boomerang/melee hit paths). **Lion AI untouched.** Offline mesh render:
+`dossiers/newcreatures_render.png` (`render_newcreatures.py`) — the WebGL pane wedged this session (heavy
+reset cycling), so the logic was verified headless via `update*(dt)` and the meshes rendered offline.
+- **🐕 Wild dogs no longer tunnel through walls (bug fix).** `dogStep` already called `collideWalls`, but
+  walls are only **0.3 thick** and a vendetta dog moves ~0.9 units/frame (`SPEED_CHASE 18`), so it jumped
+  clean across a wall in one step and `collideWalls`' nearest-face push shoved it out the *far* side —
+  straight through your cover. Fix: a **swept anti-tunnel guard** (`segHitsWall` over the step cancels any
+  move that CROSSES a wall → dog stops on the near side), then `collideWalls` **+ `collideStoneWalls`**
+  resolve resting contact for **both** wood and stone. Verified: repro'd a dog tunnelling to x=14 through a
+  wall at x=10; after the fix it stops at x=9.35 (near side) for wood AND stone. (The same swept guard is
+  baked into `snakeStep`.)
+- **🦅 Sky vulture (`SKYV` / `skyVultureMeshes[]` / `makeSkyVulture`/`updateSkyVultures`).** A big raptor,
+  **distinct from the small carcass-circling scavengers** (`vultures[]`/`makeVulture`, unchanged). Explicit
+  FSM: `CRUISE → {DIVE→CLIMB | DESCEND→LANDED→TAKEOFF} → CRUISE`, with `RETREAT` overriding all. Flies at
+  `SKYV.ALT = TREE_H*2` (12), cruise `20` (~1.3× a sprint). `HEALTH 80`, `DIVE_DMG 30`, `DIVE_CD 15`.
+  **Targets everything except lion/gorilla/elephant** (`vulturePickTarget` scans player [stealth-gated] +
+  prey [skips `elephant`] + rhinos + dogs; `vultureStrike` deals 30 + flees up). **Ranged reaches it at any
+  altitude** (its `updateThrownRocks`/boomerang branches use the normal `projHit` on its 3D `pos`); **melee
+  is altitude-gated** (`nearestAnimalInFront` skips it when `pos.y-ground > SKYV.MELEE_CEIL 3.0` → only
+  reachable LANDED/low-dive). **Never dies airborne:** below 30% HP it enters `RETREAT` (climbs to
+  `ALT_HIGH 18`, heals `HEAL_RATE 11`/s back to 70%); the dead-loop only frees a vulture whose `state==='LANDED'`
+  — an airborne one that hits ≤0 is clamped to 1 HP and forced to retreat. Wings = two shoulder-pivot Groups
+  rolled (`rotation.z`) sinusoidally to flap; feet = belly-pivot Groups tucked flying / extended landed
+  (`animateVulture`). Minimap: indigo dot, hot-pink while diving.
+- **🐍 Giant snake (`SNAKE` / `snakeMeshes[]` / `makeSnake`/`updateSnakes`).** Elephant-length: a head + 14
+  segments (`SNAKE.SEGS`) that follow the head through a **spatial delay-buffer** (`S.path`, unshifted only
+  when the head moves >0.12 u, trimmed to body arc-length) with a **sine lateral undulation** (`layoutSnake`
+  places each segment at its arc-length lag + `sin(slither + i·0.5)·AMP` perpendicular offset, oriented along
+  the local tangent). **The whole snake is one container Group** (segments live in WORLD space, container at
+  identity origin) so `killObj(container)` frees it in one call; **`o.pos` is the HEAD** (drives aim/minimap/
+  hitbox — set manually, since the sprawling body would give `setHitbox` a bogus radius), the **HP bar rides
+  the head** (temp-swap `S.mesh=head` during `attachHealthBar`), and **ranged uses a per-segment test
+  (`projHitSnake`)** so any body part can be struck. `HEALTH 1000` (tankiest by far), `BITE_DMG 50`,
+  `BITE_CD 1.0`, speed `0.85×` lion (`SPEED_HUNT 9`; a sprint outruns it). Hunts prey + exposed player,
+  **locks onto + fights back** any attacker (`aggroTimer`). **Collapse death:** `S.dying` → segments sink +
+  flop staggered (`deathT - i·0.09`), then the per-snake materials (`transparent`) fade to 0 → dead-loop
+  frees it. Sandy `tan`/`tan2` alternating segments + darker dorsal `blot` boxes fake the carpet-python
+  pattern. Minimap: green dot (bright when locked onto you).
+- **Integration touch-points (both creatures):** `spawnDailyWave` (vulture 2/day cap 4, snake 1/day cap 2),
+  `healAllAnimals` (snake skipped while `dying`), `updateHealthBars`, `nearestAnimalInFront`, `dealKitMelee`,
+  `boomerangStrike`+`updateBoomerang`, `updateThrownRocks`, `updatePrey` flee scan (snake only — a diving
+  vulture triggers flee via its strike), `drawMinimap`, `resetGame` teardown, and the `animate` update order.
+- **⚠ Balance (report, not silently tuned):** the vulture's **never-dies-airborne** rule makes it very
+  survivable — pure ranged-while-it-cruises can *never* kill one (it always retreats+heals at 30%), so the
+  only kill window is catching it LANDED and bursting >70% before it takes off (a full-HP landed vulture is
+  one-shot by a boomerang [100] or a spear+bolt combo). The snake's **1000 HP** is deliberately brutal
+  (~13 spears). Autonomous interpretive calls: vulture cruise = 1.3× *sprint* (20), flight altitude = 2×
+  a nominal `TREE_H=6` (=12), player-detection stealth-gated for both (consistency with other predators),
+  snake speed = 0.85× lion *base* (~9), snake spear damage 80, per-segment ranged hit, boomerang allowed to
+  clip a high vulture (brief lists it as a ranged weapon that reaches the air). Nothing else rebalanced.
+
 Each phase is an independent commit so it can be iterated in isolation.

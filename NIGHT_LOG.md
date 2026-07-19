@@ -2,6 +2,40 @@
 
 Running log of changes, newest first. One line per change.
 
+## 2026-07-19 — 🐕 wall fix + 🦅 sky vulture + 🐍 giant snake (three-in-one)
+- **🐕 Wild dogs no longer walk through walls (bug fix).** Root cause = **tunnelling**, not a missing collide:
+  `dogStep` already called `collideWalls`, but walls are only **0.3 thick** and a vendetta dog moves ~0.9
+  u/frame (`SPEED_CHASE 18`), so it jumped across in one step and the nearest-face push shoved it out the
+  *far* side. Fix: a **swept `segHitsWall` guard** cancels any step that crosses a wall (dog stops on the
+  near side), then `collideWalls` **+ `collideStoneWalls`** resolve resting contact for **both** wood & stone.
+  Repro'd (dog tunnelled to x=14 through a wall at x=10) → after fix stops at x=9.35 for wood AND stone.
+- **🦅 Sky vulture (new creature).** Big raptor (`SKYV`/`skyVultureMeshes`/`makeSkyVulture`/`updateSkyVultures`),
+  distinct from the small scavenger `vultures[]`. **Cruises at 2× tree height** (alt 12), fast (20 ≈ 1.3× a
+  sprint), **80 HP**, **dives for 30** every 15 s. FSM `CRUISE / DIVE / CLIMB / DESCEND / LANDED / TAKEOFF /
+  RETREAT` — all six verified to fire cleanly over a 30 s sim. **Attacks everything EXCEPT lion/gorilla/
+  elephant** (hits player, dogs, rhinos, all prey incl. giraffe). **Ranged-only while high** (melee altitude-
+  gated), **lands to rest/feed** (8–15 s), and **NEVER dies in the air** — below 30% HP it climbs off and
+  heals to 70%; only a LANDED bird can be killed (both verified: a −50 airborne burst → survives at 1 HP,
+  retreats, heals to 57; a landed bird at 0 HP dies). Wings flap (shoulder-pivot Groups rolled by sine), feet
+  tuck/extend. Minimap: indigo / hot-pink diving.
+- **🐍 Giant snake (new creature).** Elephant-length python (`SNAKE`/`snakeMeshes`/`makeSnake`/`updateSnakes`):
+  head + 14 segments following via a **spatial delay-buffer** (`S.path`) with a **sine lateral undulation**
+  (`layoutSnake`) → visible slither (head moved 23.6 u, body trails). **1000 HP** (tankiest by far),
+  **50 dmg bite / 1 s**, **0.85× lion speed** (a sprint outruns it). Hunts prey + exposed player, **fights
+  back** when hit, **blocked by walls** (same swept guard). **Collapse-by-segment death** verified (staggered
+  sink+flop, fade to 0 over ~55 frames, freed). One container Group (segments in world space) so `killObj`
+  frees it in one call; per-segment ranged hit (`projHitSnake`); HP bar rides the head. Sandy tan + carpet-
+  python brown blotches. Minimap: green (bright when locked on you).
+- **Verified:** fresh save spawns **2 vultures + 1 snake** at dawn (+ existing 3 lions/2 gorillas/2 rhinos/10
+  dogs). No console errors; a full 400-frame `update*` run of the whole animate loop threw nothing. **Disposal
+  clean** — spawned 20 of each, killed via real death paths → 0 orphaned nodes, HP-bar CanvasTextures freed
+  exactly once, shared sprite geometry preserved, double-dispose shape **identical to the existing rhino**
+  (shared per-creature materials — the established pattern). Visual: offline PIL render
+  `dossiers/newcreatures_render.png` (`render_newcreatures.py`) — the WebGL pane wedged mid-session (heavy
+  reset cycling), so the visual is the offline render + headless logic checks, per the project's verify note.
+- **Docs:** `dossiers/bestiary.md` (both creatures + spawn line + combat web) and `CONTEXT.md` (full module
+  writeup + balance flags) updated in the same commit.
+
 ## 2026-07-19 — 🐕 Wild dogs: body-shape pass (Steven: "looks kinda like a barrel")
 - **Reshaped the `makeWildDog` torso only** — everything else (colours, coat mottle, teeth, face, ears,
   legs, spike crest, tail) untouched, and **zero behaviour change** (10/day, cap 15, relentless vendetta,
