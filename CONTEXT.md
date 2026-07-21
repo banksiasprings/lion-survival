@@ -529,7 +529,9 @@ reset cycling), so the logic was verified headless via `update*(dt)` and the mes
   — an airborne one that hits ≤0 is clamped to 1 HP and forced to retreat. Wings = two shoulder-pivot Groups
   rolled (`rotation.z`) sinusoidally to flap; feet = belly-pivot Groups tucked flying / extended landed
   (`animateVulture`). Minimap: indigo dot, hot-pink while diving.
-- **🐍 Giant snake (`SNAKE` / `snakeMeshes[]` / `makeSnake`/`updateSnakes`).** Elephant-length: a head + 14
+- **🐍 Giant snake (`SNAKE` / `snakeMeshes[]` / `makeSnake`/`updateSnakes`).** *(Split into two variants
+  2026-07-21 — see the serpent section below; the body/disposal model described here is unchanged.)*
+  Elephant-length: a head + 14
   segments (`SNAKE.SEGS`) that follow the head through a **spatial delay-buffer** (`S.path`, unshifted only
   when the head moves >0.12 u, trimmed to body arc-length) with a **sine lateral undulation** (`layoutSnake`
   places each segment at its arc-length lag + `sin(slither + i·0.5)·AMP` perpendicular offset, oriented along
@@ -543,7 +545,8 @@ reset cycling), so the logic was verified headless via `update*(dt)` and the mes
   flop staggered (`deathT - i·0.09`), then the per-snake materials (`transparent`) fade to 0 → dead-loop
   frees it. Sandy `tan`/`tan2` alternating segments + darker dorsal `blot` boxes fake the carpet-python
   pattern. Minimap: green dot (bright when locked onto you).
-- **Integration touch-points (both creatures):** `spawnDailyWave` (vulture 2/day cap 4, snake 1/day cap 2),
+- **Integration touch-points (both creatures):** `spawnDailyWave` (vulture 2/day cap 4, snake 1/day cap 2 —
+  *snake cadence superseded 2026-07-21: 1 per 5 days, see the serpent-split section below*),
   `healAllAnimals` (snake skipped while `dying`), `updateHealthBars`, `nearestAnimalInFront`, `dealKitMelee`,
   `boomerangStrike`+`updateBoomerang`, `updateThrownRocks`, `updatePrey` flee scan (snake only — a diving
   vulture triggers flee via its strike), `drawMinimap`, `resetGame` teardown, and the `animate` update order.
@@ -555,5 +558,68 @@ reset cycling), so the logic was verified headless via `update*(dt)` and the mes
   a nominal `TREE_H=6` (=12), player-detection stealth-gated for both (consistency with other predators),
   snake speed = 0.85× lion *base* (~9), snake spear damage 80, per-segment ranged hit, boomerang allowed to
   clip a high vulture (brief lists it as a ranged weapon that reaches the air). Nothing else rebalanced.
+
+## Serpent split: sand python + pink worm, wrap, tree-grab, siesta & growth (2026-07-21)
+The single 🐍 giant snake became **two variants off one module** (`SNAKE` shared config + `SNAKE_VARIANTS`
+table; `S.v` is the per-snake variant record). Everything else in the module — the delay-buffer body, the
+container-Group/`killObj` disposal, `projHitSnake`, the HP-bar-on-the-head trick, the collapse death — is
+unchanged and now shared by both. **Lion AI untouched.**
+- **🐍 Sand python** — the old carpet-python look. `HEALTH 1000`, `BITE_DMG 50` / `BITE_CD 1.0`.
+  `SPEED_HUNT 16` = **exactly `PLAYER.sprintSpeed`** (verified 16.00 u/s measured) — a sprint no longer
+  outruns it. `SPEED_ROAM 5`.
+- **🪱 Pink worm** — new procedural mesh: fatter, barely-tapered cylinders (`snakeSegRadius` branches on
+  variant), **MeshPhongMaterial** fleshy pink at `opacity 0.9` + `shininess 70` (translucent/shiny), no
+  dorsal blotches, a blunt sphere head with a puckered mouth ring + two beady eyes, no tongue, no teeth.
+  `HEALTH 500`, `BITE_DMG 40`, `SPEED_HUNT 32` (**2× the python — fastest ground creature in the game**),
+  `SPEED_ROAM 9`. New per-snake pink materials ride the same `S.mats` disposal path (verified 0 orphans).
+- **WRAP attack (python only).** Adjacent to an **elephant / gorilla / rhino** (`WRAP_RANGE 4.2`) it enters
+  `state='WRAP'`: **both** parties immobilised (the victim via a continuously-refreshed `stunTimer`, which
+  all three already honour and which was the cheapest hook that needed **zero** changes to their FSMs), and
+  `WRAP_DPS 100`/s crush damage. Breaks on **victim death / the python taking any damage / `WRAP_MAX 8` s**,
+  then `WRAP_CD 5`. **Never the player** (`snakeWrapCandidate` scans only those three lists) — you get bitten.
+  Measured: rhino 220 hp dead in 2.22 s (99.1 dps), gorilla 160 hp in 1.63 s.
+- **TREE-GRAB (python only).** Mirrors the gorilla: sees a treed player at `TREE_DETECT 26`, closes, then
+  `state='TREEGRAB'` for `GRAB_WINDUP 0.9` (the head rears up the trunk via `S._climb` → a lift term in
+  `layoutSnake`), then yanks — `GRAB_DMG 50`, `GRAB_STUN 1.3`, `GRAB_KB 13`, `GRAB_CD 8`.
+  ⚠ **The python calls `dropFromTree()`** to break the perch. Setting `player.pos.y` alone is NOT enough:
+  while `player.inTree` is set, `updatePlayer` re-pins the player to `grapple.perch` every frame. **The
+  gorilla's tree-grab (line ~3380) still does only the `pos.y` move and so does not actually pull the
+  player down — pre-existing bug, left untouched, flagged for a separate fix.**
+- **MIDDAY SIESTA (both).** New states `SIESTA_TRAVEL` / `SIESTA_SLEEP` on the new `S.state` field
+  (`CRUISE | WRAP | TREEGRAB | SIESTA_TRAVEL | SIESTA_SLEEP`). Fires once per `dn.day` while the **DAY** is
+  45–55% elapsed (`dn.time/HALF_CYCLE`, ≈11:00 in-game — note this is the day half, not the 240 s cycle).
+  `pickSiestaSpot` anchors on the watering hole and scores `tallGrassClumps` in a **ring on the bank**
+  (`skin = wateringHole.r`, so it never beds down in the water), rejecting steep ground (`snakeSlope`),
+  wall-blocked spots (`segHitsWall`) and occupied ones (`snakeSpotOccupied`); falls back to the nearest
+  clump. Sleeping = a tight breathing coil for `SIESTA_SLEEP 60` s. **Wakes instantly + hostile** if the
+  player is within `SIESTA_WAKE_R 8` or on any damage.
+- **GROWTH on kills (both).** `snakeCredit(S, victim)` tags every entity the serpent damages with
+  `(_snakeCred, _snakeCredT)`; `snakeGrowCheck` (per frame) grows the serpent **+1 segment** when a tagged
+  victim is dead within `GROW_WINDOW 2 s`. Growth goes through the **same `addSnakeSegment` used to build
+  the body**, so a grown link is identical in material/gauge/spacing and disposes with the container.
+  **Soft cap `SEG_MAX 50`** (console-logs the credited kill, no growth). Two supporting fixes so the body
+  scales: `trimSnakePath` sizes the delay-buffer off `S.segs.length` (not the constant `SNAKE.SEGS`), and
+  `layoutSnake`'s undulation phase is now per **arc-length** (`sin(slither + arc*0.7)`) not per index, so
+  the wave keeps a constant physical wavelength however long the body gets. Verified at 50 segments:
+  gaps stay 0.72–0.77 (= `SEG_SPACING`), no NaN.
+- **Coil layout** (`layoutSnakeCoil`) drives both the wrap and the sleep. Angular step is derived from
+  **arc length** (`SEG_SPACING / radius`) so loops stay contiguous at any coil radius or body length —
+  a fixed segments-per-loop left visible bead-chain gaps around a rhino.
+- **HP-drop watchdog** at the top of the per-snake loop (mirrors the lions'): any damage from any source
+  breaks a wrap and wakes a siesta, so no damage site — present or future — has to remember.
+- **Spawn cadence: `SPAWN_EVERY 5` days** (was 1/day), **50/50 variant**, cap 2. Driven by `dn.nextSnakeDay`
+  (seeded in `resetGame`). Verified on a fresh save: no serpent days 1–4, one on day 5, a second on day 10.
+- **Integration:** minimap colour is per-variant (`S.v.mm`/`mmHot` — python green, worm pink); every
+  killfeed line now names the variant (`S.v.icon`/`S.v.label`) across `snakeBite`, `updateThrownRocks`,
+  `boomerangStrike` and `dealKitMelee`. Damage numbers, `SPEAR_DMG 80`, `ROCK_STUN`, `AGGRO_TIME`,
+  `projHitSnake` and the daily reheal are unchanged and shared.
+- **⚠ Balance (report, not silently tuned):** (a) the python at sprint speed + tree-grab means there is no
+  longer a *passive* escape from it — you break line of sight, wall up, or fight; (b) the pink worm at 32
+  is **unoutrunnable, period** — a tree or a wall is the only answer; (c) in a 20-minute soak a worm
+  hunting a prey-rich map hit the **50-segment cap** (+36 kills) by day 6, so the cap is load-bearing, not
+  theoretical; (d) the wrap's 100 dps trivialises the big three — a rhino dies in 2.2 s — which is
+  deliberate (Steven's spec) but does mean a python can strip the map of gorillas/rhinos on its own;
+  (e) interpretive call: "day cycle progress 45–55%" was read as **45–55% through the daylight half**
+  (≈11:00 in-game = actual midday), not 45–55% of the full 240 s cycle (which would be dusk).
 
 Each phase is an independent commit so it can be iterated in isolation.

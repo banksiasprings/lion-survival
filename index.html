@@ -354,7 +354,7 @@ let rhinoMeshes = [];     // neutral megafauna — roams, charges only when prov
 let dogMeshes   = [];     // African wild dogs — fast pack predator (see DOG / updateWildDogs)
 let wildDogsVendetta = false;  // set when the player wounds ANY dog → the WHOLE pack hunts you relentlessly until the pack is wiped or you die (never calms, unlike the lion pride)
 let skyVultureMeshes = [];  // sky vultures — big raptor that cruises high, dives on smaller prey, NEVER dies airborne (see SKYV / updateSkyVultures). Distinct from the small carcass-circling scavengers (vultures[]).
-let snakeMeshes = [];     // giant pythons — slither, 1000hp, collapse-by-segment death (see SNAKE / updateSnakes)
+let snakeMeshes = [];     // giant serpents — 🐍 sand python & 🪱 pink worm (see SNAKE_VARIANTS / updateSnakes)
 
 // Savanna environment (Phase 1) — also feeds stealth (Phase 3) & grapple (Phase 4)
 let wind = { angle: rand(0, Math.PI*2), dirX: 0, dirZ: 0, speed: 0.55, time: 0 };
@@ -4319,73 +4319,150 @@ function updateSkyVultures(dt){
 }
 
 // =====================================================================
-//  GIANT SNAKE — a python about as long as an elephant. Head + a chain of body
-//  segments that FOLLOW the head through a spatial delay-buffer (each lags ~1 unit
-//  behind the one in front) with a sine LATERAL undulation, so the body slithers
-//  side-to-side as the head moves. Super tanky (1000 HP), fast bite (50 dmg / 1 s),
-//  slightly slower than a lion. Hunts prey + player, fights back when hit, and on
-//  death COLLAPSES segment-by-segment. The whole thing lives in one container Group
-//  (segments positioned in WORLD space each frame) so killObj frees it in one call.
+//  GIANT SERPENTS — two variants off one module (SNAKE_VARIANTS):
+//    🐍 sand python — carpet-python colouring, 1000 hp, bites 50, moves at exactly
+//       the player's SPRINT speed (16). WRAPS elephants/gorillas/rhinos (100 dmg/s,
+//       both parties immobilised) and TREE-GRABS a sheltered player, like the gorilla.
+//    🪱 pink worm  — fleshy translucent pink tube, 500 hp, bites 40, 2× the python
+//       (32 — the fastest thing on the ground). No wrap, no tree: it just bites.
+//  Both are a head + a chain of body segments that FOLLOW the head through a spatial
+//  delay-buffer (each lags ~1 unit behind the one in front) with a sine LATERAL
+//  undulation, both GROW +1 segment per kill they credit (soft cap 50), and both take
+//  a MIDDAY SIESTA (travel to a grass patch by the water, coil up and sleep 60 s —
+//  waking instantly to the player or to damage). On death the body COLLAPSES
+//  segment-by-segment. The whole thing lives in one container Group (segments
+//  positioned in WORLD space each frame) so killObj frees it in one call.
 // =====================================================================
 const SNAKE = {
-  MAX: 2, SPAWN: 1,                // 1/day at dawn, cap 2 — rare
-  HEALTH: 1000,                    // super tanky
-  BITE_DMG: 50, BITE_CD: 1.0,      // fast, hard bite
+  MAX: 2, SPAWN_EVERY: 5,          // 1 serpent every 5 days (random variant), cap 2
   MELEE_R: 3.0,                    // strikes ~2 units in front of the head (+ head reach)
-  SPEED_ROAM: 4.0, SPEED_HUNT: 9.0,// 0.85× lion base (~10.5); a sprint (16) outruns it
   DETECT: 22,                      // spots an EXPOSED player within this (× stealth.visMul)
   HUNT_PREY_R: 30,
   AGGRO_TIME: 6,                   // stays locked on an attacker this long
-  SEGS: 14,                        // body segments trailing the head (→ ~11 units, elephant-length)
+  SEGS: 14,                        // STARTING body segments (→ ~11 units, elephant-length)
+  SEG_MAX: 50,                     // soft cap — growth stops here (performance guard)
+  GROW_WINDOW: 2.0,                // a victim must die within this of our last damage tick to credit
   SEG_SPACING: 0.72,               // arc-length lag between segments
   SLITHER_SPD: 4.5, AMP: 0.55,     // undulation rate + lateral amplitude
   TURN: 2.2,
   BODY_R: 0.8,                     // head wall-collision radius
-  ROCK_STUN: 0.6, SPEAR_DMG: 80,   // ~13 spears / 20 bolts / 10 boomerangs to slay
+  ROCK_STUN: 0.6, SPEAR_DMG: 80,
+  // ---- wrap attack (sand python only) ----
+  WRAP_RANGE: 4.2,                 // must be this close to an elephant/gorilla/rhino to coil
+  WRAP_DPS: 100,                   // crushing damage per second to the wrapped target
+  WRAP_MAX: 8,                     // hard time limit on one coil
+  WRAP_CD: 5,                      // cooldown after it lets go
+  // ---- tree grab (sand python only) ----
+  TREE_DETECT: 26,                 // it can SEE a treed player this far (like the gorilla)
+  GRAB_RANGE: 4.2, GRAB_WINDUP: 0.9,
+  GRAB_DMG: 50, GRAB_STUN: 1.3, GRAB_KB: 13, GRAB_CD: 8,
+  // ---- midday siesta (both variants) ----
+  SIESTA_LO: 0.45, SIESTA_HI: 0.55,// fires while the DAY is 45–55% elapsed (≈11:00 in-game)
+  SIESTA_SLEEP: 60,                // seconds asleep if undisturbed
+  SIESTA_SEARCH: 10,               // look for a grass patch within this of the water
+  SIESTA_WAKE_R: 8,                // player inside this wakes it instantly
+  SIESTA_SPEED: 7,                 // unhurried travel pace
+};
+// Per-variant stats + look. Everything else is shared above.
+const SNAKE_VARIANTS = {
+  python: { key:'python', icon:'🐍', label:'sand python',
+            HEALTH:1000, BITE_DMG:50, BITE_CD:1.0, SPEED_ROAM:5.0, SPEED_HUNT:16,   // 16 == PLAYER.sprintSpeed
+            wrap:true, tree:true, mm:'#4f9e3a', mmHot:'#7dff4d' },
+  worm:   { key:'worm',   icon:'🪱', label:'pink worm',
+            HEALTH:500,  BITE_DMG:40, BITE_CD:1.0, SPEED_ROAM:9.0, SPEED_HUNT:32,   // 2× the python — fastest on the ground
+            wrap:false, tree:false, mm:'#d96aa0', mmHot:'#ff9ecb' },
 };
 
-function makeSnake(x, z){
-  const group = new THREE.Group();   // container at origin; every part positioned in WORLD space each frame
-  const tan  = new THREE.MeshLambertMaterial({color:0xc2a878, transparent:true, opacity:1});  // sandy base
-  const tan2 = new THREE.MeshLambertMaterial({color:0xb0966a, transparent:true, opacity:1});  // slightly darker sandy (alt segments)
-  const blot = new THREE.MeshLambertMaterial({color:0x6e5636, transparent:true, opacity:1});  // carpet-python brown blotch
-  const dark = new THREE.MeshLambertMaterial({color:0x0a0a0a, transparent:true, opacity:1});  // eyes
-  const tongueM=new THREE.MeshLambertMaterial({color:0x8a2b2b, transparent:true, opacity:1});
-  const N=SNAKE.SEGS;
-  const segs=[];
-  for(let i=0;i<N;i++){
-    const t=i/(N-1);
-    const r=lerp(0.42,0.12,t);                                   // taper head → tail
-    const g=new THREE.CylinderGeometry(r, r*0.9, SNAKE.SEG_SPACING*1.55, 9); g.rotateX(Math.PI/2);   // lie along local +Z
-    const seg=new THREE.Mesh(g, (i%2===0)?tan:tan2); seg.castShadow=true; group.add(seg);
-    if(i%2===0 && i>0){ const b=new THREE.Mesh(new THREE.BoxGeometry(r*1.4,r*0.5,SNAKE.SEG_SPACING*0.9), blot); b.position.y=r*0.72; seg.add(b); }   // dorsal blotch (fakes the diamond pattern)
-    segs.push({mesh:seg});
+// Body gauge at segment i. Tapers head→tail across the STARTING length; segments
+// grown past that keep the tail gauge, so growth reads as "one more link".
+function snakeSegRadius(S, i){
+  const t = Math.min(1, i / Math.max(1, SNAKE.SEGS - 1));
+  return (S.v.key==='worm') ? lerp(0.46, 0.24, t)    // fat, barely-tapered tube
+                            : lerp(0.42, 0.12, t);   // python taper
+}
+
+// Append one body segment at the current tail. Used at build time AND by the
+// grow-on-kill mechanic — same code path, so a grown segment is indistinguishable
+// (same material, same spacing, same delay-buffer slot) and disposes with the container.
+function addSnakeSegment(S){
+  if(S.segs.length >= SNAKE.SEG_MAX) return false;
+  const i = S.segs.length;
+  const r = snakeSegRadius(S, i);
+  const worm = S.v.key==='worm';
+  const g = new THREE.CylinderGeometry(r, r*(worm?0.98:0.9), SNAKE.SEG_SPACING*1.55, worm?12:9);
+  g.rotateX(Math.PI/2);                                        // lie along local +Z
+  const seg = new THREE.Mesh(g, (i%2===0)?S.matA:S.matB);
+  seg.castShadow = true; seg.userData.origMat = seg.material;
+  if(!worm && i%2===0 && i>0){                                 // dorsal blotch (fakes the diamond pattern)
+    const b = new THREE.Mesh(new THREE.BoxGeometry(r*1.4, r*0.5, SNAKE.SEG_SPACING*0.9), S.matBlot);
+    b.position.y = r*0.72; b.userData.origMat = S.matBlot; seg.add(b);
   }
-  // HEAD — a broad wedge with a snout, eyes and a flicking tongue.
-  const head=new THREE.Group();
-  const skull=new THREE.Mesh(new THREE.BoxGeometry(0.72,0.42,0.9), tan); skull.castShadow=true; head.add(skull);
-  const snout=new THREE.Mesh(new THREE.ConeGeometry(0.3,0.55,7), tan); snout.rotation.x=Math.PI/2; snout.position.set(0,0,0.62); head.add(snout);
-  const eyeL=new THREE.Mesh(new THREE.SphereGeometry(0.09,6,6), dark); eyeL.position.set(-0.27,0.16,0.2); head.add(eyeL);
-  const eyeR=new THREE.Mesh(new THREE.SphereGeometry(0.09,6,6), dark); eyeR.position.set(0.27,0.16,0.2); head.add(eyeR);
-  const tongue=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.02,0.42), tongueM); tongue.position.set(0,0,0.98); head.add(tongue);
-  group.add(head);
+  const tail = S.segs.length ? S.segs[S.segs.length-1].mesh.position : S.pos;
+  seg.position.copy(tail);                                     // born at the tail, not at the origin
+  S.mesh.add(seg);
+  S.segs.push({mesh:seg, r});
+  return true;
+}
 
-  group.traverse(o=>{ if(o.isMesh) o.userData.origMat=o.material; });   // hit-flash restore refs
-  group.name='snake'; scene.add(group);   // container stays at world origin (identity) — parts carry world coords
+function makeSnake(x, z, variantKey){
+  const v = SNAKE_VARIANTS[variantKey] || SNAKE_VARIANTS.python;
+  const group = new THREE.Group();   // container at origin; every part positioned in WORLD space each frame
+  const worm = v.key==='worm';
+  // Per-snake materials (freed by killObj with the container). The worm is fleshy
+  // pink, slightly translucent and shiny — Phong so it catches a wet highlight.
+  const matA = worm ? new THREE.MeshPhongMaterial({color:0xf49ab4, shininess:70, specular:0x996070, transparent:true, opacity:0.9})
+                    : new THREE.MeshLambertMaterial({color:0xc2a878, transparent:true, opacity:1});
+  const matB = worm ? new THREE.MeshPhongMaterial({color:0xe8849f, shininess:70, specular:0x996070, transparent:true, opacity:0.9})
+                    : new THREE.MeshLambertMaterial({color:0xb0966a, transparent:true, opacity:1});
+  const matBlot = worm ? new THREE.MeshPhongMaterial({color:0xd97490, shininess:50, transparent:true, opacity:0.9})
+                       : new THREE.MeshLambertMaterial({color:0x6e5636, transparent:true, opacity:1});
+  const dark    = new THREE.MeshLambertMaterial({color:worm?0x3a2028:0x0a0a0a, transparent:true, opacity:1});
+  const tongueM = new THREE.MeshLambertMaterial({color:0x8a2b2b, transparent:true, opacity:1});
 
-  const ty=terrainY(x,z);
-  const S={
-    mesh:group, segs, head, mats:[tan,tan2,blot,dark,tongueM],
-    pos:new THREE.Vector3(x,ty+0.5,z),          // o.pos = HEAD (drives hitbox/aim/minimap)
-    health:SNAKE.HEALTH, maxHealth:SNAKE.HEALTH,
-    heading:rand(0,Math.PI*2), biteCd:rand(0,SNAKE.BITE_CD), flashTimer:0, stunTimer:0,
+  const ty = terrainY(x,z);
+  const S = {
+    mesh:group, segs:[], v, matA, matB, matBlot,
+    mats:[matA, matB, matBlot, dark, tongueM],
+    pos:new THREE.Vector3(x, ty+0.5, z),        // o.pos = HEAD (drives hitbox/aim/minimap)
+    health:v.HEALTH, maxHealth:v.HEALTH, _prevHealth:v.HEALTH,
+    heading:rand(0,Math.PI*2), biteCd:rand(0,v.BITE_CD), flashTimer:0, stunTimer:0,
     target:null, targetKind:null, aggroTimer:0, _preyTarget:null,
     wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(), wanderTimer:rand(2,5),
     path:[], slither:rand(0,10), dying:false, deathT:0, _collapsed:false,
+    // --- new state ---
+    state:'CRUISE',                             // CRUISE | WRAP | TREEGRAB | SIESTA_TRAVEL | SIESTA_SLEEP
+    wrap:null, wrapT:0, wrapCd:0, coilPhase:rand(0,6.28),
+    grabCd:0, actionTimer:0, _climb:0,
+    siestaDay:0, siestaSpot:null, sleepT:0,
+    _marks:[], growth:0,                        // kill-credit watch-list + segments gained
   };
-  // Seed the path buffer with a straight tail behind the head so it doesn't snap on frame 1.
-  const back=new THREE.Vector3(-Math.sin(S.heading),0,-Math.cos(S.heading));
-  for(let k=0;k<N*3;k++){ S.path.push(new THREE.Vector3(x+back.x*k*0.4, ty, z+back.z*k*0.4)); }
+
+  // BODY — built through the same append path growth uses.
+  for(let i=0;i<SNAKE.SEGS;i++) addSnakeSegment(S);
+
+  // HEAD — python: a broad wedge with a snout, eyes and a flicking tongue.
+  //        worm: a blunt rounded blob with two beady dots — no teeth, no tongue, cute-ugly.
+  const head = new THREE.Group();
+  if(worm){
+    const skull = new THREE.Mesh(new THREE.SphereGeometry(0.5,12,10), matA); skull.scale.set(1,0.92,1.18); skull.castShadow=true; head.add(skull);
+    const lip   = new THREE.Mesh(new THREE.TorusGeometry(0.3,0.09,8,14), matB); lip.position.z=0.42; head.add(lip);   // puckered mouth ring
+    const mouth = new THREE.Mesh(new THREE.CircleGeometry(0.24,12), dark); mouth.position.z=0.44; head.add(mouth);
+    const eyeL  = new THREE.Mesh(new THREE.SphereGeometry(0.075,7,7), dark); eyeL.position.set(-0.23,0.2,0.3); head.add(eyeL);
+    const eyeR  = new THREE.Mesh(new THREE.SphereGeometry(0.075,7,7), dark); eyeR.position.set( 0.23,0.2,0.3); head.add(eyeR);
+  } else {
+    const skull = new THREE.Mesh(new THREE.BoxGeometry(0.72,0.42,0.9), matA); skull.castShadow=true; head.add(skull);
+    const snout = new THREE.Mesh(new THREE.ConeGeometry(0.3,0.55,7), matA); snout.rotation.x=Math.PI/2; snout.position.set(0,0,0.62); head.add(snout);
+    const eyeL  = new THREE.Mesh(new THREE.SphereGeometry(0.09,6,6), dark); eyeL.position.set(-0.27,0.16,0.2); head.add(eyeL);
+    const eyeR  = new THREE.Mesh(new THREE.SphereGeometry(0.09,6,6), dark); eyeR.position.set( 0.27,0.16,0.2); head.add(eyeR);
+    const tongue= new THREE.Mesh(new THREE.BoxGeometry(0.04,0.02,0.42), tongueM); tongue.position.set(0,0,0.98); head.add(tongue);
+  }
+  group.add(head);
+  S.head = head;
+
+  group.traverse(o=>{ if(o.isMesh) o.userData.origMat=o.material; });   // hit-flash restore refs
+  group.name = 'snake'; scene.add(group);   // container stays at world origin (identity) — parts carry world coords
+
+  seedSnakePath(S);
 
   // Hitbox is the HEAD region (o.pos is the head) — set manually, since the sprawling
   // body would give setHitbox a huge bogus radius. Ranged uses a per-segment test
@@ -4397,14 +4474,31 @@ function makeSnake(x, z){
   return S;
 }
 
-function spawnSnake(){ const a=rand(0,Math.PI*2), r=rand(55,90); makeSnake(clamp(player.pos.x+Math.cos(a)*r,-MAPR,MAPR), clamp(player.pos.z+Math.sin(a)*r,-MAPR,MAPR)); }
+// Lay a straight trail behind the head so the body doesn't snap on the frame after
+// a spawn — or after a coil (wrap/siesta), which leaves the path buffer stale.
+function seedSnakePath(S){
+  const back = new THREE.Vector3(-Math.sin(S.heading), 0, -Math.cos(S.heading));
+  S.path.length = 0;
+  for(let k=0;k<S.segs.length*3;k++){
+    const px=S.pos.x+back.x*k*0.4, pz=S.pos.z+back.z*k*0.4;
+    S.path.push(new THREE.Vector3(px, terrainY(px,pz), pz));
+  }
+}
+
+// 50/50 sand python or pink worm on every spawn.
+function spawnSnake(kind){
+  const a=rand(0,Math.PI*2), r=rand(55,90);
+  const v = kind || (Math.random()<0.5 ? 'python' : 'worm');
+  return makeSnake(clamp(player.pos.x+Math.cos(a)*r,-MAPR,MAPR), clamp(player.pos.z+Math.sin(a)*r,-MAPR,MAPR), v);
+}
 
 // Position the head + every body segment from the head's path trail, adding the
 // sine lateral undulation. Called every frame after the head moves.
 function layoutSnake(S){
   const path=S.path, hp=path[0]||S.pos;
-  S.head.position.set(hp.x, terrainY(hp.x,hp.z)+0.5, hp.z);
-  S.head.rotation.y = S.heading;
+  const lift=(S._climb||0)*3.4;                          // rearing up a tree trunk mid tree-grab
+  S.head.position.set(hp.x, terrainY(hp.x,hp.z)+0.5+lift, hp.z);
+  S.head.rotation.set((S._climb||0)*-0.5, S.heading, 0);
   const N=S.segs.length;
   S.segs.forEach((s,i)=>{
     const arc=(i+1)*SNAKE.SEG_SPACING;
@@ -4418,11 +4512,31 @@ function layoutSnake(S){
     const fx=p.x-q.x, fz=p.z-q.z, fl=Math.hypot(fx,fz);
     const dirx=fl>1e-4?fx/fl:Math.sin(S.heading), dirz=fl>1e-4?fz/fl:Math.cos(S.heading);
     const perpx=-dirz, perpz=dirx;
-    const lat=Math.sin(S.slither + i*0.5)*SNAKE.AMP;      // side-to-side undulation
+    // Undulation phase is per ARC-LENGTH, not per index, so the wave keeps the same
+    // physical wavelength however long the body grows.
+    const lat=Math.sin(S.slither + arc*0.7)*SNAKE.AMP;    // side-to-side undulation
     const gx=p.x+perpx*lat, gz=p.z+perpz*lat;
-    s.mesh.position.set(gx, terrainY(gx,gz)+lerp(0.5,0.3,i/N), gz);
+    s.mesh.position.set(gx, terrainY(gx,gz)+lerp(0.5,0.3,i/Math.max(1,N))+lift*Math.max(0,1-i/5), gz);
     s.mesh.rotation.set(0, Math.atan2(dirx,dirz), 0);
   });
+}
+
+// Wind the whole body into a rising spiral around (cx,cy,cz). Drives BOTH the wrap
+// attack (around a victim's torso) and the siesta sleep (a tight coil around itself).
+function layoutSnakeCoil(S, cx, cy, cz, radius, rise, dt, spin){
+  S.coilPhase += dt*spin;
+  // Angular step from ARC LENGTH, not a fixed segment-count — so the loops stay
+  // contiguous (no bead-chain gaps) whatever the coil radius or the body length.
+  const step = SNAKE.SEG_SPACING / Math.max(0.5, radius);
+  const place = (obj, i)=>{
+    const a  = S.coilPhase + i*step;
+    const rr = Math.max(0.35, radius * (1 - 0.008*i));
+    const x  = cx + Math.cos(a)*rr, z = cz + Math.sin(a)*rr;
+    obj.position.set(x, cy + rise*i, z);
+    obj.rotation.set(0, -a + Math.PI/2, Math.atan2(rise, SNAKE.SEG_SPACING));
+  };
+  place(S.head, 0);
+  S.segs.forEach((s,i)=>place(s.mesh, i+1));
 }
 
 function faceSnake(S, dx, dz, dt){
@@ -4444,22 +4558,101 @@ function snakeStep(S, tx, tz, spd, dt){
 function snakeBite(S, kind){
   if(kind==='player'){
     if(playerOffGround() || segHitsWall(S.pos.x,S.pos.z, player.pos.x,player.pos.z)) return;
-    player.health -= SNAKE.BITE_DMG;
+    player.health -= S.v.BITE_DMG;
     const ax=player.pos.x-S.pos.x, az=player.pos.z-S.pos.z, al=Math.hypot(ax,az)||1;
     player.knockback.x=(ax/al)*7; player.knockback.z=(az/al)*7;
     player.stunTimer = Math.max(player.stunTimer||0, 0.4);
     shakeTime=Math.max(shakeTime,0.22); shakeAmt=0.007; playSound('spotted');
-    showKillfeed('🐍 The giant snake sinks its fangs into you!');
+    showKillfeed(S.v.icon+' The '+S.v.label+' sinks into you!');
   } else if(kind==='prey' && S._preyTarget && S._preyTarget.health>0){
     const P=S._preyTarget;
-    P.health -= SNAKE.BITE_DMG; P.flashTimer=0.2; P.state='flee'; P.alertTimer=3;
+    P.health -= S.v.BITE_DMG; P.flashTimer=0.2; P.state='flee'; P.alertTimer=3;
     if(P.species==='elephant') P.aggroT=ELE.RAGE_TIME;
-    if(P.health<=0) showKillfeed('🐍 The snake swallows a '+P.label+'!');
+    snakeCredit(S, P);
+    if(P.health<=0) showKillfeed(S.v.icon+' The '+S.v.label+' swallows a '+P.label+'!');
   }
+}
+
+// ---- GROWTH ON KILLS -------------------------------------------------
+// Every entity this serpent damages is TAGGED with (snake, time). If it dies within
+// SNAKE.GROW_WINDOW of that last tick, the credit is unambiguous → +1 segment.
+function snakeCredit(S, victim){
+  if(!victim) return;
+  victim._snakeCred = S; victim._snakeCredT = elapsed;
+  if(S._marks.indexOf(victim) < 0) S._marks.push(victim);
+}
+function snakeGrowCheck(S){
+  for(let k=S._marks.length-1;k>=0;k--){
+    const v = S._marks[k];
+    if(v._snakeCred !== S || (elapsed - (v._snakeCredT||0)) > SNAKE.GROW_WINDOW){ S._marks.splice(k,1); continue; }
+    if(v.health <= 0){
+      S._marks.splice(k,1); v._snakeCred = null;
+      if(addSnakeSegment(S)){
+        S.growth++;
+        showKillfeed(S.v.icon+' The '+S.v.label+' grows — '+S.segs.length+' segments');
+      } else {
+        console.log('[snake] '+S.v.label+' at the '+SNAKE.SEG_MAX+'-segment cap — kill credited, no growth');
+      }
+    }
+  }
+}
+
+// ---- MIDDAY SIESTA ---------------------------------------------------
+// Head for the water, then bed down on a nearby grass patch: grassy, low slope,
+// no wall between, nothing else standing on it.
+function snakeSlope(x,z){
+  const h=terrainY(x,z);
+  return Math.max(Math.abs(terrainY(x+1.5,z)-h), Math.abs(terrainY(x,z+1.5)-h))/1.5;
+}
+function snakeSpotOccupied(x,z,r){
+  const near=(list)=>list.some(o=>o.health>0 && Math.hypot(o.pos.x-x,o.pos.z-z)<r);
+  return near(lionMeshes)||near(preyMeshes)||near(gorillaMeshes)||near(rhinoMeshes)||near(dogMeshes);
+}
+function pickSiestaSpot(S){
+  // Anchor = the watering hole if the world has one, else the nearest grass clump.
+  // `skin` is how far past the anchor the search ring reaches — for the pond that's
+  // its own radius plus the search band, so we hunt the BANK, never the water.
+  let anchor = null, skin = 0;
+  if(wateringHole){ anchor = {x:wateringHole.x, z:wateringHole.z}; skin = wateringHole.r; }
+  else {
+    let bd=Infinity;
+    tallGrassClumps.forEach(c=>{ const d=Math.hypot(c.x-S.pos.x,c.z-S.pos.z); if(d<bd){ bd=d; anchor={x:c.x,z:c.z}; } });
+  }
+  if(!anchor) return {x:clamp(S.pos.x,-MAPR,MAPR), z:clamp(S.pos.z,-MAPR,MAPR)};
+  // Best grass patch on the bank: within the search band of the anchor, out of the
+  // water, flat, not walled off, and unoccupied.
+  let best=null, bs=-Infinity;
+  tallGrassClumps.forEach(c=>{
+    const d=Math.hypot(c.x-anchor.x, c.z-anchor.z);
+    if(d > skin + SNAKE.SIESTA_SEARCH + c.r) return;
+    if(d < skin + 1.5) return;                                   // not in the pond itself
+    if(snakeSlope(c.x,c.z) > 0.35) return;                       // flat ground only
+    if(segHitsWall(anchor.x,anchor.z, c.x,c.z)) return;          // not walled off from the water
+    if(snakeSpotOccupied(c.x,c.z, 5)) return;                    // nobody standing on it
+    const sc = c.r - d;                                          // prefer big, close patches
+    if(sc>bs){ bs=sc; best={x:c.x, z:c.z}; }
+  });
+  // No qualifying bank patch → the nearest grass clump anywhere, else the anchor itself.
+  if(!best){
+    let bd=Infinity;
+    tallGrassClumps.forEach(c=>{
+      if(wateringHole && Math.hypot(c.x-wateringHole.x,c.z-wateringHole.z) < wateringHole.r+1.5) return;
+      const d=Math.hypot(c.x-S.pos.x,c.z-S.pos.z); if(d<bd){ bd=d; best={x:c.x,z:c.z}; }
+    });
+  }
+  return best || anchor;
+}
+// Anything that ends a coil (wrap or sleep) has to put the body back on the trail.
+function snakeUncoil(S){
+  S.state='CRUISE'; S._climb=0;
+  S.pos.y = terrainY(S.pos.x,S.pos.z)+0.5;
+  seedSnakePath(S);
 }
 
 function updateSnakes(dt){
   if(gameState!=='playing') return;
+  const dayProg = dn.isDay ? (dn.time/HALF_CYCLE) : -1;
+
   snakeMeshes.forEach(S=>{
     // Death collapse — segment-by-segment sink + flop, then fade, then the dead-loop frees it.
     if(S.dying){
@@ -4478,12 +4671,141 @@ function updateSnakes(dt){
       return;
     }
 
-    S.biteCd=Math.max(0,S.biteCd-dt); S.aggroTimer=Math.max(0,S.aggroTimer-dt); S.slither+=dt*SNAKE.SLITHER_SPD;
+    // HP-drop watchdog — any damage from any source, present or future, in one place.
+    // Breaks a wrap and wakes a siesta without every damage site having to remember.
+    const hurt = S.health < S._prevHealth;
+    S._prevHealth = S.health;
+
+    S.biteCd=Math.max(0,S.biteCd-dt); S.aggroTimer=Math.max(0,S.aggroTimer-dt);
+    S.wrapCd=Math.max(0,S.wrapCd-dt); S.grabCd=Math.max(0,S.grabCd-dt);
+    S.slither+=dt*SNAKE.SLITHER_SPD;
     if(S.flashTimer>0){ S.flashTimer-=dt; const f=S.flashTimer>0; S.mesh.traverse(o=>{ if(o.isMesh && !o.userData.noFlash) o.material=f?FLASH_MAT:o.userData.origMat; }); }
-    if((S.stunTimer||0)>0){ S.stunTimer-=dt; layoutSnake(S); return; }
+    snakeGrowCheck(S);
+    if((S.stunTimer||0)>0){
+      S.stunTimer-=dt;
+      if(S.state==='WRAP'){ S.wrap=null; S.wrapT=0; S.wrapCd=SNAKE.WRAP_CD; snakeUncoil(S); }
+      layoutSnake(S); return;
+    }
+
+    // ============ WRAP (sand python) — both parties locked, 100 dmg/s ============
+    if(S.state==='WRAP'){
+      const w=S.wrap, e=w&&w.e;
+      const gone = !e || e.health<=0 || w.list.indexOf(e)<0;
+      if(gone || hurt || S.wrapT>=SNAKE.WRAP_MAX){
+        if(e && e.health<=0) snakeCredit(S, e);                    // credit the crush kill
+        S.wrap=null; S.wrapT=0; S.wrapCd=SNAKE.WRAP_CD;
+        showKillfeed(S.v.icon+' The '+S.v.label+' uncoils'+(hurt?' — struck!':''));
+        snakeUncoil(S);
+        layoutSnake(S); return;
+      }
+      S.wrapT += dt;
+      e.health -= SNAKE.WRAP_DPS*dt;                               // crush
+      // Pulse the hit-flash ~2×/s rather than holding it — a permanently white
+      // victim would just erase the model for the whole 8 s.
+      if(Math.floor(S.wrapT*2) !== Math.floor((S.wrapT-dt)*2)) e.flashTimer = 0.12;
+      e.stunTimer  = Math.max(e.stunTimer||0, 0.25);               // target immobilised (all three honour stunTimer)
+      snakeCredit(S, e);
+      S.pos.set(e.pos.x, terrainY(e.pos.x,e.pos.z)+0.5, e.pos.z);  // the python is locked in place too
+      const torso = clamp((e.hitR||1.4)*0.85, 0.9, 2.4);
+      layoutSnakeCoil(S, e.pos.x, terrainY(e.pos.x,e.pos.z)+0.9, e.pos.z, torso, 0.07, dt, 1.5);
+      return;
+    }
+
+    // ============ TREE-GRAB (sand python) — drag a sheltered player down ============
+    if(S.state==='TREEGRAB'){
+      S.actionTimer -= dt;
+      S._climb = clamp(1 - S.actionTimer/SNAKE.GRAB_WINDUP, 0, 1);
+      faceSnake(S, player.pos.x-S.pos.x, player.pos.z-S.pos.z, dt);
+      if(S.actionTimer<=0){
+        const st = playerShelterTree();
+        if(st && Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z) < SNAKE.GRAB_RANGE+1.0){
+          // dropFromTree() is what actually BREAKS the perch — while player.inTree is
+          // set, updatePlayer re-pins the player to grapple.perch every frame, so
+          // moving pos.y alone would snap them straight back onto the branch.
+          if(player.inTree) dropFromTree(); else if(grapple.active) releaseGrapple();
+          player.pos.y = terrainY(player.pos.x, player.pos.z) + 0.1;      // yanked down
+          player.vel.set(0,0,0);
+          player.health -= SNAKE.GRAB_DMG;
+          player.stunTimer = Math.max(player.stunTimer||0, SNAKE.GRAB_STUN);
+          const ax=player.pos.x-S.pos.x, az=player.pos.z-S.pos.z, al=Math.hypot(ax,az)||1;
+          player.knockback.x=(ax/al)*SNAKE.GRAB_KB; player.knockback.z=(az/al)*SNAKE.GRAB_KB;
+          shakeTime=0.4; shakeAmt=0.008; playSound('spotted');
+          showKillfeed('🐍 The sand python coiled down the trunk and dragged you out of the tree!');
+        }
+        S.grabCd = SNAKE.GRAB_CD; S._climb=0; S.state='CRUISE';
+      }
+      layoutSnake(S); return;
+    }
+
+    // ============ SIESTA ============
+    if(S.state==='SIESTA_SLEEP'){
+      const pd = Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z);
+      if(hurt || pd < SNAKE.SIESTA_WAKE_R){                            // startled awake → hostile
+        S.target=player; S.targetKind='player'; S.aggroTimer=SNAKE.AGGRO_TIME;
+        showKillfeed(S.v.icon+' You woke the '+S.v.label+'!');
+        snakeUncoil(S); layoutSnake(S); return;
+      }
+      S.sleepT += dt;
+      if(S.sleepT >= SNAKE.SIESTA_SLEEP){ snakeUncoil(S); layoutSnake(S); return; }
+      const breathe = 1 + Math.sin(S.sleepT*1.6)*0.045;               // subtle breathing swell
+      layoutSnakeCoil(S, S.pos.x, terrainY(S.pos.x,S.pos.z)+0.3, S.pos.z, 1.15*breathe, 0.012, dt, 0.16);
+      return;
+    }
+    if(S.state==='SIESTA_TRAVEL'){
+      const sp = S.siestaSpot;
+      const pd = Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z);
+      if(hurt || !sp){ S.state='CRUISE'; }                            // attacked en route → back to hostile
+      else {
+        const d = Math.hypot(sp.x-S.pos.x, sp.z-S.pos.z);
+        if(d < 1.4){ S.state='SIESTA_SLEEP'; S.sleepT=0; }
+        else snakeStep(S, sp.x, sp.z, SNAKE.SIESTA_SPEED, dt);
+      }
+      if(S.state==='SIESTA_TRAVEL'){
+        const h=S.path[0];
+        if(!h || S.pos.distanceTo(h)>0.12) S.path.unshift(new THREE.Vector3(S.pos.x,S.pos.y,S.pos.z));
+        trimSnakePath(S); layoutSnake(S); return;
+      }
+      if(S.state==='SIESTA_SLEEP'){ layoutSnake(S); return; }
+    }
+
+    // ============ CRUISE ============
+    // Midday → down tools and go find a warm patch of grass by the water.
+    if(S.state==='CRUISE' && S.siestaDay!==dn.day && dayProg>=SNAKE.SIESTA_LO && dayProg<=SNAKE.SIESTA_HI && S.aggroTimer<=0){
+      S.siestaDay = dn.day;
+      S.siestaSpot = pickSiestaSpot(S);
+      S.state = 'SIESTA_TRAVEL';
+      S.target=null; S.targetKind=null;
+    }
+
+    // The sand python can SEE a treed player (like the gorilla) and climbs after them.
+    let treedTree = null;
+    if(S.v.tree){
+      const st = playerShelterTree();
+      if(st && Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z) < SNAKE.TREE_DETECT) treedTree = st;
+    }
+    if(treedTree){
+      const d = Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z);
+      if(d < SNAKE.GRAB_RANGE && S.grabCd<=0){
+        S.state='TREEGRAB'; S.actionTimer=SNAKE.GRAB_WINDUP; S._climb=0;
+        layoutSnake(S); return;
+      }
+      snakeStep(S, player.pos.x, player.pos.z, S.v.SPEED_HUNT, dt);
+      pushSnakePath(S); layoutSnake(S); return;
+    }
+
+    // The sand python COILS around the big three when it gets adjacent — never the player.
+    if(S.v.wrap && S.wrapCd<=0){
+      const cand = snakeWrapCandidate(S);
+      if(cand){
+        S.state='WRAP'; S.wrap=cand; S.wrapT=0;
+        showKillfeed('🐍 The sand python coils around the '+cand.name+'!');
+        layoutSnakeCoil(S, cand.e.pos.x, terrainY(cand.e.pos.x,cand.e.pos.z)+0.9, cand.e.pos.z, 1.4, 0.07, dt, 1.5);
+        return;
+      }
+    }
 
     // Pick a target: retaliate (locked-on attacker) > exposed nearby player > nearest prey > roam.
-    let tgt=null, spd=SNAKE.SPEED_HUNT, biteKind=null;
+    let tgt=null, spd=S.v.SPEED_HUNT, biteKind=null;
     if(S.aggroTimer>0 && S.target && S.target.health>0){ tgt=S.target.pos; biteKind=S.targetKind; }
     else {
       if(!playerOffGround()){ const dp=Math.hypot(player.pos.x-S.pos.x,player.pos.z-S.pos.z); if(dp<SNAKE.DETECT*stealth.visMul){ tgt=player.pos; biteKind='player'; } }
@@ -4493,30 +4815,53 @@ function updateSnakes(dt){
     if(tgt){
       const dx=tgt.x-S.pos.x, dz=tgt.z-S.pos.z, d=Math.hypot(dx,dz);
       if(d>SNAKE.MELEE_R){ snakeStep(S, tgt.x, tgt.z, spd, dt); }
-      else { faceSnake(S, dx, dz, dt); S.pos.y=terrainY(S.pos.x,S.pos.z)+0.5; if(S.biteCd<=0){ snakeBite(S, biteKind); S.biteCd=SNAKE.BITE_CD; } }
+      else { faceSnake(S, dx, dz, dt); S.pos.y=terrainY(S.pos.x,S.pos.z)+0.5; if(S.biteCd<=0){ snakeBite(S, biteKind); S.biteCd=S.v.BITE_CD; } }
     } else {
       S.wanderTimer-=dt;
       if(S.wanderTimer<0){ S.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); S.wanderTimer=rand(3,6); }
       let tx=S.pos.x+S.wanderDir.x*10, tz=S.pos.z+S.wanderDir.z*10;
       if(Math.hypot(S.pos.x,S.pos.z)>HALF-6){ tx=-S.pos.x; tz=-S.pos.z; }
-      snakeStep(S, tx, tz, SNAKE.SPEED_ROAM, dt);
+      snakeStep(S, tx, tz, S.v.SPEED_ROAM, dt);
     }
 
-    // Push the new head position onto the trail (only when it actually moved) + trim to body length.
-    const h=S.path[0];
-    if(!h || S.pos.distanceTo(h)>0.12) S.path.unshift(new THREE.Vector3(S.pos.x, S.pos.y, S.pos.z));
-    let tot=0, cut=S.path.length;
-    for(let k=1;k<S.path.length;k++){ tot+=S.path[k-1].distanceTo(S.path[k]); if(tot > SNAKE.SEGS*SNAKE.SEG_SPACING + 3){ cut=k+1; break; } }
-    if(cut<S.path.length) S.path.length=cut;
+    pushSnakePath(S);
     layoutSnake(S);
   });
 
-  // Dead-loop: mark a slain snake dying (starts the collapse); free it once collapsed.
+  // Dead-loop: mark a slain serpent dying (starts the collapse); free it once collapsed.
   for(let i=snakeMeshes.length-1;i>=0;i--){
     const S=snakeMeshes[i];
-    if(S.health<=0 && !S.dying){ S.dying=true; S.deathT=0; S.target=null; S.stunTimer=0; showKillfeed('🐍 The giant snake writhes and collapses!'); }
+    if(S.health<=0 && !S.dying){
+      S.dying=true; S.deathT=0; S.target=null; S.stunTimer=0; S.wrap=null;
+      showKillfeed(S.v.icon+' The '+S.v.label+' writhes and collapses!');
+    }
     if(S._collapsed){ killObj(S.mesh); snakeMeshes.splice(i,1); kills++; }
   }
+}
+// Push the new head position onto the trail (only when it actually moved) + trim to body length.
+function pushSnakePath(S){
+  const h=S.path[0];
+  if(!h || S.pos.distanceTo(h)>0.12) S.path.unshift(new THREE.Vector3(S.pos.x, S.pos.y, S.pos.z));
+  trimSnakePath(S);
+}
+function trimSnakePath(S){
+  let tot=0, cut=S.path.length;
+  const need = S.segs.length*SNAKE.SEG_SPACING + 3;     // scales with the GROWN body, not the starting one
+  for(let k=1;k<S.path.length;k++){ tot+=S.path[k-1].distanceTo(S.path[k]); if(tot > need){ cut=k+1; break; } }
+  if(cut<S.path.length) S.path.length=cut;
+}
+// The nearest wrappable giant (elephant / gorilla / rhino) within reach. NEVER the player.
+function snakeWrapCandidate(S){
+  let best=null, bd=SNAKE.WRAP_RANGE;
+  const test=(e,name,list)=>{
+    if(!e || e.health<=0) return;
+    const d=Math.hypot(e.pos.x-S.pos.x, e.pos.z-S.pos.z);
+    if(d<bd){ bd=d; best={e, name, list}; }
+  };
+  preyMeshes.forEach(P=>{ if(P.species==='elephant') test(P,'elephant',preyMeshes); });
+  gorillaMeshes.forEach(G=>{ if(G.state!=='perched' && G.state!=='sleeping') test(G,'gorilla',gorillaMeshes); });
+  rhinoMeshes.forEach(R=>test(R,'rhino',rhinoMeshes));
+  return best;
 }
 // Per-segment ranged hit test for the snake (any part of the long body can be struck).
 function projHitSnake(r, S){
@@ -4922,7 +5267,7 @@ function updateThrownRocks(dt){
         S.flashTimer = 0.25; S.stunTimer = Math.max(S.stunTimer||0, SNAKE.ROCK_STUN);
         S.target = player; S.targetKind = 'player'; S.aggroTimer = SNAKE.AGGRO_TIME;
         hit = true;
-        if(S.health>0 && !wasAggro) showKillfeed('🐍 The giant snake rears and turns on you!');
+        if(S.health>0 && !wasAggro) showKillfeed(S.v.icon+' The '+S.v.label+' rears and turns on you!');
       }
     });
 
@@ -5224,7 +5569,7 @@ function boomerangStrike(kind, o){
   } else if(kind==='snake'){
     o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, SNAKE.ROCK_STUN);
     o.target = player; o.targetKind = 'player'; o.aggroTimer = SNAKE.AGGRO_TIME;
-    showKillfeed(o.health<=0 ? '🪃 Boomerang bites deep — the giant snake!' : '🪃 Boomerang cracks the giant snake!');
+    showKillfeed(o.health<=0 ? '🪃 Boomerang bites deep — the '+o.v.label+'!' : '🪃 Boomerang cracks the '+o.v.label+'!');
   }
 }
 // ---- Rhino Crossbow: a flat, long-range bolt (50 dmg) with a scope-zoom ----
@@ -5420,10 +5765,10 @@ function dealKitMelee(hit, dmg, tool){
     o.health -= dmg;   // it only truly dies when LANDED (else updateSkyVultures keeps it alive to retreat)
     showKillfeed((o.health<=0 && o.state==='LANDED') ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the vulture!');
   } else if(hit.kind==='snake'){
-    t='giant snake';
+    t=o.v.label;
     o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, SNAKE.ROCK_STUN);
     o.target = player; o.targetKind = 'player'; o.aggroTimer = SNAKE.AGGRO_TIME;   // it whips around to bite you
-    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the giant snake!');
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the '+o.v.label+'!');
   }
 }
 function kitAxe(){
@@ -5962,7 +6307,10 @@ function spawnDailyWave(){
   for(let i=0;i<2 && rhinoMeshes.length   < RHINO.MAX;i++) spawnRhino();   // 2 rhinos/day (was 1)
   for(let i=0;i<DOG.PACK && dogMeshes.length < DOG.MAX;  i++) spawnWildDog();   // 10 wild dogs/day (cap 15)
   for(let i=0;i<SKYV.SPAWN && skyVultureMeshes.length < SKYV.MAX; i++) spawnSkyVulture();  // 2 sky vultures/day (cap 4)
-  for(let i=0;i<SNAKE.SPAWN && snakeMeshes.length < SNAKE.MAX;    i++) spawnSnake();        // 1 giant snake/day (cap 2)
+  // Serpents are RARE: one every SNAKE.SPAWN_EVERY days (random sand python / pink worm), cap 2.
+  if(dn.day >= (dn.nextSnakeDay||SNAKE.SPAWN_EVERY) && snakeMeshes.length < SNAKE.MAX){
+    spawnSnake(); dn.nextSnakeDay = dn.day + SNAKE.SPAWN_EVERY;
+  }
 }
 
 // At each day↔night turn every animal recovers to full health (the herds and
@@ -6310,9 +6658,9 @@ function drawMinimap(){
     mmCtx.beginPath(); mmCtx.arc(px,py,3,0,Math.PI*2); mmCtx.fill();
   });
 
-  // Giant snake — green marker at the head; brighter when it's locked onto you.
+  // Giant serpents — python green / worm pink at the head; brighter when locked onto you.
   snakeMeshes.forEach(S=>{
-    mmCtx.fillStyle = (S.targetKind==='player' && S.aggroTimer>0) ? '#7dff4d' : '#4f9e3a';
+    mmCtx.fillStyle = (S.targetKind==='player' && S.aggroTimer>0) ? S.v.mmHot : S.v.mm;
     const [px,py]=toMM(S.pos.x-player.pos.x, S.pos.z-player.pos.z);
     mmCtx.beginPath(); mmCtx.arc(px,py,4,0,Math.PI*2); mmCtx.fill();
   });
@@ -6425,7 +6773,7 @@ function resetGame(){
 
   // Start in full daylight (skip dawn) so the restart doesn't render the
   // world at midnight + heavy fog. Place us 15 s past dawn = full day.
-  dn = { time: TWILIGHT + 5, day: 1, isDay: true, nextLionSpawn: 120, firstGorilla: false, nextGorillaDay: 3, nextRhinoDay: 3 };
+  dn = { time: TWILIGHT + 5, day: 1, isDay: true, nextLionSpawn: 120, firstGorilla: false, nextGorillaDay: 3, nextRhinoDay: 3, nextSnakeDay: SNAKE.SPAWN_EVERY };
   weather = { state:'clear', timer: rand(60,110), intensity:0, flash:0, detMul:1 };
   roarTimer = rand(20,40);
   if(rainSys) rainSys.pts.visible = false;
@@ -6479,7 +6827,7 @@ function animate(){
   updateRhinos(dt);           // neutral rhinos — roam, charge when provoked
   updateWildDogs(dt);         // fast pack predator — hunt/roam, relentless vendetta if provoked
   updateSkyVultures(dt);      // high-cruising raptor — dives on smaller prey, never dies airborne
-  updateSnakes(dt);           // giant python — slithers/hunts, 1000hp, collapse-by-segment death
+  updateSnakes(dt);           // 🐍 sand python / 🪱 pink worm — hunt, wrap, tree-grab, siesta, grow on kills
   updateHealthBars(dt);       // floating HP bars (after every animal has moved)
   updateCarcasses(dt);
   updateVultures(dt);

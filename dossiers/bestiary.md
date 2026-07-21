@@ -11,8 +11,8 @@
 - **Grass only hides you if you CROUCH in it.** Walking or standing in tall grass leaves you fully
   visible — the animals will still see and come for you. Press **C** to crouch, move slowly, stay low.
 - **Up a tree = safe.** Grapple (`1`/`G`) into a climbable tree and lions/rhinos/elephants **cannot reach
-  you** (no stamina cost to stay up there — wait out anything). **Exception:** the **gorilla** is the only
-  animal that can see a treed player and will climb over to **tree-grab** you back to the ground.
+  you** (no stamina cost to stay up there — wait out anything). **Exceptions:** the **gorilla** and the
+  **sand python** can both see a treed player and will climb over to **tree-grab** you back to the ground.
 - **While grappling/climbing/standing on a wall** you're also out of a ground animal's reach.
 - How well you're seen scales with a stealth value (`stealth.visMul`): crouch ×0.55, crouch-in-grass an
   extra ×0.45, standing still ×0.85, sprinting ×1.2 (loud & obvious). Lions, the gorilla (grounded
@@ -20,8 +20,9 @@
   invisible; running in the open makes you a target.**
 
 **Day / night (a 4-minute cycle — 2 min day, 2 min night):**
-- **Every dawn a fresh wave spawns: 3 lions, 2 gorillas, 2 rhinos, 10 wild dogs, 2 sky vultures, 1 giant
-  snake** (population caps: lions 14, gorillas 5, rhinos 6, wild dogs 15, sky vultures 4, giant snakes 2).
+- **Every dawn a fresh wave spawns: 3 lions, 2 gorillas, 2 rhinos, 10 wild dogs, 2 sky vultures**
+  (population caps: lions 14, gorillas 5, rhinos 6, wild dogs 15, sky vultures 4). **Giant serpents are
+  rarer — 1 every 5 days**, a coin flip between sand python and pink worm, cap 2 total.
   Elephants, giraffes and the plains herbivores arrive in herds.
 - **At every day↔night turn, ALL animals heal to full.** Wearing something down resets each half-cycle.
 - Lions are most active at **dawn, dusk and through the night**; they laze in shade at midday.
@@ -174,16 +175,42 @@ bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks f
   cruises until it's healed back up — so the only way to kill one is to catch it **on the ground** and burst
   it down fast. **No body-part drop.**
 
-### 🐍 Giant snake — the tanky slitherer
-- A **python about as long as an elephant** — a broad head + a chain of ~14 body segments that follow it in
-  an **S-slithering** undulation. **Sandy tan** with darker **carpet-python brown blotches**.
-- HP **1000** (**by far the tankiest thing in the game** — ~13 spears / 20 bolts / 10 boomerangs). **Bites
-  for 50** damage on a **fast 1 s cooldown** — it chews through you quickly if it reaches you.
-- **Slightly slower than a lion** (0.85× its pace) — a **sprint (16) outruns it**, and crouch-in-grass hides
-  you from it like everything else. It **cruises the map**, **hunts the nearest prey**, hunts **you** when
-  you're exposed and close, and **whips around to fight back** the moment you hit it.
-- **Blocked by walls** (wood & stone). On death its whole body **collapses segment-by-segment**. **No
-  body-part drop.**
+### 🐍🪱 Giant serpents — two variants, both of which GROW
+One **serpent spawns every 5 days** (cap 2), and each spawn is a **coin flip** between the two. Both are a
+head + a chain of **14 starting body segments** that follow it in an **S-slithering** undulation, both are
+**blocked by walls** (wood & stone), both **collapse segment-by-segment** on death, and neither drops a
+body part.
+
+**Both GROW +1 segment for every kill they credit** — anything that took damage from that serpent and dies
+within 2 s of its last bite/crush. A well-fed serpent visibly lengthens over a run. **Soft cap 50 segments.**
+
+**Both take a MIDDAY SIESTA.** At ~11:00 in-game (45–55% through the day) an unengaged serpent drops
+everything, travels to a **grass patch on the bank of the watering hole**, winds into a **tight breathing
+coil** and **sleeps for 60 seconds**. It **wakes instantly** if you come within **8 m** or if anything
+damages it — and it wakes **hostile**, locked onto you. A sleeping serpent is the best window you'll get to
+line up a burst of damage; blundering into one is the worst.
+
+#### 🐍 Sand python — the tanky constrictor
+- **Sandy tan** with darker **carpet-python brown blotches**. HP **1000** (**by far the tankiest thing in
+  the game** — ~13 spears / 20 bolts / 10 boomerangs). **Bites for 50** on a **1 s cooldown**.
+- **Exactly as fast as your sprint (16)** — you cannot outrun it on the flat any more; you have to break
+  line of sight, get up a tree… and even that isn't safe (below). Crouch-in-grass still hides you.
+- **WRAP ATTACK.** Get adjacent to an **elephant, gorilla or rhino** and it **coils around the torso**:
+  both are locked in place and the victim takes **100 damage per second**. A rhino dies in ~2.2 s, a
+  gorilla in ~1.6 s. The coil breaks when the victim dies, when **the python takes a hit**, or after
+  **8 seconds**; then it's on a 5 s cooldown. **It never wraps you** — you get bitten, not crushed.
+  *(Tactic: hit the python to make it let go of something you'd rather keep alive.)*
+- **TREE-GRAB.** Like the gorilla, the sand python can **see a treed player** (up to 26 m), climbs the
+  trunk and **drags you out of the canopy** for 50 damage + a 1.3 s daze + knockback (8 s cooldown). A tree
+  is no longer a safe place to wait out a python.
+
+#### 🪱 Pink worm — the fastest thing alive
+- A **fleshy, shiny, slightly translucent pink tube** — no scales, no teeth, a blunt rounded head with two
+  beady eyes. Cute-ugly.
+- HP **500** (~7 spears). **Bites for 40** on a 1 s cooldown.
+- **Speed 32 — twice the sand python, twice your sprint.** *Nothing on the ground is faster.* You cannot
+  run from a pink worm; you go up a tree, behind a wall, or you fight it.
+- **No wrap, no tree-climbing** — it just bites. Trees and walls are a hard escape from it.
 
 ### 🦒 Giraffe — tall prey, too fast to chase
 - HP 40 (~a lion). **Faster than you even sprinting** — you can't run it down; spear/rock or ambush it.
@@ -208,8 +235,10 @@ to sneak up for a pounce. All die to **1 spear** (kudu takes 2).
 - **Sky vulture** dives on you, wild dogs, rhinos and every prey species — but **never** a lion, gorilla or
   elephant. Nothing on the ground can hit it back while it's high (it flees the ground and can't be melee'd
   up there), and it retreats to heal rather than die in the air.
-- **Giant snake** hunts prey + you and fights back when attacked; it just coexists with the other big
-  predators (no special rivalry).
+- **Giant serpents** hunt prey + you and fight back when attacked. The **sand python** additionally
+  **constricts elephants, gorillas and rhinos** (100 dmg/s) — the only animal that can kill a big three
+  outright in seconds — and **tree-grabs** you like the gorilla. The **pink worm** just bites, but nothing
+  outruns it. Both **grow a segment per kill** and both **sleep through midday**.
 - **Prey** (zebra→kudu, giraffe) just flee — except a cornered **warthog** gores back. They also flee the
-  giant snake and scatter when a vulture dives.
+  giant serpents and scatter when a vulture dives.
 - **Everything reheals at each day/night turn**, so bring enough firepower to finish a fight in one round.
