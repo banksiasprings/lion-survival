@@ -2,6 +2,46 @@
 
 Running log of changes, newest first. One line per change.
 
+## 2026-07-21b — 🐍🪱 Day-1 serpent seed (Steven: "spawn one at the start")
+- **One serpent is now on the map from Day 1**, randomly picked 50/50 between sand python and pink worm —
+  same coin flip the 5-day cadence uses. One line in `spawnDailyWave`:
+  `if(dn.day === 1 && snakeMeshes.length < SNAKE.MAX) spawnSnake();`
+- **The seed deliberately does NOT touch `dn.nextSnakeDay`**, so the every-5-days schedule still lands on
+  day 5/10/15 — this is an *extra* serpent, not a shifted timetable. (Advancing the counter would have
+  pushed the second spawn to day 6 and quietly changed the cadence Steven asked to keep.)
+- Verified across **three fresh saves**: day 1 = exactly 1 serpent (worm / worm / python — the flip is
+  live), days 2–4 add none, day 5 brings the second, days 10/15 nothing (cap 2 holds).
+- **All other serpent behaviour unchanged** — a ~14.5 sim-minute soak of the full `animate()` update chain
+  to day 10 exercised `CRUISE`/`SIESTA_TRAVEL`/`SIESTA_SLEEP`, growth ran to the 50-segment cap (+36 kills)
+  and a second worm reached 42, **zero console errors**. Speed/HP/wrap/tree-grab constants untouched.
+- **⚠ Balance:** the map is now **at the 2-serpent cap from day 5 instead of day 10**, and day 1 can roll a
+  pink worm — speed 32, unoutrunnable, against a fresh player with no necklace and no crafted kit. That's a
+  real difficulty bump to the opening; flagged, not tuned.
+
+## 2026-07-21 — 🐍🪱 Serpent split: sand python + pink worm (wrap · tree-grab · siesta · growth)
+*(Backfilled — this landed in commit `314fbc4` but never got a log entry.)*
+- **Two variants off one module** (`SNAKE` shared config + `SNAKE_VARIANTS`; `S.v` = per-snake record).
+  **🐍 Sand python** 1000 hp / bite 50 / **speed 16 = exactly `PLAYER.sprintSpeed`** (measured 16.00 u/s).
+  **🪱 Pink worm** (new mesh — fleshy translucent Phong pink, blunt head, no teeth) 500 hp / bite 40 /
+  **speed 32, 2× the python — fastest ground creature** (measured 32.00, ratio 2.000).
+- **WRAP (python only):** coils an **elephant/gorilla/rhino** — both immobilised, **100 dmg/s**. Rhino
+  (220 hp) dead in 2.22 s, gorilla in 1.63 s; drift while wrapped 0.05 u. Breaks on victim death / the
+  python taking a hit / 8.02 s cap, then 5 s cooldown. **Never the player** — verified 5 s adjacent, 0 wraps,
+  250 dmg = 5 clean bites. Rides each victim's existing `stunTimer`, so **no FSM changed**.
+- **TREE-GRAB (python only):** sees a treed player at 26 m, rears up the trunk (0.9 s), drags you out for
+  50 + 1.3 s daze. **Calls `dropFromTree()`** — moving `pos.y` alone doesn't work, `updatePlayer` re-pins to
+  `grapple.perch`. ⚠ **The gorilla's grab has that exact bug and never actually pulls you down** —
+  pre-existing, left untouched, task chip filed.
+- **MIDDAY SIESTA (both):** at ~11:00 in-game an unengaged serpent travels to a grass patch on the **bank**
+  of the pond (never in the water), coils tight (radius 1.13 u vs a ~10 u sprawl) and sleeps 60.0 s. Wakes
+  **instantly + hostile** within 8 m or on any damage. Verified end-to-end incl. both wake paths.
+- **GROWTH:** +1 segment per credited kill (victim dead within 2 s of our last tick). Python 14→15→16→17 on
+  three wildebeest; worm 14→15 on a giraffe. **Soft cap 50**, enforced and load-bearing — a worm hit it by
+  day 6 in a soak. Path buffer + undulation now scale off `S.segs.length` / arc-length, so gaps stay
+  0.72–0.77 at 50 segments.
+- **Spawn 1 per 5 days** (was daily), 50/50 variant, cap 2. Disposal: 0 orphan geo/tex on a grown
+  spawn→collapse→free cycle. 20-minute full-chain soak: **zero console errors**.
+
 ## 2026-07-19 — 🐕 wall fix + 🦅 sky vulture + 🐍 giant snake (three-in-one)
 - **🐕 Wild dogs no longer walk through walls (bug fix).** Root cause = **tunnelling**, not a missing collide:
   `dogStep` already called `collideWalls`, but walls are only **0.3 thick** and a vendetta dog moves ~0.9

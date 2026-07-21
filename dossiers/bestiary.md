@@ -22,7 +22,8 @@
 **Day / night (a 4-minute cycle — 2 min day, 2 min night):**
 - **Every dawn a fresh wave spawns: 3 lions, 2 gorillas, 2 rhinos, 10 wild dogs, 2 sky vultures**
   (population caps: lions 14, gorillas 5, rhinos 6, wild dogs 15, sky vultures 4). **Giant serpents are
-  rarer — 1 every 5 days**, a coin flip between sand python and pink worm, cap 2 total.
+  rarer — 1 seeded on Day 1, then 1 every 5 days**, a coin flip between sand python and pink worm each
+  time, cap 2 total.
   Elephants, giraffes and the plains herbivores arrive in herds.
 - **At every day↔night turn, ALL animals heal to full.** Wearing something down resets each half-cycle.
 - Lions are most active at **dawn, dusk and through the night**; they laze in shade at midday.
@@ -176,7 +177,8 @@ bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks f
   it down fast. **No body-part drop.**
 
 ### 🐍🪱 Giant serpents — two variants, both of which GROW
-One **serpent spawns every 5 days** (cap 2), and each spawn is a **coin flip** between the two. Both are a
+**One serpent is already on the map on Day 1**, then another **every 5 days** (day 5, 10, 15 …), cap 2 —
+so a run is at the cap from day 5. Every spawn, including the Day 1 one, is a **coin flip** between the two. Both are a
 head + a chain of **14 starting body segments** that follow it in an **S-slithering** undulation, both are
 **blocked by walls** (wood & stone), both **collapse segment-by-segment** on death, and neither drops a
 body part.

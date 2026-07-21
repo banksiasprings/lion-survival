@@ -6307,7 +6307,11 @@ function spawnDailyWave(){
   for(let i=0;i<2 && rhinoMeshes.length   < RHINO.MAX;i++) spawnRhino();   // 2 rhinos/day (was 1)
   for(let i=0;i<DOG.PACK && dogMeshes.length < DOG.MAX;  i++) spawnWildDog();   // 10 wild dogs/day (cap 15)
   for(let i=0;i<SKYV.SPAWN && skyVultureMeshes.length < SKYV.MAX; i++) spawnSkyVulture();  // 2 sky vultures/day (cap 4)
-  // Serpents are RARE: one every SNAKE.SPAWN_EVERY days (random sand python / pink worm), cap 2.
+  // Serpents are RARE: one seeded on day 1 so a run always has one on the map, then
+  // one every SNAKE.SPAWN_EVERY days (random sand python / pink worm each time), cap 2.
+  // The day-1 seed does NOT move dn.nextSnakeDay, so the 5-day cadence still lands on
+  // day 5, 10, 15 … — the seed is an extra serpent, not a shifted schedule.
+  if(dn.day === 1 && snakeMeshes.length < SNAKE.MAX) spawnSnake();
   if(dn.day >= (dn.nextSnakeDay||SNAKE.SPAWN_EVERY) && snakeMeshes.length < SNAKE.MAX){
     spawnSnake(); dn.nextSnakeDay = dn.day + SNAKE.SPAWN_EVERY;
   }

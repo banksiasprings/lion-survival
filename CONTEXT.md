@@ -607,8 +607,13 @@ unchanged and now shared by both. **Lion AI untouched.**
   a fixed segments-per-loop left visible bead-chain gaps around a rhino.
 - **HP-drop watchdog** at the top of the per-snake loop (mirrors the lions'): any damage from any source
   breaks a wrap and wakes a siesta, so no damage site — present or future — has to remember.
-- **Spawn cadence: `SPAWN_EVERY 5` days** (was 1/day), **50/50 variant**, cap 2. Driven by `dn.nextSnakeDay`
-  (seeded in `resetGame`). Verified on a fresh save: no serpent days 1–4, one on day 5, a second on day 10.
+- **Spawn cadence: one seeded on day 1, then `SPAWN_EVERY 5` days** (was 1/day), **50/50 variant** on every
+  spawn, cap 2. The 5-day cadence is driven by `dn.nextSnakeDay` (seeded in `resetGame`); the **day-1 seed
+  deliberately does NOT advance `nextSnakeDay`**, so the schedule still lands on day 5/10/15 — the seed is
+  an extra serpent, not a shifted timetable. Verified across three fresh saves: day 1 has exactly one
+  randomly-picked serpent (worm/worm/python), days 2–4 add none, day 5 brings the second → **at cap 2 from
+  day 5** (previously day 10). *(Day-1 seed added 2026-07-21b at Steven's request — a run should never open
+  without a serpent somewhere on the map.)*
 - **Integration:** minimap colour is per-variant (`S.v.mm`/`mmHot` — python green, worm pink); every
   killfeed line now names the variant (`S.v.icon`/`S.v.label`) across `snakeBite`, `updateThrownRocks`,
   `boomerangStrike` and `dealKitMelee`. Damage numbers, `SPEAR_DMG 80`, `ROCK_STUN`, `AGGRO_TIME`,
