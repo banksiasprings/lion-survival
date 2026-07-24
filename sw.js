@@ -1,4 +1,4 @@
-/* Lion Survival — minimal offline service worker.
+/* Survive the Savannah — minimal offline service worker.
  *
  * The game is a single static index.html + procedural assets. Its ONE external
  * dependency is Three.js r128 from cdnjs (cdnjs sends permissive CORS headers,
@@ -12,7 +12,7 @@
  *
  * Bump CACHE when the shell list changes so activate() evicts the stale cache.
  */
-const CACHE = 'lion-survival-v1';
+const CACHE = 'survive-the-savannah-v2';
 const THREE = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
 const SHELL = [
   './',
@@ -20,6 +20,7 @@ const SHELL = [
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
+  './icons/icon-maskable-192.png',
   './icons/icon-maskable-512.png',
   './icons/apple-touch-icon.png',
   THREE

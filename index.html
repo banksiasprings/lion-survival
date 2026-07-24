@@ -3,16 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Lion Survival</title>
+<title>Survive the Savannah</title>
 <!-- PWA: installable home-screen app, standalone landscape, offline via sw.js -->
 <link rel="manifest" href="./manifest.json">
-<meta name="theme-color" content="#0a0e06">
+<meta name="theme-color" content="#3a2820">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Lion Survival">
+<meta name="apple-mobile-web-app-title" content="Savannah">
 <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+<!-- Capture Chrome's install prompt as early as possible so the landing page can fire it on tap. -->
+<script>window.__bip=null;window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window.__bip=e;window.dispatchEvent(new Event('bip-ready'));});</script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-select:none}
@@ -222,9 +224,64 @@ body.touch #crosshair{opacity:0.5}
 #rotate-hint .rot-t{font-size:22px}
 #rotate-hint .rot-s{font-size:13px;opacity:0.7;line-height:1.5;max-width:280px}
 @keyframes rot-wig{0%,100%{transform:rotate(-12deg)}50%{transform:rotate(78deg)}}
+
+/* ---- Install landing (first-visit-in-a-browser prompt; hidden once installed) ---- */
+#install-landing{position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;
+  padding:24px;overflow:auto;color:#241610;text-align:center;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:linear-gradient(#c1d4ce 0%,#e8d3a8 44%,#b07d4f 68%,#3a2820 100%);
+  -webkit-tap-highlight-color:transparent;}
+#install-landing[hidden]{display:none}
+.il-card{max-width:370px;width:100%;padding:28px 24px 24px;border-radius:24px;
+  background:rgba(255,255,255,0.16);border:1px solid rgba(255,255,255,0.35);
+  box-shadow:0 14px 46px rgba(0,0,0,0.38);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);}
+.il-icon{width:116px;height:116px;border-radius:26px;box-shadow:0 8px 22px rgba(0,0,0,0.45);}
+.il-title{font-size:27px;line-height:1.1;margin:16px 0 6px;font-weight:800;letter-spacing:0.2px;color:#20130d}
+.il-sub{font-size:14px;line-height:1.5;margin:0 0 22px;opacity:0.85}
+.il-btn{display:inline-block;width:100%;background:#c0392b;color:#fff;border:0;border-radius:15px;
+  font-size:20px;font-weight:800;padding:17px 24px;cursor:pointer;box-shadow:0 6px 0 #8f2418;
+  transition:transform .05s,box-shadow .05s;}
+.il-btn:active{transform:translateY(4px);box-shadow:0 2px 0 #8f2418}
+.il-btn[disabled]{opacity:0.6}
+.il-hint{font-size:13px;line-height:1.5;margin:12px 6px 0;opacity:0.9}
+.il-hint b{color:#20130d}
+.il-ios{margin:2px 0}
+.il-ios-steps{display:flex;flex-direction:column;gap:11px;text-align:left}
+.il-step{display:flex;align-items:center;gap:13px;font-size:15px;padding:12px 15px;border-radius:13px;
+  background:rgba(255,255,255,0.4)}
+.il-step b{color:#20130d}
+.il-share{font-size:26px;line-height:1;color:#0a84ff;flex:0 0 auto}
+.il-plus{font-size:22px;line-height:1;flex:0 0 auto}
+.il-ios-arrow{font-size:36px;margin-top:16px;color:#0a84ff;animation:il-bounce 1.25s ease-in-out infinite}
+@keyframes il-bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(11px)}}
+.il-link{margin-top:22px;background:none;border:0;color:#20130d;font-size:15px;font-weight:600;
+  text-decoration:underline;text-underline-offset:3px;cursor:pointer;opacity:0.92}
 </style>
 </head>
 <body>
+<!-- Install landing — shown on a first browser visit; skipped once the app is installed (standalone). -->
+<div id="install-landing" hidden>
+  <div class="il-card">
+    <img class="il-icon" src="./icons/icon-512.png" alt="Survive the Savannah" width="116" height="116">
+    <div class="il-title">Survive the Savannah</div>
+    <div class="il-sub">Stalk, hunt and outlast the pride. Install it free — it plays offline, no app store needed.</div>
+
+    <!-- Android / Chrome / installable desktop: native install prompt -->
+    <button id="il-install" class="il-btn" hidden>⬇&nbsp; Install app</button>
+    <div id="il-install-hint" class="il-hint" hidden>Open your browser menu <b>⋮</b> and choose <b>“Install app”</b> / <b>“Add to Home&nbsp;screen”</b>.</div>
+
+    <!-- iOS / Safari: no native prompt — guide the manual Add to Home Screen -->
+    <div id="il-ios" class="il-ios" hidden>
+      <div class="il-ios-steps">
+        <div class="il-step"><span class="il-share"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0a84ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="M8 7l4-4 4 4"/><path d="M6 11H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1"/></svg></span><span>Tap the <b>Share</b> icon in Safari</span></div>
+        <div class="il-step"><span class="il-plus">➕</span><span>Choose <b>Add to Home Screen</b></span></div>
+      </div>
+      <div class="il-ios-arrow" aria-hidden="true">⬇</div>
+    </div>
+
+    <button id="il-play" class="il-link">Or just play in the browser →</button>
+  </div>
+</div>
 <div id="vignette"></div>
 <div id="scope"><div id="scope-x"></div></div>
 <div id="hud">
@@ -243,7 +300,7 @@ body.touch #crosshair{opacity:0.5}
   <div id="abilitybar"></div>
 </div>
 <div id="overlay">
-  <h1>🦁 LION SURVIVAL</h1>
+  <h1>🦁 SURVIVE THE SAVANNAH</h1>
   <p>Survive the savanna. Lions hunt hardest at dawn, dusk and through the night — rest in shade by day.<br>
      Crouch in tall grass to hide (standing in it, they still see you), stay quiet, mind the wind, and grapple into a tree when the pride closes in.</p>
   <div style="font-size:12px;opacity:0.65;line-height:1.9;text-align:center">
@@ -299,11 +356,11 @@ body.touch #crosshair{opacity:0.5}
   <button id="tc-attack" class="tc tc-btn" data-touch="attack" aria-label="Use active tool">🐾</button>
 </div>
 
-<!-- Shown only on a touchscreen held in portrait — Lion Survival is a landscape game. -->
+<!-- Shown only on a touchscreen held in portrait — Survive the Savannah is a landscape game. -->
 <div id="rotate-hint">
   <div class="rot-ic">📱</div>
   <div class="rot-t">Rotate to landscape</div>
-  <div class="rot-s">Lion Survival plays widescreen — turn your device sideways to hunt.</div>
+  <div class="rot-s">Survive the Savannah plays widescreen — turn your device sideways to hunt.</div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -710,7 +767,7 @@ function initScene(){
     renderer.shadowMap.enabled = false;
     sun.castShadow = false;
     scene.userData.noShadows = true;
-    console.warn('Lion Survival: shadows disabled — this GPU/driver failed the shadow-map probe.');
+    console.warn('Survive the Savannah: shadows disabled — this GPU/driver failed the shadow-map probe.');
   }
 
   window.addEventListener('resize', ()=>{
@@ -6926,6 +6983,54 @@ renderer.domElement.addEventListener('click', ()=>{
 });
 
 </script>
+<!-- Install landing controller: decides whether to show the install prompt, and how, per platform. -->
+<script>
+(function () {
+  var el = document.getElementById('install-landing');
+  if (!el) return;
+  var standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+                   || window.navigator.standalone === true;
+  if (standalone) return;                 // already installed → straight to the game
+
+  var ua = navigator.userAgent || '';
+  var isIOS = /iphone|ipad|ipod/i.test(ua)
+              || (/Macintosh/.test(ua) && 'ontouchend' in document);   // iPadOS 13+ masquerades as macOS
+
+  var installBtn  = document.getElementById('il-install');
+  var installHint = document.getElementById('il-install-hint');
+  var iosBox      = document.getElementById('il-ios');
+  var playBtn     = document.getElementById('il-play');
+
+  el.hidden = false;
+  playBtn.addEventListener('click', function () { el.hidden = true; });
+
+  if (isIOS) {
+    iosBox.hidden = false;                 // no native prompt on iOS — show manual steps
+    return;
+  }
+
+  // Android / Chrome / installable desktop.
+  function offerInstall() {
+    if (window.__bip) { installBtn.hidden = false; installHint.hidden = true; }
+    else              { installHint.hidden = false; }
+  }
+  offerInstall();
+  window.addEventListener('bip-ready', offerInstall);
+
+  installBtn.addEventListener('click', function () {
+    var p = window.__bip;
+    if (!p) { installHint.hidden = false; return; }
+    installBtn.disabled = true;
+    p.prompt();
+    Promise.resolve(p.userChoice).catch(function () {}).then(function () {
+      window.__bip = null;
+      installBtn.disabled = false;
+    });
+  });
+  window.addEventListener('appinstalled', function () { el.hidden = true; });
+})();
+</script>
+
 <!-- PWA service worker: caches the game shell + Three.js for offline play -->
 <script>
 if ('serviceWorker' in navigator) {

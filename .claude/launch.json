@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "lion-survival",
+      "name": "savannah",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8911", "--bind", "127.0.0.1"],
-      "port": 8911
+      "runtimeArgs": ["-m", "http.server", "8912", "--bind", "127.0.0.1"],
+      "port": 8912
     }
   ]
 }

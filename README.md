@@ -1,10 +1,12 @@
-# 🦁 Lion Survival
+# 🦁 Survive the Savannah
 
 A single-file 3D savanna survival game — **[Three.js](https://threejs.org/) r128, zero asset files**, everything procedural.
 
 ## ▶ Play now
 
-**https://banksiasprings.github.io/lion-survival/**
+**https://banksiasprings.github.io/survive-the-savannah/**
+
+Open it on your phone and tap **Install** (Android) or **Share → Add to Home Screen** (iPhone) to play it like a native app, offline.
 
 Or clone and open `index.html` directly (no build step, no server needed).
 
