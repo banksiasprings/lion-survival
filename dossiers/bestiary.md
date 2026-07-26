@@ -12,7 +12,8 @@
   visible — the animals will still see and come for you. Press **C** to crouch, move slowly, stay low.
 - **Up a tree = safe.** Grapple (`1`/`G`) into a climbable tree and lions/rhinos/elephants **cannot reach
   you** (no stamina cost to stay up there — wait out anything). **Exceptions:** the **gorilla** and the
-  **sand python** can both see a treed player and will climb over to **tree-grab** you back to the ground.
+  **sand python** can both see a treed player and will climb over to **tree-grab** you back to the ground —
+  and a **black cobra** may already be coiled in a canopy waiting to drop on whoever walks under it.
 - **While grappling/climbing/standing on a wall** you're also out of a ground animal's reach.
 - How well you're seen scales with a stealth value (`stealth.visMul`): crouch ×0.55, crouch-in-grass an
   extra ×0.45, standing still ×0.85, sprinting ×1.2 (loud & obvious). Lions, the gorilla (grounded
@@ -22,8 +23,8 @@
 **Day / night (a 4-minute cycle — 2 min day, 2 min night):**
 - **Every dawn a fresh wave spawns: 3 lions, 2 gorillas, 2 rhinos, 10 wild dogs, 2 sky vultures**
   (population caps: lions 14, gorillas 5, rhinos 6, wild dogs 15, sky vultures 4). **Giant serpents are
-  rarer — 1 seeded on Day 1, then 1 every 5 days**, a coin flip between sand python and pink worm each
-  time, cap 2 total.
+  rarer — they roll only on Day 1 and Day 5**, and each roll is three independent 30% coin flips (one per
+  variant: sand python, pink worm, black cobra), so a roll brings 0–3 of them. Cap 6 total.
   Elephants, giraffes and the plains herbivores arrive in herds.
 - **At every day↔night turn, ALL animals heal to full.** Wearing something down resets each half-cycle.
 - Lions are most active at **dawn, dusk and through the night**; they laze in shade at midday.
@@ -176,21 +177,32 @@ bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks f
   cruises until it's healed back up — so the only way to kill one is to catch it **on the ground** and burst
   it down fast. **No body-part drop.**
 
-### 🐍🪱 Giant serpents — two variants, both of which GROW
-**One serpent is already on the map on Day 1**, then another **every 5 days** (day 5, 10, 15 …), cap 2 —
-so a run is at the cap from day 5. Every spawn, including the Day 1 one, is a **coin flip** between the two. Both are a
-head + a chain of **14 starting body segments** that follow it in an **S-slithering** undulation, both are
-**blocked by walls** (wood & stone), both **collapse segment-by-segment** on death, and neither drops a
-body part.
+### 🐍🪱☠️ Giant serpents — three variants, all of which GROW
+Serpents arrive on **exactly two days: game start and Day 5.** Each time, all three variants get their
+**own independent 30% roll** — so a roll can bring nothing, one, two or all three. You might open a run with
+a python *and* a cobra but no worm; you might open with an empty map. **Average ≈1 serpent per roll**
+(0 snakes 35% of the time, 1 → 44%, 2 → 19%, all 3 → 2.5%). Cap 6. **There are no other serpent spawns.**
 
-**Both GROW +1 segment for every kill they credit** — anything that took damage from that serpent and dies
+All three are a head + a chain of **14 starting body segments** that follow it in an **S-slithering**
+undulation, all are **blocked by walls** (wood & stone), all **collapse segment-by-segment** on death, and
+none drops a body part.
+
+**All GROW +1 segment for every kill they credit** — anything that took damage from that serpent and dies
 within 2 s of its last bite/crush. A well-fed serpent visibly lengthens over a run. **Soft cap 50 segments.**
 
-**Both take a MIDDAY SIESTA.** At ~11:00 in-game (45–55% through the day) an unengaged serpent drops
+**⚠ AND EVERY SEGMENT MAKES ITS BITE HURT MORE.** Bite damage = **base + segments grown**. A pink worm that
+has eaten five things bites for 45 instead of 40; at the 50-segment cap it bites for **76**. A python at the
+cap bites for **86**. This applies to bites on you *and* on other animals — a serpent that has been feeding
+all run is a genuinely different animal from the one that spawned. *Kill them early, or don't let them feed.*
+
+**All take a MIDDAY SIESTA.** At ~11:00 in-game (45–55% through the day) an unengaged serpent drops
 everything, travels to a **grass patch on the bank of the watering hole**, winds into a **tight breathing
 coil** and **sleeps for 60 seconds**. It **wakes instantly** if you come within **8 m** or if anything
 damages it — and it wakes **hostile**, locked onto you. A sleeping serpent is the best window you'll get to
 line up a burst of damage; blundering into one is the worst.
+
+**All fight back against ANY attacker** — you, a lion, a wild dog, the gorilla, a rhino, the elephant. There
+is no such thing as a free hit on a serpent.
 
 #### 🐍 Sand python — the tanky constrictor
 - **Sandy tan** with darker **carpet-python brown blotches**. HP **1000** (**by far the tankiest thing in
@@ -213,6 +225,28 @@ line up a burst of damage; blundering into one is the worst.
 - **Speed 32 — twice the sand python, twice your sprint.** *Nothing on the ground is faster.* You cannot
   run from a pink worm; you go up a tree, behind a wall, or you fight it.
 - **No wrap, no tree-climbing** — it just bites. Trees and walls are a hard escape from it.
+- It is also the **fastest grower** in the game, and its bite scales with every segment — a worm left to
+  feed on a herd all run will be biting for 70+ by the time you meet it.
+
+#### ☠️ Black cobra — the one that doesn't chase you
+- **Near-black body over a bright blue belly**, yellow eyes, and a **hood that FLARES** — an upright
+  blue-fronted fan that snaps open the moment it commits to a strike. If you see the hood, you're already
+  in range. HP **300** (the squishiest serpent, ~4 spears).
+- **It only bites for 5.** That is not a mistake — the bite is a delivery system. **The venom is the weapon.**
+- **☠️ VENOM.** One bite poisons you for **a full in-game day (240 s)**. Over the first **60 seconds** it
+  bleeds you from full health down to **exactly 1 HP** — and then holds you there. **The venom itself never
+  kills you.** What kills you is the next hit from anything at all, because you have no buffer left. Health
+  regen is **blocked** for the entire duration. The HP bar turns **pulsing green** and the top-right HUD
+  shows **☠️ POISONED Xs**.
+- **CURE — water.** Wade into the **watering hole** and the venom flushes out immediately. That's a long
+  walk on 1 HP to the one place lions gather to drink and serpents bed down at midday. The **🌿 Healing Herb**
+  ability also purges it (and heals) if you're carrying one.
+- **TREE DROP-AMBUSH.** It doesn't hunt you — at speed 14 a sprint leaves it behind easily. Instead it
+  finds a **climbable tree**, coils in the canopy with the hood folded flat, and **waits**. Walk under that
+  tree and it **DROPS on you** and bites on landing. On the minimap a treed cobra shows as a **hollow violet
+  ring** rather than a solid dot — you can see where it is; noticing that it's *above* you is your problem.
+  After a drop it won't re-tree for 22 s.
+- **No wrap, no tree-grab.** It can't pull you out of a tree — but it can be waiting in one.
 
 ### 🦒 Giraffe — tall prey, too fast to chase
 - HP 40 (~a lion). **Faster than you even sprinting** — you can't run it down; spear/rock or ambush it.
@@ -228,19 +262,35 @@ to sneak up for a pounce. All die to **1 spear** (kudu takes 2).
 ---
 
 ## Who fights whom (the combat web)
-- **Lions** hunt you & prey; mob the gorilla/rhino/elephant; **whole pride retaliates** if one is hurt.
-- **Gorilla** fights lions, rhinos, elephants, and hunts you.
-- **Rhino** & **Elephant** fight back against anything that attacks them (including each other).
-- **Wild dogs** hunt you & prey; **rivals with lions** (small skirmishes on contact, not to the death);
-  **avoid** the gorilla/rhino/elephant (too big). Wound one → the **whole pack hunts you relentlessly** until
-  the pack is wiped or you die (they never calm, unlike the pride).
+
+> **The rule underneath all of it: anything that fights, fights anything that attacks it.**
+> No animal in the game gets a free hit. Whatever you provoke — or whatever provokes *something else* —
+> will turn around and come back at whoever actually hit it, not at whoever happens to be nearest.
+
+- **Lions** hunt you & prey; mob the gorilla/rhino/elephant/**serpents**; **whole pride retaliates** if one
+  is hurt, and now that includes being bitten by a serpent.
+- **Gorilla** fights lions, rhinos, elephants and **serpents**, and hunts you. It hunts down **whatever drew
+  blood**, not just lions.
+- **Rhino** & **Elephant** fight back against anything that attacks them (each other, lions, the gorilla,
+  **wild dogs**, **serpents**, you).
+- **The elephant now HONES IN on its actual attacker.** It used to lumber at whatever was closest, which
+  meant a dog or a serpent could chew on its flank forever. Hit the bull — with a spear, a dog's bite, a
+  lion, a serpent — and it drops everything else and comes for *you* for 12 s, even if something else is
+  standing closer.
+- **Wild dogs** hunt you & prey, **and mob any serpent they run into** (a serpent bites back for far more
+  than they can take — a python one-shots a dog). **Rivals with lions** (small skirmishes on contact, not to
+  the death — deliberately kept off both retaliation systems). Wound one **yourself** → the **whole pack
+  hunts you relentlessly** until the pack is wiped or you die. Hurt one with **anything else** → the pack
+  turns on *that animal* for 14 s instead. Kill a dog and its pack-mates come for the killer.
 - **Sky vulture** dives on you, wild dogs, rhinos and every prey species — but **never** a lion, gorilla or
   elephant. Nothing on the ground can hit it back while it's high (it flees the ground and can't be melee'd
-  up there), and it retreats to heal rather than die in the air.
-- **Giant serpents** hunt prey + you and fight back when attacked. The **sand python** additionally
-  **constricts elephants, gorillas and rhinos** (100 dmg/s) — the only animal that can kill a big three
-  outright in seconds — and **tree-grabs** you like the gorilla. The **pink worm** just bites, but nothing
-  outruns it. Both **grow a segment per kill** and both **sleep through midday**.
+  up there), and it retreats to heal rather than die in the air. A pack it rakes will mob it — but only once
+  it lands.
+- **Giant serpents** hunt prey + you, and **fight back against every attacker**. The **sand python**
+  additionally **constricts elephants, gorillas and rhinos** (100 dmg/s) — the only animal that can kill a
+  big three outright in seconds — and **tree-grabs** you like the gorilla. The **pink worm** just bites, but
+  nothing outruns it. The **black cobra** doesn't chase at all — it drops on you out of a tree and poisons
+  you. All three **grow a segment per kill**, **hit harder for every segment**, and **sleep through midday**.
 - **Prey** (zebra→kudu, giraffe) just flee — except a cornered **warthog** gores back. They also flee the
   giant serpents and scatter when a vulture dives.
 - **Everything reheals at each day/night turn**, so bring enough firepower to finish a fight in one round.

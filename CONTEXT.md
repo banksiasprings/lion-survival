@@ -560,6 +560,9 @@ reset cycling), so the logic was verified headless via `update*(dt)` and the mes
   clip a high vulture (brief lists it as a ranged weapon that reaches the air). Nothing else rebalanced.
 
 ## Serpent split: sand python + pink worm, wrap, tree-grab, siesta & growth (2026-07-21)
+> *Superseded in part by the 2026-07-27 section below: a third variant (black cobra) was added, the
+> 50/50 variant pick and the 1-per-5-days cadence were replaced by per-variant rolls on day 1 and day 5,
+> and bite damage now scales with grown length.*
 The single 🐍 giant snake became **two variants off one module** (`SNAKE` shared config + `SNAKE_VARIANTS`
 table; `S.v` is the per-snake variant record). Everything else in the module — the delay-buffer body, the
 container-Group/`killObj` disposal, `projHitSnake`, the HP-bar-on-the-head trick, the collapse death — is
@@ -626,5 +629,85 @@ unchanged and now shared by both. **Lion AI untouched.**
   deliberate (Steven's spec) but does mean a python can strip the map of gorillas/rhinos on its own;
   (e) interpretive call: "day cycle progress 45–55%" was read as **45–55% through the daylight half**
   (≈11:00 in-game = actual midday), not 45–55% of the full 240 s cycle (which would be dusk).
+
+## Black cobra + venom, length-scaled bites & universal counter-attack (2026-07-27)
+Four changes, one commit. The serpent module went from two variants to three; the combat web went from
+"everything attacks the player" to "everything attacks whatever attacks it". **Pink worm untouched** —
+its mesh fingerprint (every geometry type + parameter + material colour/opacity/shininess, 20 parts)
+hashes identically to the pre-change build, verified by A/B in the same browser.
+- **Bite damage scales with grown length.** `snakeBiteDmg(S) = S.v.BITE_DMG + S.growth` — one helper, used
+  by every bite the serpent lands (player, prey, and the new creature bites). +1 damage per segment grown
+  past the starting 14; measured 40→45 at +5 segments, 40→76 at the 50-segment cap (python 50→86, cobra
+  5→41). **`WRAP_DPS` (100) and `GRAB_DMG` (50) deliberately do NOT scale** — they're separate tuned
+  mechanics with their own pacing, not bites.
+- **☠️ Black cobra (`SNAKE_VARIANTS.cobra`).** Near-black `MeshPhongMaterial` body over a **blue belly**
+  strip boxed under every segment (the cobra branch in `addSnakeSegment`, replacing the python's dorsal
+  blotch), yellow eyes/tongue, and a **HOOD**: an upright fan of five thin plates hinged at the nape on a
+  `THREE.Group`, each rotated about Z so they radiate up and out, every plate carrying a blue skin on its
+  forward (+Z) face. `tickSnakeHood` eases one Group scale — `(0.30+h*0.82, 0.45+h*0.70, 1)` — so it snaps
+  open in ~0.22 s as it commits and folds slowly after. *(First cut laid the ribs flat and the flare read
+  as a plank; caught by the offline render, rebuilt as the vertical fan. `dossiers/render_cobra.py` →
+  `dossiers/cobra_render.png`.)* HP 300, `BITE_DMG 5`, `SPEED_HUNT 14` — a sprint leaves it behind, which
+  is the point: it doesn't chase.
+- **TREE DROP-AMBUSH** (`AMBUSH_TRAVEL` / `AMBUSH_COIL`, cobra only). `pickAmbushTree` scores climbable
+  trees by canopy size, closeness to the player and closeness to the serpent, skipping the player's own
+  shelter tree; the cobra travels there, and `layoutSnakeCoil` (the same helper the wrap and the siesta
+  use) winds it round the canopy at `terrainY + perchY`. `S.pos` — the head, which drives aim/minimap/
+  hitbox — sits at perch height, so ranged must be aimed *up* at it. Player walks inside
+  `canopyR + AMBUSH_DROP_R` → it drops onto them, uncoils and bites on landing, hood snapping wide.
+  22 s cooldown. Minimap draws a treed cobra as a **hollow ring** rather than a dot.
+- **☠️ VENOM (`VENOM` / `applyVenom` / `cureVenom`, ticked in `updateHealth`).** `player.poisonT` seconds.
+  Drains `VENOM_DPS` (`(maxHealth-1)/60` ≈ 1.65 HP/s) to a hard floor of **1 HP** in 60 s, then holds
+  there for the rest of `venomDuration()` = one full in-game day (`CYCLE`, 240 s). Regen blocked
+  throughout. A re-bite refreshes the clock, never stacks the dps. **Cure: wade into the watering hole**
+  (thematic and dangerous — it's where the pride drinks and serpents bed down) or burn a **Healing Herb**.
+  HUD: the health bar goes pulsing venom-green + `☠️ POISONED Xs` in `#topright`.
+  ⚠ **The floor is guarded on `player.health > FLOOR` before the `Math.max`.** A bare `Math.max(1, …)`
+  *resurrects* a player already knocked below 1 by something else — caught in test, fixed; venom alone
+  now never kills, but a dog bite on a poisoned player does (verified `gameState → 'over'`).
+  ⚠ `venomDuration()` is a **function**, not `DUR: CYCLE` baked into the literal: `CYCLE` is declared ~1900
+  lines further down with the day/night clock, so a direct reference is a **TDZ ReferenceError at load**
+  that silently kills the whole bootstrap. (It did. That's why it's a function.)
+- **Universal counter-attack.** The pattern already used by the lions (tag `lastHitBy`/`lastHitKind` at the
+  damage site, raise the grudge from ONE HP-drop watchdog) is now applied to every fighter, so no attack
+  path present or future can skip retaliation:
+  - **Serpents** gained `lastHitBy`/`lastHitKind` + a watchdog that turns the tag into a target. New
+    `snakeFoeValid` leashes creature grudges (34 m). `snakeBite` gained a single `else` branch covering
+    lion/gorilla/rhino/dog that wounds, staggers, and tags the victim's own retaliation hook.
+  - **Wild dogs** gained `dogPackThreat` (`alertDogPack`/`dogThreatValid`) — the creature-facing sibling of
+    `wildDogsVendetta`. Any HP a dog loses to a tagged creature turns the whole pack on it for 14 s. They
+    also now proactively mob a serpent within `HUNT_SNAKE_RANGE` 18 (shorter than the 26 prey hunt, so it
+    reads as "we ran into it"). **The lion skirmish stays a skirmish**: its self-damage is hidden from the
+    new pack watchdog by `D._prevHealth -= DOG.LION_NIP`, mirroring the existing lion-side hide.
+  - **Lions** gained `fight_snake` (mirrors `fight_rhino` exactly — the FSM only closes to contact,
+    `updateSnakes` applies `SNAKE.LION_DPS` 9/lion) + `'snake'` as a `prideThreat` kind. A serpent up an
+    ambush tree is excluded everywhere via `nearestSnake`/the vendetta gate.
+  - **Gorilla** foe-scan + engage-validity + swipe branch now include serpents and dogs, and its
+    `RETALIATE` override is no longer gated to `lionMeshes` — anything that draws blood gets hunted.
+  - **Rhino** gained `'snake'`/`'dog'` target kinds; `rhinoSmack` tags every victim kind.
+  - **Elephant** gained a real grudge: `_foe`/`_foeKind`/`_foeT` (`ELE.GRUDGE` 12 s, `GRUDGE_LEASH` 45)
+    set by an HP-drop watchdog and **overriding the nearest-threat pick**. Dogs and serpents are
+    retaliation-only targets — the bull answers them, it doesn't go looking for them. Verified: it ignores
+    a lion 2 m away and charges 20 m at the dog that actually bit it.
+- **Spawn scheme.** `SNAKE.MAX 2 → 6`, `SPAWN_EVERY` replaced by `SPAWN_CHANCE 0.30`. `rollSnakeSpawns`
+  runs **one independent roll per variant** (not "pick one of three") and fires on **day 1 and day 5
+  only** — the old 5-day cadence and `dn.nextSnakeDay` are gone. Measured over 20 000 rolls: 0 snakes
+  34.9% / 1 → 44.0% / 2 → 18.6% / 3 → 2.5%, **mean 0.887**; each variant lands 29.5%. Eight real fresh
+  runs gave `[python,cobra] [] [] [worm] [cobra] [cobra] [] [python,cobra]`. Days 2,3,4,6,7,8,9 add none.
+- **Disposal:** the hood, the belly strips and every grown segment are children of the one container
+  Group, so `killObj(S.mesh)` still frees the lot. Verified 0 orphan objects/geometries/textures over
+  repeated spawn→dispose cycles, through both `killObj` and the real death-collapse path, with the HP
+  bars forced visible so their CanvasTextures were actually uploaded. (Cycle 1 shows a one-off delta —
+  that's the shared `userData.keep` sprite geometry uploading, not a leak; cycles 2 and 3 are 0/0/0.)
+- **⚠ Balance (report, not silently tuned):** (a) a serpent that feeds all run is a different animal —
+  a worm hit the 50-segment cap by day 6 in an earlier soak, which now means a 76-damage bite; (b) wild
+  dogs mobbing serpents is a slaughter in the serpent's favour (a python one-shots a 25-HP dog) — kept,
+  because it's what the ethology implies and the pack grudge is the point; (c) the elephant's grudge makes
+  it markedly more dangerous to poke; (d) the cobra's venom is the first status effect in the game and the
+  first thing that can make an *unrelated* animal lethal. **A/B soak (480 s, passive player at the map
+  centre) shows lion attrition is IDENTICAL with and without serpents** (6 → 0–2 either way) — the pride
+  being ground down by the gorilla/rhino/dog ecosystem is pre-existing, not caused by these changes.
+  Interpretive calls: cobra killfeed icon is ☠️ (no cobra emoji exists); venom cure = water + herb;
+  drop-ambush chosen over strike-from-branch; `SNAKE.MAX` raised to 6 so "all three at once, twice" fits.
 
 Each phase is an independent commit so it can be iterated in isolation.

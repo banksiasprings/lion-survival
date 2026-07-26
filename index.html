@@ -1438,6 +1438,7 @@ function initPlayer(){
     inTree: false, climbing: false,   // Phase 4 grapple/perch state
     _grappleCd: 0,                     // re-grapple cooldown after dropping
     hunger: PLAYER.maxHunger, _pounceCd: 0,   // Phase 6 food chain
+    poisonT: 0,                        // cobra venom: seconds left (see VENOM / updateHealth)
   };
   camera.position.copy(player.pos);
   camera.position.y += PLAYER.eyeHeight;
@@ -1853,7 +1854,34 @@ function updateHealth(dt){
     });
   }
   player.inDanger = veryNear;
-  if(!nearLion && player.hunger > 0){   // no regen on an empty stomach
+
+  // ---- COBRA VENOM ----
+  // Bleeds you down to exactly 1 HP over VENOM.TTF seconds and then pins you
+  // there for the rest of the in-game day: never fatal by itself, but it strips
+  // your whole buffer, so the very next lion, dog or trample finishes you.
+  // Regen is blocked for the entire duration — otherwise it would just cancel out.
+  let poisoned = (player.poisonT||0) > 0;
+  if(poisoned){
+    player.poisonT -= dt;
+    // The FLOOR only stops the VENOM from being the thing that kills you — it must
+    // never RAISE your health. Guarding on `> FLOOR` first is load-bearing: a bare
+    // Math.max() would resurrect a player already knocked below 1 by a lion's bite.
+    if(player.health > VENOM.FLOOR){
+      player.health = Math.max(VENOM.FLOOR, player.health - VENOM_DPS*dt);
+    }
+    // WATER IS THE CURE — wade into the watering hole and it flushes out. That's
+    // the pride's drinking spot and the serpents' midday bank, so the trek there
+    // on 1 HP is the price.
+    if(wateringHole && Math.hypot(player.pos.x-wateringHole.x, player.pos.z-wateringHole.z) < wateringHole.r){
+      cureVenom('💧 You wade into the water — the venom washes out');
+      poisoned = false;
+    } else if(player.poisonT <= 0){
+      player.poisonT = 0; poisoned = false;
+      showKillfeed('☠️ The venom has run its course');
+    }
+  }
+
+  if(!nearLion && !poisoned && player.hunger > 0){   // no regen on an empty stomach or with venom in you
     player.health = Math.min(PLAYER.maxHealth, player.health + PLAYER.healthRegen*EQUIP.healthRegenMul*dt);
   }
   if(player.health <= 0){
@@ -2196,11 +2224,13 @@ function updateLions(dt){
       const pt = (prideThreat.timer>0 && prideThreat.ent) ? prideThreat : null;
       const ptOk = pt && (pt.kind!=='player' || !player.inTree)
                       && (pt.kind!=='gorilla' || (pt.ent.state!=='perched' && pt.ent.state!=='sleeping'))
+                      && (pt.kind!=='snake' || (!pt.ent.dying && pt.ent.state!=='AMBUSH_COIL'))   // a serpent up a tree is out of reach
                       && lpos.distanceTo(pt.ent.pos) < 60;
       if(ptOk){
         if(pt.kind==='player'){ L.state='chase'; prideAlert.pos.copy(ppos); prideAlert.timer=9; }
         else if(pt.kind==='gorilla'){ L.state='fight_gorilla'; L._gorTarget=pt.ent; }
         else if(pt.kind==='rhino'){ L.state='fight_rhino'; L._rhinoTarget=pt.ent; }
+        else if(pt.kind==='snake'){ L.state='fight_snake'; L._snakeTarget=pt.ent; }
         else { L.state='mob'; L._mobTarget=pt.ent; }              // elephant / other big prey
       } else if(dist < detR){
         L.state = 'chase';
@@ -2213,6 +2243,10 @@ function updateLions(dt){
         L.state = 'fight_rhino';                            // mob a nearby rhino (big prey that fights back)
       } else if(L.state==='fight_rhino'){
         L.state = 'wander';                                 // rhino gone/out of reach
+      } else if(snakeMeshes.length && (L._snakeTarget=nearestSnake(lpos,14)) && L._snakeTarget.health>0){
+        L.state = 'fight_snake';                            // mob a nearby serpent — it bites back hard
+      } else if(L.state==='fight_snake'){
+        L.state = 'wander';                                 // serpent gone/dead/up a tree
       } else if(L.state==='chase'){
         // fed lions give up sooner; hungry ones commit further
         const giveUp = dist > HALF || (L.hunger < 28 && dist > 26) || dist > 40;
@@ -2242,12 +2276,13 @@ function updateLions(dt){
       campfires.forEach(f=>{ const d=L.pos.distanceTo(f.pos); if(d<m){m=d;nf=f;} });
       if(nf) dir.copy(L.pos).sub(nf.pos).normalize();
     } else if(L.state==='flee_hurt'){
-      // run directly away from the nearest threat (player / gorilla / rhino)
+      // run directly away from the nearest threat (player / gorilla / rhino / serpent)
       let tx=0,tz=0,bd=Infinity,found=false;
       const consider=p=>{ const d=Math.hypot(p.x-lpos.x,p.z-lpos.z); if(d<bd){bd=d;tx=p.x;tz=p.z;found=true;} };
       if(!player.inTree) consider(player.pos);
       gorillaMeshes.forEach(G=>{ if(G.health>0&&G.state!=='perched'&&G.state!=='sleeping') consider(G.pos); });
       rhinoMeshes.forEach(R=>{ if(R.health>0) consider(R.pos); });
+      snakeMeshes.forEach(S=>{ if(S.health>0 && !S.dying && S.state!=='AMBUSH_COIL') consider(S.pos); });
       if(found){ dir.set(lpos.x-tx,0,lpos.z-tz); if(dir.lengthSq()<0.01) dir.copy(L.wanderDir); dir.normalize(); }
       else dir.copy(L.wanderDir);
     } else if(L.state==='chase'){
@@ -2268,6 +2303,11 @@ function updateLions(dt){
       const Rh=L._rhinoTarget;
       if(Rh && Rh.health>0){ dir.copy(Rh.pos).sub(lpos); dir.y=0;
         if(dir.length()<=2.2) dir.set(0,0,0); else dir.normalize(); }   // close in & hold; the rhino loop deals the bite + gores back
+      else L.state='wander';
+    } else if(L.state==='fight_snake'){
+      const Sn=L._snakeTarget;
+      if(Sn && Sn.health>0 && !Sn.dying && Sn.state!=='AMBUSH_COIL'){ dir.copy(Sn.pos).sub(lpos); dir.y=0;
+        if(dir.length()<=2.4) dir.set(0,0,0); else dir.normalize(); }   // close in & hold; updateSnakes deals the bite + the serpent strikes back
       else L.state='wander';
     } else if(L.state==='mob'){
       const M=L._mobTarget;
@@ -2343,7 +2383,7 @@ function updateLions(dt){
     } else if(L.state==='converge'){
       L.burst = clamp(L.burst + dt*0.12, 0, 1);
       speed = L.isMale ? 9 : 11;
-    } else if(L.state==='fight_gorilla' || L.state==='fight_rhino' || L.state==='mob'){
+    } else if(L.state==='fight_gorilla' || L.state==='fight_rhino' || L.state==='fight_snake' || L.state==='mob'){
       speed = L.isMale ? 10 : 12;
     } else if(L.state==='scavenge'){
       speed = L.isMale ? 7 : 8;
@@ -2591,6 +2631,8 @@ const ELE = {
   GORE: 26, GORE_STUN: 1.0,                     // vs lions / gorilla / rhino
   RAGE_TIME: 6,       // sec it stays enraged on you after you hit it (ignores stealth)
   FLEE_HP: 0.20,      // below this it finally runs
+  GRUDGE: 12,         // sec it hunts whoever actually HIT it, overriding the nearest-threat pick
+  GRUDGE_LEASH: 45,   // …as long as they stay inside this
 };
 
 // Elephant — a huge, tanky grey grazer. Custom mesh (domed head, big ears, a
@@ -2657,7 +2699,10 @@ function makePrey(key,x,z,herdId){
     health:s.hp, maxHealth:s.hp, speed:s.speed, fleeDist:s.flee, food:s.food, counter:s.counter||0,
     herdId, state:'graze', alertTimer:0, grazeTimer:rand(1,4), stunTimer:0,
     wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(),
-    legPhase:Math.random()*6.28, jukeTimer:0, jukeDir:0, hopPhase:0, flashTimer:0, _lastSpeed:0 };
+    legPhase:Math.random()*6.28, jukeTimer:0, jukeDir:0, hopPhase:0, flashTimer:0, _lastSpeed:0,
+    // Retaliation bookkeeping — only the elephant (SPECIES.fights) acts on these,
+    // but every damage site tags them uniformly so the branch stays dumb.
+    _prevHealth:s.hp, lastHitBy:null, lastHitKind:null, _foe:null, _foeKind:null, _foeT:0 };
   setHitbox(P); attachHealthBar(P); preyMeshes.push(P);
   return P;
 }
@@ -2721,7 +2766,21 @@ function updatePrey(dt){
     // ---- ELEPHANT: a tank that FIGHTS BACK (charges & tramples) instead of fleeing ----
     if(s.fights){
       P.smackCd=Math.max(0,(P.smackCd||0)-dt); P.aggroT=Math.max(0,(P.aggroT||0)-dt); P.smashWallCd=Math.max(0,(P.smashWallCd||0)-dt);
+      P._foeT=Math.max(0,(P._foeT||0)-dt);
       const lowHp = P.health < P.maxHealth*ELE.FLEE_HP;
+
+      // ---- RETALIATION WATCHDOG ----
+      // The bull used to charge whatever was NEAREST, which meant a wild dog or a
+      // serpent could chew on it from the flank forever while it lumbered at
+      // something else. Now any HP drop tagged with an attacker (lastHitBy, set at
+      // every damage site) makes that attacker the target outright, for ELE.GRUDGE
+      // seconds — it hones in on whoever actually hit it.
+      if(P.health < (P._prevHealth==null?P.health:P._prevHealth) - 0.001 && P.lastHitBy && P.lastHitBy.health!==undefined){
+        P._foe=P.lastHitBy; P._foeKind=P.lastHitKind; P._foeT=ELE.GRUDGE;
+      }
+      P._prevHealth = P.health;
+      if(P._foe && !(P._foe.health>0)) { P._foe=null; P._foeT=0; }
+
       // pick the nearest reachable threat (entity, so we can gore it)
       let tgt=null,tpos=null,tk=null,td=Infinity;
       const see=(pos,ent,k)=>{ const d=Math.hypot(pos.x-P.pos.x,pos.z-P.pos.z); if(d<td){td=d;tpos=pos;tgt=ent;tk=k;} };
@@ -2731,6 +2790,14 @@ function updatePrey(dt){
       // the player counts when close & exposed (crouch/grass hide you) OR while it's enraged at you
       if(!player.inTree){ const pd=Math.hypot(player.pos.x-P.pos.x,player.pos.z-P.pos.z);
         if(P.aggroT>0 || pd < ELE.AGGRO*stealth.visMul) see(player.pos,player,'player'); }
+      // A live grudge OVERRIDES the nearest-threat pick — dogs and serpents are only
+      // ever targets this way (the bull doesn't go looking for them, it answers them).
+      if(P._foeT>0 && P._foe && P._foe.health>0){
+        const fp = P._foe===player ? player.pos : P._foe.pos;
+        if(Math.hypot(fp.x-P.pos.x,fp.z-P.pos.z) < ELE.GRUDGE_LEASH){
+          tgt=P._foe; tpos=fp; tk=P._foeKind; td=Math.hypot(fp.x-P.pos.x,fp.z-P.pos.z);
+        }
+      }
 
       let dir=new THREE.Vector3(), moving=false, spd=0;
       if(lowHp && tgt){                                   // near death → run from the threat
@@ -2748,11 +2815,14 @@ function updatePrey(dt){
               player.knockback.x=(ax/al)*ELE.KB; player.knockback.z=(az/al)*ELE.KB;
               shakeTime=Math.max(shakeTime,0.5); shakeAmt=0.012; playSound('spotted'); showKillfeed('🐘 The elephant tramples you!');
             } else { tgt.health-=ELE.GORE; tgt.flashTimer=0.25; tgt.stunTimer=Math.max(tgt.stunTimer||0,ELE.GORE_STUN);
-              // the victim FIGHTS BACK — it turns on the elephant
+              // the victim FIGHTS BACK — it turns on the elephant. Every kind it can
+              // trample has a route back at it; none is trampled with impunity.
               if(tk==='rhino'){ tgt.target=P; tgt.targetKind='prey'; tgt.aggroTimer=RHINO.AGGRO_TIME; }
               else if(tk==='gorilla' && tgt.target!==P){ tgt.state='engaging'; tgt.phase='rush'; tgt.target=P; tgt.swung=false; tgt.perchTree=null; tgt.perchPos=null; }
               else if(tk==='lion'){ tgt.lastHitBy=P; tgt.lastHitKind='elephant'; }   // → pride-retaliation watchdog mobs the elephant
-              if(tgt.health<=0) showKillfeed('🐘 The elephant tramples a '+tk); }
+              else if(tk==='snake'){ tgt.lastHitBy=P; tgt.lastHitKind='prey'; }      // → serpent watchdog (targetKind 'prey' == the bull)
+              else if(tk==='dog'){ tgt.lastHitBy=P; tgt.lastHitKind='prey'; }        // → pack grudge converges on the bull
+              if(tgt.health<=0) showKillfeed('🐘 The elephant tramples a '+(tk==='snake'?tgt.v.label:tk)); }
             P.smackCd=ELE.SMACK_CD;
           }
         }
@@ -3381,6 +3451,7 @@ function updateGorillas(dt){
       if(!player.inTree) consider(player.pos);
       lionMeshes.forEach(L=>{ if(L.health>0) consider(L.pos); });
       rhinoMeshes.forEach(R=>{ if(R.health>0) consider(R.pos); });
+      snakeMeshes.forEach(S=>{ if(S.health>0 && !S.dying && S.state!=='AMBUSH_COIL') consider(S.pos); });
       G.state='fleeing'; G.target=null; G.perchTree=null; G.perchPos=null;
       if(found){ const ax=gpos.x-tx, az=gpos.z-tz, al=Math.hypot(ax,az)||1; gorillaMoveToward(G, gpos.x+(ax/al)*10, gpos.z+(az/al)*10, GOR.SPEED_DROP, dt); }
       animateGorilla(G, dt, 1.4);
@@ -3401,6 +3472,8 @@ function updateGorillas(dt){
     let foe=lion, fd=ld;
     rhinoMeshes.forEach(R=>{ if(R.health<=0) return; const d = R.pos.distanceTo(gpos); if(d < fd){ fd = d; foe = R; } });
     preyMeshes.forEach(P=>{ if(P.species!=='elephant' || P.health<=0) return; const d = P.pos.distanceTo(gpos); if(d < fd){ fd = d; foe = P; } });  // a rampaging elephant is a foe too
+    // …and a serpent on the ground. (One coiled up an ambush tree is out of reach.)
+    snakeMeshes.forEach(S=>{ if(S.health<=0 || S.dying || S.state==='AMBUSH_COIL') return; const d = S.pos.distanceTo(gpos); if(d < fd){ fd = d; foe = S; } });
 
     // The pride bites back: lions pressed against a GROUNDED gorilla wear it down
     // (a perched/sleeping gorilla is up its tree, out of reach). Its swipes punish
@@ -3424,8 +3497,12 @@ function updateGorillas(dt){
     // fires while the bite is fresh (RETALIATE_WINDOW) and the attacker is
     // within leash — so with no lions on it, the player-hunting behaviour
     // below is untouched.
+    // Broadened 2026-07-27: the attacker no longer has to be a LION. Anything that
+    // draws blood and is still on the map — lion, serpent, wild dog — gets hunted.
     const atk = G.lastDamagedBy;
-    if(atk && atk.health > 0 && lionMeshes.includes(atk)
+    const atkLive = atk && (lionMeshes.includes(atk) || dogMeshes.includes(atk)
+                            || (snakeMeshes.includes(atk) && !atk.dying && atk.state!=='AMBUSH_COIL'));
+    if(atk && atk.health > 0 && atkLive
        && (elapsed - G.lastDamageTime) < GOR.RETALIATE_WINDOW
        && Math.hypot(atk.pos.x-gpos.x, atk.pos.z-gpos.z) < GOR.RETALIATE_LEASH
        && (G.state!=='engaging' || G.target!==atk)){
@@ -3475,7 +3552,9 @@ function updateGorillas(dt){
     if(G.state === 'engaging'){
       const tgt = G.target;
       // target down/gone, or it broke the leash → stand down, back to mood state
-      if(!tgt || tgt.health <= 0 || !(lionMeshes.includes(tgt) || rhinoMeshes.includes(tgt) || preyMeshes.includes(tgt))
+      if(!tgt || tgt.health <= 0
+         || !(lionMeshes.includes(tgt) || rhinoMeshes.includes(tgt) || preyMeshes.includes(tgt)
+              || dogMeshes.includes(tgt) || (snakeMeshes.includes(tgt) && !tgt.dying && tgt.state!=='AMBUSH_COIL'))
          || tgt.pos.distanceTo(gpos) > GOR.LION_DETECT*1.7){
         G.target = null; G.swung = false; G.phase = 'rush';
         G.state = isNight ? 'perched' : 'roaming';
@@ -3509,7 +3588,13 @@ function updateGorillas(dt){
             tgt.target = G; tgt.targetKind = 'gorilla'; tgt.aggroTimer = RHINO.AGGRO_TIME;
             showKillfeed('🦍 Gorilla swiped the rhino');
           } else if(lionMeshes.includes(tgt)){ tgt.lastHitBy=G; tgt.lastHitKind='gorilla'; showKillfeed('🦍 Gorilla swiped a lion'); }
-          else { showKillfeed('🦍 Gorilla swiped the '+(tgt.label||'beast')); }   // e.g. the elephant (it fights back on its own)
+          else if(snakeMeshes.includes(tgt)){                      // hit a serpent → its watchdog turns it on the gorilla
+            tgt.lastHitBy=G; tgt.lastHitKind='gorilla';
+            showKillfeed(tgt.health<=0 ? '🦍 Gorilla beat the '+tgt.v.label+' to death!' : '🦍 Gorilla swiped the '+tgt.v.label);
+          } else if(dogMeshes.includes(tgt)){                      // hit a dog → the whole pack turns on the gorilla
+            tgt.lastHitBy=G; tgt.lastHitKind='gorilla';
+            showKillfeed(tgt.health<=0 ? '🦍 Gorilla crushed a wild dog!' : '🦍 Gorilla swiped a wild dog');
+          } else { showKillfeed('🦍 Gorilla swiped the '+(tgt.label||'beast')); }   // e.g. the elephant (it fights back on its own)
           if(td < 18){ shakeTime = Math.max(shakeTime,0.16); shakeAmt = 0.004; }
         }
         playSound('throw');
@@ -3714,6 +3799,16 @@ function nearestRhino(pos, maxD){
   for(const R of rhinoMeshes){ if(R.health<=0) continue; const d=pos.distanceTo(R.pos); if(d<bd){ bd=d; best=R; } }
   return best;
 }
+// Nearest LIVE, non-collapsing serpent to a point (lions' fight_snake targeting).
+// A serpent lying up in a tree (the cobra's ambush coil) is out of a lion's reach.
+function nearestSnake(pos, maxD){
+  let best=null, bd=maxD||Infinity;
+  for(const S of snakeMeshes){
+    if(S.health<=0 || S.dying || S.state==='AMBUSH_COIL') continue;
+    const d=pos.distanceTo(S.pos); if(d<bd){ bd=d; best=S; }
+  }
+  return best;
+}
 
 function animateRhino(R, dt, gait){
   R.legPhase += dt*(3 + (gait||0)*3.5);
@@ -3762,6 +3857,8 @@ function rhinoTargetValid(R){
   if(R.targetKind==='lion')    return lionMeshes.includes(t) && t.health>0;
   if(R.targetKind==='gorilla') return gorillaMeshes.includes(t) && t.health>0 && t.state!=='perched' && t.state!=='sleeping';
   if(R.targetKind==='prey')    return preyMeshes.includes(t) && t.health>0;   // e.g. a rampaging elephant
+  if(R.targetKind==='snake')   return snakeMeshes.includes(t) && t.health>0 && !t.dying && t.state!=='AMBUSH_COIL';
+  if(R.targetKind==='dog')     return dogMeshes.includes(t) && t.health>0;
   return false;
 }
 
@@ -3780,8 +3877,12 @@ function rhinoSmack(R){
     showKillfeed('🦏 The rhino gores you!');
   } else if(t){
     t.health -= RHINO.GORE_DMG; t.flashTimer=0.25; t.stunTimer=Math.max(t.stunTimer||0, RHINO.GORE_STUN);
-    if(R.targetKind==='lion'){ t.lastHitBy=R; t.lastHitKind='rhino'; }   // gored a lion → the pride-retaliation watchdog mobs it
-    if(t.health<=0) showKillfeed('🦏 The rhino gored a '+(R.targetKind==='prey'?(t.label||'beast'):R.targetKind)+'!');
+    // Tag the victim so ITS retaliation hook turns it back on the rhino. Every
+    // creature the rhino can gore now has a route back at it.
+    if(R.targetKind==='lion' || R.targetKind==='snake' || R.targetKind==='dog' || R.targetKind==='prey'){
+      t.lastHitBy=R; t.lastHitKind='rhino';                              // → pride / serpent / pack / elephant watchdog
+    }
+    if(t.health<=0) showKillfeed('🦏 The rhino gored a '+(R.targetKind==='prey'?(t.label||'beast'):R.targetKind==='snake'?t.v.label:R.targetKind)+'!');
   }
 }
 
@@ -3902,6 +4003,9 @@ const DOG = {
   LEASH: 40,              // baseline give-up range (VENDETTA ignores the leash entirely)
   TURN: 7,                // nimble — turns quickly
   HUNT_PREY_RANGE: 26,    // grabs the nearest prey inside this while roaming
+  HUNT_SNAKE_RANGE: 18,   // the pack WILL take on a serpent it finds this close (it bites back hard)
+  SNAKE_BITE: 14,         // dmg per bite to a serpent (pack damage — several dogs at once adds up)
+  GRUDGE_TIME: 14,        // sec the pack hunts a NON-player creature that hurt one of them
   SKIRMISH_RANGE: 3.4,    // nips an adjacent lion this close (incidental — dogs don't SEEK lions)
   SKIRMISH_CD: 1.6,
   DOG_NIP: 3,             // dmg a dog does to a lion (small — a skirmish, not a war)
@@ -3983,6 +4087,8 @@ function makeWildDog(x, z){
     health:DOG.HEALTH, maxHealth:DOG.HEALTH,
     heading:rand(0,Math.PI*2), biteCd:rand(0,DOG.BITE_CD), skirmishCd:0,
     stunTimer:0, flashTimer:0, _preyTarget:null,
+    _prevHealth:DOG.HEALTH, lastHitBy:null, lastHitKind:null,   // pack-grudge watchdog (see alertDogPack)
+    _foe:null, _foeKind:null,                                   // creature it's currently biting (snake / grudge target)
     wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(), wanderTimer:rand(1,3),
     legPhase:Math.random()*Math.PI*2,
   };
@@ -3992,6 +4098,31 @@ function makeWildDog(x, z){
 }
 
 function spawnWildDog(){ const a=rand(0,Math.PI*2), r=rand(55,95); makeWildDog(clamp(player.pos.x+Math.cos(a)*r,-MAPR,MAPR), clamp(player.pos.z+Math.sin(a)*r,-MAPR,MAPR)); }
+
+// ---- PACK GRUDGE (creature version of wildDogsVendetta) --------------------
+// wildDogsVendetta is the PLAYER vendetta: permanent, ends only when the pack is
+// wiped. This is its predator-vs-predator sibling — when anything that ISN'T the
+// player wounds a dog, the whole pack turns on that creature for GRUDGE_TIME.
+// Kill a dog and its pack-mates come for you: that's the "hone in on what killed
+// me" mechanic extended off the player and onto every other animal.
+let dogPackThreat = { ent:null, kind:null, timer:0 };
+function alertDogPack(ent, kind){
+  if(!ent || !(ent.health>0)) return;
+  dogPackThreat.ent=ent; dogPackThreat.kind=kind; dogPackThreat.timer=DOG.GRUDGE_TIME;
+}
+// Is the pack's current grudge still worth chasing? (alive, still in its list)
+function dogThreatValid(){
+  const t=dogPackThreat.ent, k=dogPackThreat.kind;
+  if(dogPackThreat.timer<=0 || !t || !(t.health>0)) return false;
+  if(k==='snake')   return snakeMeshes.includes(t) && !t.dying;
+  if(k==='lion')    return lionMeshes.includes(t);
+  if(k==='gorilla') return gorillaMeshes.includes(t) && t.state!=='perched' && t.state!=='sleeping';
+  if(k==='rhino')   return rhinoMeshes.includes(t);
+  if(k==='prey')    return preyMeshes.includes(t);
+  // A raptor that raked one of them is only worth chasing once it's on the ground.
+  if(k==='skyvulture') return skyVultureMeshes.includes(t) && t.state==='LANDED';
+  return false;
+}
 
 function animateDog(D, dt, gait){
   D.legPhase += dt*(7 + (gait||0)*7);   // quick canid turnover
@@ -4036,8 +4167,21 @@ function dogBite(D, what){
   } else if(what==='prey' && D._preyTarget && D._preyTarget.health>0){
     const P=D._preyTarget;
     P.health -= DOG.PREY_BITE; P.flashTimer=0.2; P.state='flee'; P.alertTimer=3;
-    if(P.species==='elephant') P.aggroT = ELE.RAGE_TIME;
+    // A bull elephant doesn't flee a dog — it turns and hunts the one that bit it.
+    if(P.species==='elephant'){ P.aggroT = ELE.RAGE_TIME; P.lastHitBy=D; P.lastHitKind='dog'; }
     if(P.health<=0) showKillfeed('🐕 The pack pulls down a '+P.label+'!');
+  } else if(what==='creature' && D._foe && D._foe.health>0 && !D._foe.dying){
+    // Taking on another predator — a serpent it found, or whatever the pack holds
+    // a grudge against. Every branch TAGS the victim so ITS own retaliation hook
+    // turns it back on this dog: the pack never gets a free hit.
+    const T=D._foe, k=D._foeKind;
+    T.health -= DOG.SNAKE_BITE; T.flashTimer=0.2;
+    if(k==='snake'){ T.lastHitBy=D; T.lastHitKind='dog';
+      if(T.health<=0) showKillfeed('🐕 The pack brought down the '+T.v.label+'!'); }
+    else if(k==='rhino'){ T.target=D; T.targetKind='dog'; T.aggroTimer=RHINO.AGGRO_TIME; }
+    else if(k==='gorilla'){ T.lastDamagedBy=D; T.lastDamageTime=elapsed; }
+    else if(k==='prey'){ T.lastHitBy=D; T.lastHitKind='dog'; if(T.species==='elephant') T.aggroT=ELE.RAGE_TIME; }
+    else if(k==='lion'){ T.lastHitBy=D; T.lastHitKind='dog'; }
   }
 }
 
@@ -4048,9 +4192,23 @@ function updateWildDogs(dt){
   // Pack centroid — dogs drift toward it when roaming so they stay a loose pack.
   let cx=0,cz=0; if(dogMeshes.length){ dogMeshes.forEach(D=>{ cx+=D.pos.x; cz+=D.pos.z; }); cx/=dogMeshes.length; cz/=dogMeshes.length; }
 
+  // Pack grudge decay + validity (see alertDogPack).
+  if(dogPackThreat.timer>0) dogPackThreat.timer -= dt;
+  if(!dogThreatValid()){ dogPackThreat.ent=null; dogPackThreat.kind=null; dogPackThreat.timer=0; }
+
   dogMeshes.forEach(D=>{
     D.biteCd=Math.max(0,D.biteCd-dt); D.skirmishCd=Math.max(0,D.skirmishCd-dt);
     if(D.flashTimer>0){ D.flashTimer-=dt; const f=D.flashTimer>0; D.mesh.children.forEach(c=>{ if(c.isMesh) c.material=f?FLASH_MAT:c.userData.origMat; }); }
+
+    // ---- PACK GRUDGE WATCHDOG ----
+    // Any HP this dog lost since last frame to a tagged creature raises the whole
+    // pack's grudge. One place, so no attack path — snake bite, elephant trample,
+    // rhino gore, present or future — can silently skip the pack's retaliation.
+    // (Player damage uses wildDogsVendetta and is set inline at the damage site.)
+    if(D.health < (D._prevHealth==null?D.health:D._prevHealth) - 0.001 && D.lastHitBy){
+      alertDogPack(D.lastHitBy, D.lastHitKind);
+    }
+    D._prevHealth = D.health;
 
     // STUNNED by a rock — brief freeze.
     if((D.stunTimer||0)>0){ D.stunTimer-=dt; D.pos.y=terrainY(D.pos.x,D.pos.z); D.mesh.position.copy(D.pos); animateDog(D,dt,0); return; }
@@ -4064,9 +4222,10 @@ function updateWildDogs(dt){
       lionMeshes.forEach(L=>{ if(L.health<=0) return; const d=L.pos.distanceTo(D.pos); if(d<ld){ ld=d; lion=L; } });
       if(lion){
         lion.health -= DOG.DOG_NIP; lion.flashTimer=Math.max(lion.flashTimer||0,0.2);
-        if(lion._prevHealth!=null) lion._prevHealth -= DOG.DOG_NIP;   // keep this off the vendetta watchdog
+        if(lion._prevHealth!=null) lion._prevHealth -= DOG.DOG_NIP;   // keep this off the pride watchdog
         D.health -= DOG.LION_NIP; D.flashTimer=0.2; D.skirmishCd=DOG.SKIRMISH_CD;
-      }
+        if(D._prevHealth!=null) D._prevHealth -= DOG.LION_NIP;        // …and off the PACK watchdog, symmetrically
+      }                                                               // (a skirmish stays a skirmish, never a war)
     }
 
     // ---- Pick a target ----
@@ -4074,6 +4233,13 @@ function updateWildDogs(dt){
     if(wildDogsVendetta){
       // BERSERK: straight at the player, relentless — ignore hunger, danger, day/night, leash.
       tgtPos=player.pos; chaseSpd=DOG.SPEED_CHASE; biteWhat='player'; leashed=false;
+    } else if(dogPackThreat.ent){
+      // PACK GRUDGE: a creature wounded one of us → the whole pack converges on it
+      // and bites it, whatever it is. This is the vendetta mechanic pointed at
+      // another animal instead of the player.
+      const T=dogPackThreat.ent;
+      tgtPos=T.pos; chaseSpd=DOG.SPEED_CHASE; leashed=false;
+      biteWhat='creature'; D._foe=T; D._foeKind=dogPackThreat.kind;
     } else if(D.health < D.maxHealth*DOG.FLEE_HP){
       // Hurt (and not avenging the pack) → give ground from the nearest lion / exposed player.
       let fx=0,fz=0,bd=Infinity,found=false;
@@ -4083,10 +4249,19 @@ function updateWildDogs(dt){
       if(found && bd<16){ const ax=D.pos.x-fx, az=D.pos.z-fz, al=Math.hypot(ax,az)||1; dogStep(D, D.pos.x+ax/al*10, D.pos.z+az/al*10, DOG.SPEED_CHASE, dt); animateDog(D,dt,1.5); return; }
       // nothing close → fall through to roam
     } else {
-      // Cautiously hunt an exposed player (crouch-in-grass shrinks DETECT), else the nearest prey.
+      // Cautiously hunt an exposed player (crouch-in-grass shrinks DETECT), else a
+      // serpent it has stumbled on, else the nearest prey.
       if(!playerOffGround()){
         const dp=Math.hypot(player.pos.x-D.pos.x, player.pos.z-D.pos.z);
         if(dp < DOG.DETECT*stealth.visMul){ tgtPos=player.pos; chaseSpd=DOG.SPEED_HUNT; biteWhat='player'; }
+      }
+      // Dogs mob a serpent they find in range. Deliberately a SHORTER range than the
+      // prey hunt (18 vs 26) so this reads as "we ran into it", not pack-wide serpent
+      // seeking — and a serpent bites back for far more than it takes.
+      if(!tgtPos){
+        let sn=null, sd=DOG.HUNT_SNAKE_RANGE;
+        snakeMeshes.forEach(S=>{ if(S.health<=0||S.dying) return; const d=S.pos.distanceTo(D.pos); if(d<sd){ sd=d; sn=S; } });
+        if(sn){ tgtPos=sn.pos; chaseSpd=DOG.SPEED_HUNT; biteWhat='creature'; D._foe=sn; D._foeKind='snake'; }
       }
       if(!tgtPos){
         let prey=null, pd=DOG.HUNT_PREY_RANGE;
@@ -4292,7 +4467,9 @@ function vultureStrike(V, T){
     showKillfeed('🦅 The vulture rakes you with its talons!');
   } else {
     T.health -= SKYV.DIVE_DMG;
-    if(kind==='prey'){ T.state='flee'; T.alertTimer=3; if(T.species==='elephant') T.aggroT=ELE.RAGE_TIME; }
+    if(kind==='prey'){ T.state='flee'; T.alertTimer=3;
+      if(T.species==='elephant'){ T.aggroT=ELE.RAGE_TIME; T.lastHitBy=V; T.lastHitKind='skyvulture'; } }
+    if(kind==='dog'){ T.lastHitBy=V; T.lastHitKind='skyvulture'; }        // the pack can't reach it, but the grudge is honest
     const nm = kind==='dog' ? 'wild dog' : (T.label || kind);
     showKillfeed(T.health<=0 ? '🦅 The vulture kills a '+nm+'!' : '🦅 The vulture strikes a '+nm+'!');
   }
@@ -4385,26 +4562,39 @@ function updateSkyVultures(dt){
 }
 
 // =====================================================================
-//  GIANT SERPENTS — two variants off one module (SNAKE_VARIANTS):
+//  GIANT SERPENTS — three variants off one module (SNAKE_VARIANTS):
 //    🐍 sand python — carpet-python colouring, 1000 hp, bites 50, moves at exactly
 //       the player's SPRINT speed (16). WRAPS elephants/gorillas/rhinos (100 dmg/s,
 //       both parties immobilised) and TREE-GRABS a sheltered player, like the gorilla.
 //    🪱 pink worm  — fleshy translucent pink tube, 500 hp, bites 40, 2× the python
 //       (32 — the fastest thing on the ground). No wrap, no tree: it just bites.
-//  Both are a head + a chain of body segments that FOLLOW the head through a spatial
-//  delay-buffer (each lags ~1 unit behind the one in front) with a sine LATERAL
-//  undulation, both GROW +1 segment per kill they credit (soft cap 50), and both take
-//  a MIDDAY SIESTA (travel to a grass patch by the water, coil up and sleep 60 s —
-//  waking instantly to the player or to damage). On death the body COLLAPSES
+//    ☠️ black cobra — slender near-black body over a BLUE belly, with a HOOD that
+//       flares as it commits to a strike. 300 hp and only 14 speed, so a sprint
+//       leaves it behind — but it doesn't chase. It climbs a tree, coils in the
+//       canopy and DROPS on whatever walks underneath. Its bite is a scratch (5);
+//       the VENOM is the weapon (see VENOM / applyVenom).
+//  All three are a head + a chain of body segments that FOLLOW the head through a
+//  spatial delay-buffer (each lags ~1 unit behind the one in front) with a sine
+//  LATERAL undulation; all GROW +1 segment per kill they credit (soft cap 50), which
+//  also ADDS +1 TO EVERY BITE they land (snakeBiteDmg); and all take a MIDDAY SIESTA
+//  (travel to a grass patch by the water, coil up and sleep 60 s — waking instantly
+//  to the player or to damage). They RETALIATE against any attacker, animal or
+//  player, via the HP-drop watchdog in updateSnakes. On death the body COLLAPSES
 //  segment-by-segment. The whole thing lives in one container Group (segments
-//  positioned in WORLD space each frame) so killObj frees it in one call.
+//  positioned in WORLD space each frame) so killObj frees it in one call — the
+//  cobra's hood and belly ride that same path as children of the container.
 // =====================================================================
 const SNAKE = {
-  MAX: 2, SPAWN_EVERY: 5,          // 1 serpent every 5 days (random variant), cap 2
+  MAX: 6, SPAWN_CHANCE: 0.30,      // 3 independent per-variant rolls at day 1 and day 5 (≈0.9 serpents/roll)
   MELEE_R: 3.0,                    // strikes ~2 units in front of the head (+ head reach)
   DETECT: 22,                      // spots an EXPOSED player within this (× stealth.visMul)
   HUNT_PREY_R: 30,
   AGGRO_TIME: 6,                   // stays locked on an attacker this long
+  // ---- creature-vs-creature (predator war) ----
+  FIGHT_R: 3.4,                    // reach when biting another predator (a shade past MELEE_R)
+  LION_DPS: 9,                     // dps each lion pressed against the serpent deals to it
+  FOE_LEASH: 34,                   // drops a creature grudge past this
+  CREATURE_BITE_STUN: 0.5,         // stagger its bite puts on another creature
   SEGS: 14,                        // STARTING body segments (→ ~11 units, elephant-length)
   SEG_MAX: 50,                     // soft cap — growth stops here (performance guard)
   GROW_WINDOW: 2.0,                // a victim must die within this of our last damage tick to credit
@@ -4428,6 +4618,12 @@ const SNAKE = {
   SIESTA_SEARCH: 10,               // look for a grass patch within this of the water
   SIESTA_WAKE_R: 8,                // player inside this wakes it instantly
   SIESTA_SPEED: 7,                 // unhurried travel pace
+  // ---- tree drop-ambush (black cobra only) ----
+  AMBUSH_SEARCH: 55,               // looks for a climbable tree within this to lie up in
+  AMBUSH_DROP_R: 1.2,              // extra reach past the canopy radius that triggers the drop
+  AMBUSH_CD: 22,                   // after a drop, won't re-tree for this long
+  AMBUSH_SPEED: 8,                 // pace on the way to the ambush tree
+  HOOD_R: 7.0,                     // the cobra flares its hood inside this of its target
 };
 // Per-variant stats + look. Everything else is shared above.
 const SNAKE_VARIANTS = {
@@ -4437,14 +4633,20 @@ const SNAKE_VARIANTS = {
   worm:   { key:'worm',   icon:'🪱', label:'pink worm',
             HEALTH:500,  BITE_DMG:40, BITE_CD:1.0, SPEED_ROAM:9.0, SPEED_HUNT:32,   // 2× the python — fastest on the ground
             wrap:false, tree:false, mm:'#d96aa0', mmHot:'#ff9ecb' },
+  // The bite barely scratches (5) — the VENOM is the weapon. It lies up in a tree
+  // and DROPS on whoever walks under it. See VENOM / applyVenom.
+  cobra:  { key:'cobra',  icon:'☠️', label:'black cobra',
+            HEALTH:300,  BITE_DMG:5,  BITE_CD:1.6, SPEED_ROAM:6.0, SPEED_HUNT:14,   // outrunnable by a sprint — the poison is the threat
+            wrap:false, tree:false, venom:true, ambush:true, mm:'#5b2f8a', mmHot:'#b07bff' },
 };
 
 // Body gauge at segment i. Tapers head→tail across the STARTING length; segments
 // grown past that keep the tail gauge, so growth reads as "one more link".
 function snakeSegRadius(S, i){
   const t = Math.min(1, i / Math.max(1, SNAKE.SEGS - 1));
-  return (S.v.key==='worm') ? lerp(0.46, 0.24, t)    // fat, barely-tapered tube
-                            : lerp(0.42, 0.12, t);   // python taper
+  if(S.v.key==='worm')  return lerp(0.46, 0.24, t);  // fat, barely-tapered tube
+  if(S.v.key==='cobra') return lerp(0.30, 0.09, t);  // slender — whip-thin toward the tail
+  return lerp(0.42, 0.12, t);                        // python taper
 }
 
 // Append one body segment at the current tail. Used at build time AND by the
@@ -4454,12 +4656,15 @@ function addSnakeSegment(S){
   if(S.segs.length >= SNAKE.SEG_MAX) return false;
   const i = S.segs.length;
   const r = snakeSegRadius(S, i);
-  const worm = S.v.key==='worm';
+  const worm = S.v.key==='worm', cobra = S.v.key==='cobra';
   const g = new THREE.CylinderGeometry(r, r*(worm?0.98:0.9), SNAKE.SEG_SPACING*1.55, worm?12:9);
   g.rotateX(Math.PI/2);                                        // lie along local +Z
   const seg = new THREE.Mesh(g, (i%2===0)?S.matA:S.matB);
   seg.castShadow = true; seg.userData.origMat = seg.material;
-  if(!worm && i%2===0 && i>0){                                 // dorsal blotch (fakes the diamond pattern)
+  if(cobra){                                                   // BLUE BELLY — a pale strip along the underside
+    const b = new THREE.Mesh(new THREE.BoxGeometry(r*1.25, r*0.44, SNAKE.SEG_SPACING*1.5), S.matBlot);
+    b.position.y = -r*0.76; b.userData.origMat = S.matBlot; seg.add(b);
+  } else if(!worm && i%2===0 && i>0){                          // dorsal blotch (fakes the diamond pattern)
     const b = new THREE.Mesh(new THREE.BoxGeometry(r*1.4, r*0.5, SNAKE.SEG_SPACING*0.9), S.matBlot);
     b.position.y = r*0.72; b.userData.origMat = S.matBlot; seg.add(b);
   }
@@ -4473,17 +4678,21 @@ function addSnakeSegment(S){
 function makeSnake(x, z, variantKey){
   const v = SNAKE_VARIANTS[variantKey] || SNAKE_VARIANTS.python;
   const group = new THREE.Group();   // container at origin; every part positioned in WORLD space each frame
-  const worm = v.key==='worm';
+  const worm = v.key==='worm', cobra = v.key==='cobra';
   // Per-snake materials (freed by killObj with the container). The worm is fleshy
-  // pink, slightly translucent and shiny — Phong so it catches a wet highlight.
-  const matA = worm ? new THREE.MeshPhongMaterial({color:0xf49ab4, shininess:70, specular:0x996070, transparent:true, opacity:0.9})
-                    : new THREE.MeshLambertMaterial({color:0xc2a878, transparent:true, opacity:1});
-  const matB = worm ? new THREE.MeshPhongMaterial({color:0xe8849f, shininess:70, specular:0x996070, transparent:true, opacity:0.9})
-                    : new THREE.MeshLambertMaterial({color:0xb0966a, transparent:true, opacity:1});
-  const matBlot = worm ? new THREE.MeshPhongMaterial({color:0xd97490, shininess:50, transparent:true, opacity:0.9})
-                       : new THREE.MeshLambertMaterial({color:0x6e5636, transparent:true, opacity:1});
+  // pink, slightly translucent and shiny — Phong so it catches a wet highlight. The
+  // cobra is near-black with a hard scale sheen; matBlot carries its BLUE BELLY.
+  const matA = worm  ? new THREE.MeshPhongMaterial({color:0xf49ab4, shininess:70, specular:0x996070, transparent:true, opacity:0.9})
+             : cobra ? new THREE.MeshPhongMaterial({color:0x121218, shininess:60, specular:0x4a4a66, transparent:true, opacity:1})
+                     : new THREE.MeshLambertMaterial({color:0xc2a878, transparent:true, opacity:1});
+  const matB = worm  ? new THREE.MeshPhongMaterial({color:0xe8849f, shininess:70, specular:0x996070, transparent:true, opacity:0.9})
+             : cobra ? new THREE.MeshPhongMaterial({color:0x08080d, shininess:60, specular:0x4a4a66, transparent:true, opacity:1})
+                     : new THREE.MeshLambertMaterial({color:0xb0966a, transparent:true, opacity:1});
+  const matBlot = worm  ? new THREE.MeshPhongMaterial({color:0xd97490, shininess:50, transparent:true, opacity:0.9})
+                : cobra ? new THREE.MeshPhongMaterial({color:0x2a6ae0, shininess:80, specular:0x88aaff, transparent:true, opacity:1})   // blue belly
+                        : new THREE.MeshLambertMaterial({color:0x6e5636, transparent:true, opacity:1});
   const dark    = new THREE.MeshLambertMaterial({color:worm?0x3a2028:0x0a0a0a, transparent:true, opacity:1});
-  const tongueM = new THREE.MeshLambertMaterial({color:0x8a2b2b, transparent:true, opacity:1});
+  const tongueM = new THREE.MeshLambertMaterial({color:cobra?0xd8c22a:0x8a2b2b, transparent:true, opacity:1});   // cobra: yellow eyes/tongue
 
   const ty = terrainY(x,z);
   const S = {
@@ -4496,11 +4705,16 @@ function makeSnake(x, z, variantKey){
     wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(), wanderTimer:rand(2,5),
     path:[], slither:rand(0,10), dying:false, deathT:0, _collapsed:false,
     // --- new state ---
-    state:'CRUISE',                             // CRUISE | WRAP | TREEGRAB | SIESTA_TRAVEL | SIESTA_SLEEP
+    state:'CRUISE',                             // CRUISE | WRAP | TREEGRAB | SIESTA_TRAVEL | SIESTA_SLEEP | AMBUSH_TRAVEL | AMBUSH_COIL
     wrap:null, wrapT:0, wrapCd:0, coilPhase:rand(0,6.28),
     grabCd:0, actionTimer:0, _climb:0,
     siestaDay:0, siestaSpot:null, sleepT:0,
     _marks:[], growth:0,                        // kill-credit watch-list + segments gained
+    // Retaliation bookkeeping — every damage site TAGS these two, and the HP-drop
+    // watchdog in updateSnakes turns the tag into a grudge. Mirrors the lions'
+    // lastHitBy/lastHitKind so no attack path can silently dodge a counter-attack.
+    lastHitBy:null, lastHitKind:null,
+    ambushTree:null, ambushCd:rand(0,8), _hood:0, hoodGrp:null,   // cobra tree drop-ambush + hood flare 0..1
   };
 
   // BODY — built through the same append path growth uses.
@@ -4508,8 +4722,37 @@ function makeSnake(x, z, variantKey){
 
   // HEAD — python: a broad wedge with a snout, eyes and a flicking tongue.
   //        worm: a blunt rounded blob with two beady dots — no teeth, no tongue, cute-ugly.
+  //        cobra: a narrow black head over a BLUE throat, yellow eyes, and the
+  //               signature HOOD — two flat ribs on a Group that scales open when
+  //               it's about to strike (S._hood drives the flare in layoutSnake).
   const head = new THREE.Group();
-  if(worm){
+  if(cobra){
+    const skull = new THREE.Mesh(new THREE.BoxGeometry(0.44,0.28,0.62), matA); skull.castShadow=true; head.add(skull);
+    const snout = new THREE.Mesh(new THREE.ConeGeometry(0.2,0.34,6), matA); snout.rotation.x=Math.PI/2; snout.position.set(0,-0.02,0.44); head.add(snout);
+    const throat= new THREE.Mesh(new THREE.BoxGeometry(0.34,0.1,0.5), matBlot); throat.position.set(0,-0.16,0.16); head.add(throat);   // blue throat
+    const eyeL  = new THREE.Mesh(new THREE.SphereGeometry(0.065,6,6), tongueM); eyeL.position.set(-0.18,0.11,0.16); head.add(eyeL);
+    const eyeR  = new THREE.Mesh(new THREE.SphereGeometry(0.065,6,6), tongueM); eyeR.position.set( 0.18,0.11,0.16); head.add(eyeR);
+    const tongue= new THREE.Mesh(new THREE.BoxGeometry(0.035,0.02,0.34), tongueM); tongue.position.set(0,-0.04,0.7); head.add(tongue);
+    // HOOD — an UPRIGHT FAN of five thin plates hinged at the nape, each rotated
+    // about Z so they radiate up and out (a real hood is spread by the ribs and
+    // presented face-on, not laid flat). Every plate carries a blue skin on its
+    // FORWARD (+Z) face, so the flare reads as belly-coloured from the front —
+    // which is the last thing you see before it strikes.
+    // One Group scale drives the whole flare (see tickSnakeHood): scale.x spreads
+    // the fan, scale.y raises it. Folded ≈ (0.30, 0.45) — tucked flat to the neck.
+    const hood = new THREE.Group(); hood.position.set(0,0.06,-0.20); hood.rotation.x = -0.26;  // leans back over the body
+    [-0.86,-0.45,0,0.45,0.86].forEach(a=>{
+      const rib = new THREE.Group(); rib.rotation.z = a;                 // hinge at the nape
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.155,0.42,0.05), matA);
+      plate.position.y = 0.21; rib.add(plate);                           // extends UP from the hinge
+      const face = new THREE.Mesh(new THREE.BoxGeometry(0.125,0.36,0.022), matBlot);
+      face.position.set(0,0.20,0.038); rib.add(face);                    // blue forward face
+      hood.add(rib);
+    });
+    const nape = new THREE.Mesh(new THREE.BoxGeometry(0.17,0.10,0.30), matA); nape.position.set(0,0,-0.06); hood.add(nape);
+    hood.scale.set(0.30,0.45,1);
+    head.add(hood); S.hoodGrp = hood;
+  } else if(worm){
     const skull = new THREE.Mesh(new THREE.SphereGeometry(0.5,12,10), matA); skull.scale.set(1,0.92,1.18); skull.castShadow=true; head.add(skull);
     const lip   = new THREE.Mesh(new THREE.TorusGeometry(0.3,0.09,8,14), matB); lip.position.z=0.42; head.add(lip);   // puckered mouth ring
     const mouth = new THREE.Mesh(new THREE.CircleGeometry(0.24,12), dark); mouth.position.z=0.44; head.add(mouth);
@@ -4551,15 +4794,41 @@ function seedSnakePath(S){
   }
 }
 
-// 50/50 sand python or pink worm on every spawn.
+const SNAKE_KEYS = Object.keys(SNAKE_VARIANTS);      // ['python','worm','cobra']
 function spawnSnake(kind){
   const a=rand(0,Math.PI*2), r=rand(55,90);
-  const v = kind || (Math.random()<0.5 ? 'python' : 'worm');
+  const v = kind || SNAKE_KEYS[(Math.random()*SNAKE_KEYS.length)|0];
   return makeSnake(clamp(player.pos.x+Math.cos(a)*r,-MAPR,MAPR), clamp(player.pos.z+Math.sin(a)*r,-MAPR,MAPR), v);
+}
+// ONE INDEPENDENT ROLL PER VARIANT — not "pick one of three". Each of the python,
+// worm and cobra gets its own SNAKE.SPAWN_CHANCE (30%) coin flip, so a roll can
+// produce 0, 1, 2 or all 3 serpents (python + cobra but no worm is a normal
+// outcome). Expected yield ≈0.9 serpents per roll. Fired exactly twice a run:
+// at game start (day 1) and again on day 5 — no other scheduled serpent spawns.
+function rollSnakeSpawns(when){
+  const got=[];
+  SNAKE_KEYS.forEach(k=>{
+    if(snakeMeshes.length >= SNAKE.MAX) return;
+    if(Math.random() < SNAKE.SPAWN_CHANCE){ spawnSnake(k); got.push(SNAKE_VARIANTS[k].label); }
+  });
+  console.log('[snake] '+when+' roll → '+(got.length ? got.join(', ') : 'nothing'));
+  if(got.length) showKillfeed('🐍 Serpents move in: '+got.join(', '));
+  return got.length;
 }
 
 // Position the head + every body segment from the head's path trail, adding the
 // sine lateral undulation. Called every frame after the head moves.
+// Drive the cobra's hood open/shut. `want` is 0..1; the flare is eased so the hood
+// SNAPS open (0.22 s) as it commits and folds away slowly when the threat passes —
+// the tell that a strike is coming. No-op for the other variants (no hoodGrp).
+function tickSnakeHood(S, want, dt){
+  if(!S.hoodGrp) return;
+  const rate = want > S._hood ? 4.5 : 1.8;
+  S._hood += (want - S._hood) * Math.min(1, rate*dt);
+  const h = S._hood;
+  S.hoodGrp.scale.set(0.30 + h*0.82, 0.45 + h*0.70, 1);   // x spreads the fan, y raises it
+}
+
 function layoutSnake(S){
   const path=S.path, hp=path[0]||S.pos;
   const lift=(S._climb||0)*3.4;                          // rearing up a tree trunk mid tree-grab
@@ -4621,21 +4890,77 @@ function snakeStep(S, tx, tz, spd, dt){
   S.pos.y=terrainY(S.pos.x,S.pos.z)+0.5;
   faceSnake(S, tx-bx, tz-bz, dt);
 }
+// ---- BITE DAMAGE SCALES WITH LENGTH ----------------------------------
+// Every segment the serpent has GROWN by killing (S.growth, capped by SEG_MAX)
+// adds +1 damage to every bite it lands — on the player and on every creature.
+// A worm that has eaten five things bites for 45 instead of 40; at the 50-segment
+// cap (SNAKE.SEGS 14 → +36) it bites for 76. The base stays the variant's number,
+// so the cobra's tiny 5 also creeps up as it feeds.
+function snakeBiteDmg(S){ return S.v.BITE_DMG + (S.growth||0); }
+
+// ---- VENOM (black cobra) ---------------------------------------------
+// The bite barely hurts; the POISON is the weapon. It bleeds the player down to
+// exactly 1 HP over VENOM_TTF seconds and then HOLDS them there for the rest of
+// an in-game day — never fatal on its own, but the next hit from anything kills.
+const VENOM = {
+  TTF: 60,                // seconds from full health down to the floor
+  FLOOR: 1,               // never kills by itself — leaves you on 1 HP
+};
+const VENOM_DPS = (PLAYER.maxHealth - VENOM.FLOOR) / VENOM.TTF;   // ≈1.65 HP/s
+// One full in-game day. Read through a function, NOT baked into the VENOM literal:
+// CYCLE is declared down with the day/night clock, well after this module, so a
+// direct reference here is a temporal-dead-zone ReferenceError at load.
+function venomDuration(){ return CYCLE; }
+
+function applyVenom(){
+  const fresh = (player.poisonT||0) <= 0;
+  player.poisonT = venomDuration();   // a re-bite REFRESHES the clock; it never stacks the dps
+  if(fresh){
+    showKillfeed('☠️ VENOM — the cobra\'s poison is in your blood');
+    playSound('spotted');
+  }
+}
+// Water flushes it: wading into the watering hole is the cure (the Healing Herb
+// also purges it — see useActiveAbility). Both are deliberate risks: the hole is
+// where the pride drinks and where serpents bed down at midday.
+function cureVenom(why){
+  if((player.poisonT||0) <= 0) return false;
+  player.poisonT = 0;
+  showKillfeed(why);
+  return true;
+}
+
 function snakeBite(S, kind){
+  const dmg = snakeBiteDmg(S);
   if(kind==='player'){
     if(playerOffGround() || segHitsWall(S.pos.x,S.pos.z, player.pos.x,player.pos.z)) return;
-    player.health -= S.v.BITE_DMG;
+    player.health -= dmg;
     const ax=player.pos.x-S.pos.x, az=player.pos.z-S.pos.z, al=Math.hypot(ax,az)||1;
     player.knockback.x=(ax/al)*7; player.knockback.z=(az/al)*7;
     player.stunTimer = Math.max(player.stunTimer||0, 0.4);
     shakeTime=Math.max(shakeTime,0.22); shakeAmt=0.007; playSound('spotted');
     showKillfeed(S.v.icon+' The '+S.v.label+' sinks into you!');
+    if(S.v.venom) applyVenom();
   } else if(kind==='prey' && S._preyTarget && S._preyTarget.health>0){
     const P=S._preyTarget;
-    P.health -= S.v.BITE_DMG; P.flashTimer=0.2; P.state='flee'; P.alertTimer=3;
-    if(P.species==='elephant') P.aggroT=ELE.RAGE_TIME;
+    P.health -= dmg; P.flashTimer=0.2; P.state='flee'; P.alertTimer=3;
+    if(P.species==='elephant'){ P.aggroT=ELE.RAGE_TIME; P.lastHitBy=S; P.lastHitKind='snake'; }   // the bull turns on the serpent
     snakeCredit(S, P);
     if(P.health<=0) showKillfeed(S.v.icon+' The '+S.v.label+' swallows a '+P.label+'!');
+  } else if(S.target && S.target.health>0){
+    // ---- BITING ANOTHER PREDATOR ----
+    // One code path for lion / gorilla / rhino / wild dog: wound, stagger, and tag
+    // the victim so ITS retaliation hook turns it back on us. No creature the
+    // serpent bites is left without a way to bite back.
+    const T=S.target;
+    T.health -= dmg; T.flashTimer=0.25;
+    T.stunTimer = Math.max(T.stunTimer||0, SNAKE.CREATURE_BITE_STUN);
+    if(kind==='lion'){ T.lastHitBy=S; T.lastHitKind='snake'; }                       // → pride-retaliation watchdog mobs the serpent
+    else if(kind==='dog'){ T.lastHitBy=S; T.lastHitKind='snake'; }                   // → the pack's grudge watchdog
+    else if(kind==='rhino'){ T.target=S; T.targetKind='snake'; T.aggroTimer=RHINO.AGGRO_TIME; }
+    else if(kind==='gorilla'){ T.lastDamagedBy=S; T.lastDamageTime=elapsed; }        // → gorilla retaliation override
+    snakeCredit(S, T);
+    if(T.health<=0) showKillfeed(S.v.icon+' The '+S.v.label+' killed a '+kind+'!');
   }
 }
 
@@ -4708,11 +5033,43 @@ function pickSiestaSpot(S){
   }
   return best || anchor;
 }
-// Anything that ends a coil (wrap or sleep) has to put the body back on the trail.
+// Anything that ends a coil (wrap, sleep or a tree ambush) has to put the body
+// back on the trail.
 function snakeUncoil(S){
   S.state='CRUISE'; S._climb=0;
   S.pos.y = terrainY(S.pos.x,S.pos.z)+0.5;
   seedSnakePath(S);
+}
+
+// ---- TREE DROP-AMBUSH (black cobra) ----------------------------------
+// Pick a climbable tree to lie up in. Prefers a big canopy (a wider drop zone)
+// that is CLOSE TO THE PLAYER'S SIDE OF THE MAP — a cobra coiled in a tree nobody
+// walks under is just scenery. Skips trees the player is currently sheltering in.
+function pickAmbushTree(S){
+  let best=null, bs=-Infinity;
+  const shelter = playerShelterTree();
+  treeObjects.forEach(t=>{
+    if(!t.climbable || t===shelter) return;
+    const d = Math.hypot(t.pos.x-S.pos.x, t.pos.z-S.pos.z);
+    if(d > SNAKE.AMBUSH_SEARCH) return;
+    const pd = Math.hypot(t.pos.x-player.pos.x, t.pos.z-player.pos.z);
+    const sc = (t.canopyR||2.5)*3 - pd*0.35 - d*0.15;   // big canopy, near the player, near us
+    if(sc>bs){ bs=sc; best=t; }
+  });
+  return best;
+}
+
+// Is a creature grudge still worth holding? (alive, still in its list, in leash)
+function snakeFoeValid(S){
+  const t=S.target, k=S.targetKind;
+  if(!t || !k || k==='player' || k==='prey') return false;
+  if(!(t.health>0)) return false;
+  const inList = k==='lion' ? lionMeshes.includes(t)
+               : k==='dog' ? dogMeshes.includes(t)
+               : k==='gorilla' ? gorillaMeshes.includes(t)
+               : k==='rhino' ? rhinoMeshes.includes(t) : false;
+  if(!inList) return false;
+  return Math.hypot(t.pos.x-S.pos.x, t.pos.z-S.pos.z) < SNAKE.FOE_LEASH;
 }
 
 function updateSnakes(dt){
@@ -4738,13 +5095,49 @@ function updateSnakes(dt){
     }
 
     // HP-drop watchdog — any damage from any source, present or future, in one place.
-    // Breaks a wrap and wakes a siesta without every damage site having to remember.
+    // Breaks a wrap, wakes a siesta, drops a tree ambush — and RAISES A GRUDGE
+    // against whoever last tagged lastHitBy. Damage sites only have to tag; this
+    // single place turns the tag into a counter-attack, so no attacker (player,
+    // lion, gorilla, rhino, elephant, wild dog) is ever immune to being bitten back.
     const hurt = S.health < S._prevHealth;
     S._prevHealth = S.health;
+    if(hurt && S.lastHitBy){
+      S.target = S.lastHitBy; S.targetKind = S.lastHitKind; S.aggroTimer = SNAKE.AGGRO_TIME;
+    }
 
     S.biteCd=Math.max(0,S.biteCd-dt); S.aggroTimer=Math.max(0,S.aggroTimer-dt);
     S.wrapCd=Math.max(0,S.wrapCd-dt); S.grabCd=Math.max(0,S.grabCd-dt);
+    S.ambushCd=Math.max(0,S.ambushCd-dt);
     S.slither+=dt*SNAKE.SLITHER_SPD;
+
+    // ---- Lions pressed against the serpent wear it down -----------------
+    // Mirrors the rhino: the lion FSM only closes to contact (state 'fight_snake'),
+    // the damage is applied HERE so lion AI stays a movement decision. The bite
+    // tags lastHitBy, so the watchdog above makes the serpent whip round on them.
+    if(!S.dying){
+      let biter=null, bbd=Infinity;
+      lionMeshes.forEach(L=>{
+        if(L.health<=0 || (L.stunTimer||0)>0) return;
+        const d=L.pos.distanceTo(S.pos);
+        if(d < SNAKE.FIGHT_R){ S.health -= SNAKE.LION_DPS*dt; S.flashTimer=Math.max(S.flashTimer,0.05);
+          if(d<bbd){ bbd=d; biter=L; } }
+      });
+      if(biter){ S.lastHitBy=biter; S.lastHitKind='lion'; }
+    }
+
+    // ---- Cobra hood ----
+    // Flares as it closes on whatever it's about to bite (the tell that a strike is
+    // coming), and stays folded flat while it lies coiled in an ambush tree or
+    // asleep — so the drop is still a surprise. No-op on python/worm.
+    if(S.hoodGrp){
+      let tp=null;
+      if(S.state!=='AMBUSH_COIL' && S.state!=='SIESTA_SLEEP'){
+        if(S.targetKind==='player') tp = player.pos;
+        else if(S.target && S.target.health>0) tp = S.target.pos;
+        else if(S._preyTarget && S._preyTarget.health>0) tp = S._preyTarget.pos;
+      }
+      tickSnakeHood(S, (tp && Math.hypot(tp.x-S.pos.x, tp.z-S.pos.z) < SNAKE.HOOD_R) ? 1 : 0, dt);
+    }
     if(S.flashTimer>0){ S.flashTimer-=dt; const f=S.flashTimer>0; S.mesh.traverse(o=>{ if(o.isMesh && !o.userData.noFlash) o.material=f?FLASH_MAT:o.userData.origMat; }); }
     snakeGrowCheck(S);
     if((S.stunTimer||0)>0){
@@ -4834,6 +5227,51 @@ function updateSnakes(dt){
       if(S.state==='SIESTA_SLEEP'){ layoutSnake(S); return; }
     }
 
+    // ============ TREE DROP-AMBUSH (black cobra) ============
+    // Its signature. Rather than chase — it's the slowest serpent — it climbs a
+    // climbable tree, coils in the canopy with the hood folded flat, and DROPS on
+    // whatever walks underneath, biting on landing (which is what injects the venom).
+    if(S.state==='AMBUSH_COIL'){
+      const t = S.ambushTree;
+      if(hurt || !t || treeObjects.indexOf(t)<0){          // struck out of the canopy / tree gone
+        S.ambushTree=null; S.ambushCd=SNAKE.AMBUSH_CD;
+        S.pos.set(S.pos.x, terrainY(S.pos.x,S.pos.z)+0.5, S.pos.z);
+        snakeUncoil(S); layoutSnake(S); return;
+      }
+      const perch = terrainY(t.pos.x,t.pos.z) + (t.perchY||3);
+      S.pos.set(t.pos.x, perch, t.pos.z);                  // head = the canopy (drives aim / minimap / hitbox)
+      const under = Math.hypot(player.pos.x-t.pos.x, player.pos.z-t.pos.z) < (t.canopyR||2.5)+SNAKE.AMBUSH_DROP_R;
+      if(under && !playerOffGround()){
+        S.pos.set(player.pos.x, terrainY(player.pos.x,player.pos.z)+0.5, player.pos.z);
+        S.target=player; S.targetKind='player'; S.aggroTimer=SNAKE.AGGRO_TIME;
+        S._hood=1; if(S.hoodGrp) S.hoodGrp.scale.set(1.12,1.15,1);    // hood snaps wide as it lands
+        S.ambushTree=null; S.ambushCd=SNAKE.AMBUSH_CD;
+        snakeUncoil(S);
+        showKillfeed('☠️ A black cobra DROPS out of the tree onto you!');
+        shakeTime=Math.max(shakeTime,0.3); shakeAmt=0.007;
+        snakeBite(S,'player'); S.biteCd=S.v.BITE_CD;
+        layoutSnake(S); return;
+      }
+      layoutSnakeCoil(S, t.pos.x, perch, t.pos.z, 0.62, 0.06, dt, 0.35);
+      return;
+    }
+    if(S.state==='AMBUSH_TRAVEL'){
+      const t = S.ambushTree;
+      const pd = Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z);
+      if(hurt || !t || treeObjects.indexOf(t)<0){ S.ambushTree=null; S.state='CRUISE'; }
+      else if(pd < SNAKE.MELEE_R*1.7 && !playerOffGround()){       // walked into it en route → just bite
+        S.ambushTree=null; S.state='CRUISE';
+        S.target=player; S.targetKind='player'; S.aggroTimer=SNAKE.AGGRO_TIME;
+      } else if(Math.hypot(t.pos.x-S.pos.x, t.pos.z-S.pos.z) < 1.6){
+        S.state='AMBUSH_COIL';
+        const perch = terrainY(t.pos.x,t.pos.z) + (t.perchY||3);
+        S.pos.set(t.pos.x, perch, t.pos.z);
+        layoutSnakeCoil(S, t.pos.x, perch, t.pos.z, 0.62, 0.06, dt, 0.35);
+        return;
+      } else snakeStep(S, t.pos.x, t.pos.z, SNAKE.AMBUSH_SPEED, dt);
+      if(S.state==='AMBUSH_TRAVEL'){ pushSnakePath(S); layoutSnake(S); return; }
+    }
+
     // ============ CRUISE ============
     // Midday → down tools and go find a warm patch of grass by the water.
     if(S.state==='CRUISE' && S.siestaDay!==dn.day && dayProg>=SNAKE.SIESTA_LO && dayProg<=SNAKE.SIESTA_HI && S.aggroTimer<=0){
@@ -4841,6 +5279,17 @@ function updateSnakes(dt){
       S.siestaSpot = pickSiestaSpot(S);
       S.state = 'SIESTA_TRAVEL';
       S.target=null; S.targetKind=null;
+    }
+
+    // Nothing to fight and no siesta due → the cobra goes and lies up in a tree.
+    // Gated on the player being out of detection range, so it never turns its back
+    // on someone it can already see.
+    if(S.state==='CRUISE' && S.v.ambush && S.ambushCd<=0 && S.aggroTimer<=0
+       && Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z) > SNAKE.DETECT*stealth.visMul){
+      const at = pickAmbushTree(S);
+      if(at){ S.ambushTree=at; S.state='AMBUSH_TRAVEL'; S.target=null; S.targetKind=null;
+              pushSnakePath(S); layoutSnake(S); return; }
+      S.ambushCd = 6;                                  // no tree in reach — try again shortly
     }
 
     // The sand python can SEE a treed player (like the gorilla) and climbs after them.
@@ -4871,9 +5320,14 @@ function updateSnakes(dt){
     }
 
     // Pick a target: retaliate (locked-on attacker) > exposed nearby player > nearest prey > roam.
+    // The retaliation slot now holds ANY attacker — player, lion, wild dog, gorilla,
+    // rhino or elephant — so a serpent always bites back at whatever bit it.
     let tgt=null, spd=S.v.SPEED_HUNT, biteKind=null;
-    if(S.aggroTimer>0 && S.target && S.target.health>0){ tgt=S.target.pos; biteKind=S.targetKind; }
+    if(S.aggroTimer>0 && S.targetKind==='player' && player.health>0){ tgt=player.pos; biteKind='player'; }
+    else if(S.aggroTimer>0 && S.targetKind==='prey' && S.target && S.target.health>0){ tgt=S.target.pos; biteKind='prey'; S._preyTarget=S.target; }
+    else if(S.aggroTimer>0 && snakeFoeValid(S)){ tgt=S.target.pos; biteKind=S.targetKind; }
     else {
+      if(S.aggroTimer<=0 || !snakeFoeValid(S)){ if(S.targetKind && S.targetKind!=='player'){ S.target=null; S.targetKind=null; } }
       if(!playerOffGround()){ const dp=Math.hypot(player.pos.x-S.pos.x,player.pos.z-S.pos.z); if(dp<SNAKE.DETECT*stealth.visMul){ tgt=player.pos; biteKind='player'; } }
       if(!tgt){ let prey=null,pd=SNAKE.HUNT_PREY_R; preyMeshes.forEach(P=>{ if(P.health<=0) return; const d=P.pos.distanceTo(S.pos); if(d<pd){pd=d;prey=P;} }); if(prey){ tgt=prey.pos; biteKind='prey'; S._preyTarget=prey; } }
     }
@@ -5278,7 +5732,7 @@ function updateThrownRocks(dt){
       if(projHit(r, P)){
         P.health -= r.crossbow ? 50 : r.spear ? (P.species==='kudu' ? P.maxHealth/2 : P.species==='giraffe' ? P.maxHealth/3 : P.species==='elephant' ? P.maxHealth/15 : P.maxHealth) : 9*m;
         P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
-        if(P.species==='elephant') P.aggroT = ELE.RAGE_TIME;   // hitting it enrages it → it charges you
+        if(P.species==='elephant'){ P.aggroT = ELE.RAGE_TIME; P.lastHitBy=player; P.lastHitKind='player'; }   // enrages it → it hones in on YOU
         hit = true;
         showKillfeed(P.health<=0 ? ic+' Kill — '+P.label+'!' : (P.species==='elephant' ? '🐘 The elephant turns on you!' : ic+' Stunned the '+P.label));
       }
@@ -5332,6 +5786,7 @@ function updateThrownRocks(dt){
         S.health -= r.crossbow ? 50 : r.spear ? SNAKE.SPEAR_DMG : 15*m;   // spear 80 / bolt 50 / rock ~15
         S.flashTimer = 0.25; S.stunTimer = Math.max(S.stunTimer||0, SNAKE.ROCK_STUN);
         S.target = player; S.targetKind = 'player'; S.aggroTimer = SNAKE.AGGRO_TIME;
+        S.lastHitBy = player; S.lastHitKind = 'player';
         hit = true;
         if(S.health>0 && !wasAggro) showKillfeed(S.v.icon+' The '+S.v.label+' rears and turns on you!');
       }
@@ -5438,8 +5893,11 @@ function useActiveAbility(){
   // doesn't lock you out); `quiet` means the action played its own sound.
   let did = true, quiet = false;
   if(id==='healing_herb'){
+    // The herb also PURGES cobra venom — it's the one thing in the kit that can,
+    // so a poisoned player either burns this slot or treks to the watering hole.
+    const purged = cureVenom('🌿 Healing herb — the venom is drawn out');
     player.health = Math.min(PLAYER.maxHealth, player.health + 40);
-    showKillfeed('🌿 Healing herb — +40 health');
+    if(!purged) showKillfeed('🌿 Healing herb — +40 health');
   } else if(id==='adrenaline'){
     player.stamina = PLAYER.maxStamina; buffs.adrenaline = 5;
     showKillfeed('💨 Adrenaline surge!');
@@ -5616,7 +6074,7 @@ function boomerangStrike(kind, o){
     showKillfeed(o.health<=0 ? '🪃 Boomerang kill — lion!' : '🪃 Boomerang cracks a lion!');
   } else if(kind==='prey'){
     o.health -= D; o.stunTimer = 2.5; o.state='flee'; o.alertTimer = 3;
-    if(o.species==='elephant') o.aggroT = ELE.RAGE_TIME;        // enrages the bull
+    if(o.species==='elephant'){ o.aggroT = ELE.RAGE_TIME; o.lastHitBy=player; o.lastHitKind='player'; }   // the bull hones in on you
     showKillfeed(o.health<=0 ? '🪃 Boomerang kill — '+o.label+'!' : '🪃 Boomerang hits the '+o.label);
   } else if(kind==='gorilla'){
     o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, GOR.SPEAR_STUN);
@@ -5635,6 +6093,7 @@ function boomerangStrike(kind, o){
   } else if(kind==='snake'){
     o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, SNAKE.ROCK_STUN);
     o.target = player; o.targetKind = 'player'; o.aggroTimer = SNAKE.AGGRO_TIME;
+    o.lastHitBy = player; o.lastHitKind = 'player';
     showKillfeed(o.health<=0 ? '🪃 Boomerang bites deep — the '+o.v.label+'!' : '🪃 Boomerang cracks the '+o.v.label+'!');
   }
 }
@@ -5810,7 +6269,7 @@ function dealKitMelee(hit, dmg, tool){
   } else if(hit.kind==='prey'){
     t=o.label;
     o.health -= dmg; o.stunTimer = 2; o.state='flee'; o.alertTimer = 3;
-    if(o.species==='elephant') o.aggroT = ELE.RAGE_TIME;    // enrages the bull
+    if(o.species==='elephant'){ o.aggroT = ELE.RAGE_TIME; o.lastHitBy=player; o.lastHitKind='player'; }   // the bull hones in on you
     showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the '+o.label);
   } else if(hit.kind==='gorilla'){
     t='gorilla';
@@ -5834,6 +6293,7 @@ function dealKitMelee(hit, dmg, tool){
     t=o.v.label;
     o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, SNAKE.ROCK_STUN);
     o.target = player; o.targetKind = 'player'; o.aggroTimer = SNAKE.AGGRO_TIME;   // it whips around to bite you
+    o.lastHitBy = player; o.lastHitKind = 'player';
     showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the '+o.v.label+'!');
   }
 }
@@ -6373,14 +6833,10 @@ function spawnDailyWave(){
   for(let i=0;i<2 && rhinoMeshes.length   < RHINO.MAX;i++) spawnRhino();   // 2 rhinos/day (was 1)
   for(let i=0;i<DOG.PACK && dogMeshes.length < DOG.MAX;  i++) spawnWildDog();   // 10 wild dogs/day (cap 15)
   for(let i=0;i<SKYV.SPAWN && skyVultureMeshes.length < SKYV.MAX; i++) spawnSkyVulture();  // 2 sky vultures/day (cap 4)
-  // Serpents are RARE: one seeded on day 1 so a run always has one on the map, then
-  // one every SNAKE.SPAWN_EVERY days (random sand python / pink worm each time), cap 2.
-  // The day-1 seed does NOT move dn.nextSnakeDay, so the 5-day cadence still lands on
-  // day 5, 10, 15 … — the seed is an extra serpent, not a shifted schedule.
-  if(dn.day === 1 && snakeMeshes.length < SNAKE.MAX) spawnSnake();
-  if(dn.day >= (dn.nextSnakeDay||SNAKE.SPAWN_EVERY) && snakeMeshes.length < SNAKE.MAX){
-    spawnSnake(); dn.nextSnakeDay = dn.day + SNAKE.SPAWN_EVERY;
-  }
+  // Serpents arrive on exactly TWO days — game start and day 5 — and each time it's
+  // three independent 30% rolls (one per variant), so a run can open with nothing,
+  // with all three, or anything between. See rollSnakeSpawns.
+  if(dn.day === 1 || dn.day === 5) rollSnakeSpawns('day '+dn.day);
 }
 
 // At each day↔night turn every animal recovers to full health (the herds and
@@ -6509,8 +6965,15 @@ function showKillfeed(msg){
 function updateHUD(){
   if(gameState!=='playing') return;
   updateTouchUI();          // no-op on desktop; syncs toggle buttons + attack icon on touch
-  // Health / stamina / hunger
-  document.getElementById('health-bar').style.width  = (player.health/PLAYER.maxHealth*100)+'%';
+  // Health / stamina / hunger. Venom tints the health bar sickly green and pulses
+  // it, so "you are poisoned" reads from the bar itself, not just the killfeed.
+  const hpb = document.getElementById('health-bar');
+  hpb.style.width = (player.health/PLAYER.maxHealth*100)+'%';
+  const venomed = (player.poisonT||0) > 0;
+  if(venomed){
+    const pulse = 0.72 + Math.sin(elapsed*4.5)*0.28;
+    hpb.style.background = `rgba(92,200,70,${pulse.toFixed(2)})`;
+  } else if(hpb.style.background !== '') hpb.style.background = '';
   document.getElementById('stamina-bar').style.width = (player.stamina/PLAYER.maxStamina*100)+'%';
   const hb=document.getElementById('hunger-bar');
   hb.style.width = (player.hunger/PLAYER.maxHunger*100)+'%';
@@ -6534,6 +6997,7 @@ function updateHUD(){
   if(hornCount>0)  mats += ((toothCount>0||tuskCount>0)?' &nbsp; ':'<br>')+`🦏 Horns: ${hornCount}`;
   document.getElementById('topright').innerHTML =
     `${dn.isDay?'☀️ DAY':'🌙 NIGHT'} ${fmtTime(Math.max(0,timeLeft))}<br>`+
+    (venomed?`<span style="color:#7ce05a">☠️ POISONED ${Math.ceil(player.poisonT)}s</span> <span style="opacity:0.6;font-size:11px">— water cures</span><br>`:'')+
     (weather.intensity>0.15?`⛈️ STORM<br>`:'')+
     `🦁 Lions: ${lionMeshes.length}<br>`+
     `🪨 Rocks: ${rockCount} &nbsp; 🪵 Wood: ${woodCount}`+mats;
@@ -6728,10 +7192,17 @@ function drawMinimap(){
     mmCtx.beginPath(); mmCtx.arc(px,py,3,0,Math.PI*2); mmCtx.fill();
   });
 
-  // Giant serpents — python green / worm pink at the head; brighter when locked onto you.
+  // Giant serpents — python green / worm pink / cobra violet at the head; brighter
+  // when locked onto you. A cobra lying up in an ambush tree shows as a hollow ring:
+  // you can see WHERE it is, but the fact it's overhead is the thing you have to read.
   snakeMeshes.forEach(S=>{
-    mmCtx.fillStyle = (S.targetKind==='player' && S.aggroTimer>0) ? S.v.mmHot : S.v.mm;
     const [px,py]=toMM(S.pos.x-player.pos.x, S.pos.z-player.pos.z);
+    if(S.state==='AMBUSH_COIL'){
+      mmCtx.strokeStyle = S.v.mmHot; mmCtx.lineWidth = 1.5;
+      mmCtx.beginPath(); mmCtx.arc(px,py,4.5,0,Math.PI*2); mmCtx.stroke();
+      return;
+    }
+    mmCtx.fillStyle = (S.targetKind==='player' && S.aggroTimer>0) ? S.v.mmHot : S.v.mm;
     mmCtx.beginPath(); mmCtx.arc(px,py,4,0,Math.PI*2); mmCtx.fill();
   });
 
@@ -6823,6 +7294,8 @@ function resetGame(){
   skyVultureMeshes.length = 0;
   snakeMeshes.length = 0;
   wildDogsVendetta = false;   // fresh run → the pack starts calm again
+  dogPackThreat = { ent:null, kind:null, timer:0 };   // …and holds no grudge against any animal
+  prideThreat   = { ent:null, kind:null, pos:new THREE.Vector3(), timer:0 };
   _dustPuffs.length = 0;
 
   grapple   = { active:false, point:null, line:null, mode:null, perch:null, tree:null };
@@ -6843,7 +7316,7 @@ function resetGame(){
 
   // Start in full daylight (skip dawn) so the restart doesn't render the
   // world at midnight + heavy fog. Place us 15 s past dawn = full day.
-  dn = { time: TWILIGHT + 5, day: 1, isDay: true, nextLionSpawn: 120, firstGorilla: false, nextGorillaDay: 3, nextRhinoDay: 3, nextSnakeDay: SNAKE.SPAWN_EVERY };
+  dn = { time: TWILIGHT + 5, day: 1, isDay: true, nextLionSpawn: 120, firstGorilla: false, nextGorillaDay: 3, nextRhinoDay: 3 };
   weather = { state:'clear', timer: rand(60,110), intensity:0, flash:0, detMul:1 };
   roarTimer = rand(20,40);
   if(rainSys) rainSys.pts.visible = false;
