@@ -4645,8 +4645,42 @@ const SNAKE_VARIANTS = {
 function snakeSegRadius(S, i){
   const t = Math.min(1, i / Math.max(1, SNAKE.SEGS - 1));
   if(S.v.key==='worm')  return lerp(0.46, 0.24, t);  // fat, barely-tapered tube
-  if(S.v.key==='cobra') return lerp(0.30, 0.09, t);  // slender — whip-thin toward the tail
+  if(S.v.key==='cobra') return lerp(0.32, 0.085, t); // slender — thick neck, whip-thin tail
   return lerp(0.42, 0.12, t);                        // python taper
+}
+
+// Procedural cobra skin — overlapping rows of keeled scales, graphite at the root
+// fading to black at the tip, each with a cool blue-violet rim. Without it the
+// cobra is a featureless black tube: the two body tones were 0x121218/0x08080d,
+// three units apart, so the segment banding was invisible.
+// Built PER SNAKE, deliberately NOT cached at module scope like giraffeTex()/
+// elephantTex(): the serpent's materials are per-snake (the death collapse fades
+// their opacity) and disposeObject3D frees every texture hanging off them, so a
+// shared instance would be yanked out from under the second cobra on the map.
+// ⚠ These hexes look absurdly dark read cold. renderer.outputEncoding is
+// sRGBEncoding while colours/textures are fed in un-decoded, so everything is
+// gamma-lifted on the way out and renders ~2× lighter than the literal — the same
+// convention every other colour in this file is authored against. A #1c1e2b body
+// came out steel-grey. Judge these on screen, never on the hex.
+function cobraScaleTex(){
+  const N=64, cv=document.createElement('canvas'); cv.width=cv.height=N;
+  const g=cv.getContext('2d');
+  g.fillStyle='#010102'; g.fillRect(0,0,N,N);
+  const rows=9, cols=8, w=N/cols, h=N/rows;
+  for(let r=-1;r<=rows;r++) for(let c=-1;c<=cols;c++){
+    const x=c*w+((r&1)?w*0.5:0)+w*0.5, y=r*h+h*0.5, t=Math.random();
+    const grd=g.createLinearGradient(x, y-h*0.6, x, y+h*0.6);
+    grd.addColorStop(0, t<0.12 ? '#141728' : '#0a0b13');   // the odd lighter scale breaks up the mass
+    grd.addColorStop(1, '#000000');
+    g.fillStyle=grd;
+    g.beginPath(); g.ellipse(x, y, w*0.58, h*0.64, 0, 0, 6.2832); g.fill();
+    g.strokeStyle='rgba(38,52,102,'+(0.30+t*0.30).toFixed(2)+')';    // iridescent rim
+    g.lineWidth=0.8;
+    g.beginPath(); g.ellipse(x, y-h*0.05, w*0.52, h*0.52, 0, 3.34, 6.08); g.stroke();
+  }
+  const tex=new THREE.CanvasTexture(cv);
+  tex.wrapS=tex.wrapT=THREE.RepeatWrapping; tex.repeat.set(4,2);     // fine scaling, not corrugation
+  return tex;
 }
 
 // Append one body segment at the current tail. Used at build time AND by the
@@ -4657,13 +4691,21 @@ function addSnakeSegment(S){
   const i = S.segs.length;
   const r = snakeSegRadius(S, i);
   const worm = S.v.key==='worm', cobra = S.v.key==='cobra';
-  const g = new THREE.CylinderGeometry(r, r*(worm?0.98:0.9), SNAKE.SEG_SPACING*1.55, worm?12:9);
+  const g = new THREE.CylinderGeometry(r, r*(worm?0.98:0.9), SNAKE.SEG_SPACING*1.55, (worm||cobra)?12:9);
   g.rotateX(Math.PI/2);                                        // lie along local +Z
   const seg = new THREE.Mesh(g, (i%2===0)?S.matA:S.matB);
   seg.castShadow = true; seg.userData.origMat = seg.material;
-  if(cobra){                                                   // BLUE BELLY — a pale strip along the underside
-    const b = new THREE.Mesh(new THREE.BoxGeometry(r*1.25, r*0.44, SNAKE.SEG_SPACING*1.5), S.matBlot);
-    b.position.y = -r*0.76; b.userData.origMat = S.matBlot; seg.add(b);
+  if(cobra){
+    // BLUE BELLY — ventral scutes. An ARC of the same cylinder wrapped round the
+    // underside, not the flat slab this used to be: the slab hung off the tube and
+    // read as a plank bolted to the snake from any angle but dead-on.
+    // CylinderGeometry lays theta=0 on +Z; after rotateX(PI/2) that maps to -Y, so
+    // an arc centred on theta 0 sits exactly under the belly.
+    const arc = 1.30;
+    const bg = new THREE.CylinderGeometry(r*1.045, r*0.9*1.045, SNAKE.SEG_SPACING*1.5, 7, 1, true, -arc/2, arc);
+    bg.rotateX(Math.PI/2);
+    const b = new THREE.Mesh(bg, S.matBlot);
+    b.userData.origMat = S.matBlot; seg.add(b);
   } else if(!worm && i%2===0 && i>0){                          // dorsal blotch (fakes the diamond pattern)
     const b = new THREE.Mesh(new THREE.BoxGeometry(r*1.4, r*0.5, SNAKE.SEG_SPACING*0.9), S.matBlot);
     b.position.y = r*0.72; b.userData.origMat = S.matBlot; seg.add(b);
@@ -4681,23 +4723,34 @@ function makeSnake(x, z, variantKey){
   const worm = v.key==='worm', cobra = v.key==='cobra';
   // Per-snake materials (freed by killObj with the container). The worm is fleshy
   // pink, slightly translucent and shiny — Phong so it catches a wet highlight. The
-  // cobra is near-black with a hard scale sheen; matBlot carries its BLUE BELLY.
+  // cobra wears a procedural SCALE SKIN (cobraScaleTex) under a cool specular: the
+  // two body tones are the same skin at two brightnesses so the segment banding
+  // actually shows, and a whisper of blue emissive keeps a black animal from
+  // dissolving into the night. matBlot carries its BLUE BELLY + hood membrane.
+  const skin = cobra ? cobraScaleTex() : null;
   const matA = worm  ? new THREE.MeshPhongMaterial({color:0xf49ab4, shininess:70, specular:0x996070, transparent:true, opacity:0.9})
-             : cobra ? new THREE.MeshPhongMaterial({color:0x121218, shininess:60, specular:0x4a4a66, transparent:true, opacity:1})
+             : cobra ? new THREE.MeshPhongMaterial({map:skin, color:0xffffff, emissive:0x020309, shininess:55, specular:0x121728, transparent:true, opacity:1})
                      : new THREE.MeshLambertMaterial({color:0xc2a878, transparent:true, opacity:1});
   const matB = worm  ? new THREE.MeshPhongMaterial({color:0xe8849f, shininess:70, specular:0x996070, transparent:true, opacity:0.9})
-             : cobra ? new THREE.MeshPhongMaterial({color:0x08080d, shininess:60, specular:0x4a4a66, transparent:true, opacity:1})
+             : cobra ? new THREE.MeshPhongMaterial({map:skin, color:0x8790a8, emissive:0x010207, shininess:55, specular:0x0d1120, transparent:true, opacity:1})
                      : new THREE.MeshLambertMaterial({color:0xb0966a, transparent:true, opacity:1});
   const matBlot = worm  ? new THREE.MeshPhongMaterial({color:0xd97490, shininess:50, transparent:true, opacity:0.9})
-                : cobra ? new THREE.MeshPhongMaterial({color:0x2a6ae0, shininess:80, specular:0x88aaff, transparent:true, opacity:1})   // blue belly
+                : cobra ? new THREE.MeshPhongMaterial({color:0x020b46, emissive:0x01030f, shininess:70, specular:0x1a2c56, side:THREE.DoubleSide, transparent:true, opacity:1})   // blue belly + hood membrane
                         : new THREE.MeshLambertMaterial({color:0x6e5636, transparent:true, opacity:1});
   const dark    = new THREE.MeshLambertMaterial({color:worm?0x3a2028:0x0a0a0a, transparent:true, opacity:1});
-  const tongueM = new THREE.MeshLambertMaterial({color:cobra?0xd8c22a:0x8a2b2b, transparent:true, opacity:1});   // cobra: yellow eyes/tongue
+  // Cobra: burning amber eyes (emissive so they still read at night, like the
+  // gorilla's), a duller ochre for the hood's spectacle marking so it reads as
+  // painted skin rather than a second pair of headlights, ivory fangs, and a
+  // near-black tongue — not the old yellow plank. Python/worm keep the dull red.
+  const eyeM    = cobra ? new THREE.MeshPhongMaterial({color:0x7d4402, emissive:0x2a1600, shininess:140, specular:0xd8c070, transparent:true, opacity:1}) : null;
+  const spotM   = cobra ? new THREE.MeshLambertMaterial({color:0x44290a, transparent:true, opacity:1}) : null;
+  const fangM   = cobra ? new THREE.MeshPhongMaterial({color:0x6b6352, shininess:90, specular:0x8a8a8a, transparent:true, opacity:1}) : null;
+  const tongueM = new THREE.MeshLambertMaterial({color:cobra?0x0d0508:0x8a2b2b, transparent:true, opacity:1});
 
   const ty = terrainY(x,z);
   const S = {
     mesh:group, segs:[], v, matA, matB, matBlot,
-    mats:[matA, matB, matBlot, dark, tongueM],
+    mats:[matA, matB, matBlot, dark, tongueM, eyeM, spotM, fangM].filter(Boolean),   // every one is faded by the death collapse
     pos:new THREE.Vector3(x, ty+0.5, z),        // o.pos = HEAD (drives hitbox/aim/minimap)
     health:v.HEALTH, maxHealth:v.HEALTH, _prevHealth:v.HEALTH,
     heading:rand(0,Math.PI*2), biteCd:rand(0,v.BITE_CD), flashTimer:0, stunTimer:0,
@@ -4714,7 +4767,10 @@ function makeSnake(x, z, variantKey){
     // watchdog in updateSnakes turns the tag into a grudge. Mirrors the lions'
     // lastHitBy/lastHitKind so no attack path can silently dodge a counter-attack.
     lastHitBy:null, lastHitKind:null,
-    ambushTree:null, ambushCd:rand(0,8), _hood:0, hoodGrp:null,   // cobra tree drop-ambush + hood flare 0..1
+    // cobra: tree drop-ambush + the hood rig. _hood 0..1 drives the flare, the
+    // gaping jaw, the fangs and the flattened neck through the one setSnakeHood().
+    ambushTree:null, ambushCd:rand(0,8), _hood:0,
+    hoodGrp:null, jawGrp:null, fangGrp:null, tongueGrp:null, _flick:rand(0,1),
   };
 
   // BODY — built through the same append path growth uses.
@@ -4722,36 +4778,102 @@ function makeSnake(x, z, variantKey){
 
   // HEAD — python: a broad wedge with a snout, eyes and a flicking tongue.
   //        worm: a blunt rounded blob with two beady dots — no teeth, no tongue, cute-ugly.
-  //        cobra: a narrow black head over a BLUE throat, yellow eyes, and the
-  //               signature HOOD — two flat ribs on a Group that scales open when
-  //               it's about to strike (S._hood drives the flare in layoutSnake).
+  //        cobra: a FLAT WIDE SPADE of a skull with venom-gland cheeks, a scowling
+  //               brow, amber eyes, a hinged jaw that gapes onto two fangs, a
+  //               forked flickering tongue and the signature HOOD (see below).
+  //               S._hood drives all of it through setSnakeHood().
   const head = new THREE.Group();
   if(cobra){
-    const skull = new THREE.Mesh(new THREE.BoxGeometry(0.44,0.28,0.62), matA); skull.castShadow=true; head.add(skull);
-    const snout = new THREE.Mesh(new THREE.ConeGeometry(0.2,0.34,6), matA); snout.rotation.x=Math.PI/2; snout.position.set(0,-0.02,0.44); head.add(snout);
-    const throat= new THREE.Mesh(new THREE.BoxGeometry(0.34,0.1,0.5), matBlot); throat.position.set(0,-0.16,0.16); head.add(throat);   // blue throat
-    const eyeL  = new THREE.Mesh(new THREE.SphereGeometry(0.065,6,6), tongueM); eyeL.position.set(-0.18,0.11,0.16); head.add(eyeL);
-    const eyeR  = new THREE.Mesh(new THREE.SphereGeometry(0.065,6,6), tongueM); eyeR.position.set( 0.18,0.11,0.16); head.add(eyeR);
-    const tongue= new THREE.Mesh(new THREE.BoxGeometry(0.035,0.02,0.34), tongueM); tongue.position.set(0,-0.04,0.7); head.add(tongue);
-    // HOOD — an UPRIGHT FAN of five thin plates hinged at the nape, each rotated
-    // about Z so they radiate up and out (a real hood is spread by the ribs and
-    // presented face-on, not laid flat). Every plate carries a blue skin on its
-    // FORWARD (+Z) face, so the flare reads as belly-coloured from the front —
-    // which is the last thing you see before it strikes.
-    // One Group scale drives the whole flare (see tickSnakeHood): scale.x spreads
-    // the fan, scale.y raises it. Folded ≈ (0.30, 0.45) — tucked flat to the neck.
-    const hood = new THREE.Group(); hood.position.set(0,0.06,-0.20); hood.rotation.x = -0.26;  // leans back over the body
-    [-0.86,-0.45,0,0.45,0.86].forEach(a=>{
-      const rib = new THREE.Group(); rib.rotation.z = a;                 // hinge at the nape
-      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.155,0.42,0.05), matA);
-      plate.position.y = 0.21; rib.add(plate);                           // extends UP from the hinge
-      const face = new THREE.Mesh(new THREE.BoxGeometry(0.125,0.36,0.022), matBlot);
-      face.position.set(0,0.20,0.038); rib.add(face);                    // blue forward face
-      hood.add(rib);
+    // ---- SKULL. Scaled spheres, not boxes: a viper's head is a rounded, flattened
+    // wedge that widens at the venom glands and blunts at the snout. The old
+    // box+cone read as a brick with a party hat on it.
+    const skull = new THREE.Mesh(new THREE.SphereGeometry(0.26,12,9), matA);
+    skull.scale.set(0.92,0.55,1.20); skull.castShadow=true; head.add(skull);
+    [-1,1].forEach(s=>{                                                  // venom-gland cheeks — the triangular head
+      const ch = new THREE.Mesh(new THREE.SphereGeometry(0.125,9,7), matA);
+      ch.scale.set(0.85,0.62,1.25); ch.position.set(s*0.145,-0.015,-0.05); head.add(ch);
     });
-    const nape = new THREE.Mesh(new THREE.BoxGeometry(0.17,0.10,0.30), matA); nape.position.set(0,0,-0.06); hood.add(nape);
-    hood.scale.set(0.30,0.45,1);
+    const snout = new THREE.Mesh(new THREE.SphereGeometry(0.155,10,8), matA);
+    snout.scale.set(0.80,0.60,1.45); snout.position.set(0,-0.03,0.29); head.add(snout);
+    [-1,1].forEach(s=>{                                                  // brow ridge — the supraocular scowl
+      const br = new THREE.Mesh(new THREE.BoxGeometry(0.10,0.026,0.155), matB);
+      br.position.set(s*0.152,0.093,0.10); br.rotation.z=-s*0.30; br.rotation.y=s*0.14; head.add(br);
+    });
+    const throat= new THREE.Mesh(new THREE.SphereGeometry(0.17,10,7), matBlot);        // blue throat, under the jaw
+    throat.scale.set(0.94,0.40,1.45); throat.position.set(0,-0.115,0.10); head.add(throat);
+    [-1,1].forEach(s=>{                                                  // amber eye + dark pupil (was a golf ball)
+      const e = new THREE.Mesh(new THREE.SphereGeometry(0.050,9,7), eyeM);
+      e.position.set(s*0.175,0.055,0.13); e.userData.noFlash=true; head.add(e);
+      // pupil in matA, not `dark`: 0x0a0a0a gamma-lifts to mid-grey out here,
+      // which reads as a blind eye rather than a pupil.
+      const p = new THREE.Mesh(new THREE.SphereGeometry(0.024,6,5), matA);
+      p.position.set(s*0.196,0.058,0.152); p.userData.noFlash=true; head.add(p);
+    });
+    // ---- JAW + FANGS. The lower jaw drops and the fangs swing down out of the
+    // roof of the mouth as the hood opens, so a striking cobra actually bares them
+    // and a cruising one doesn't walk around with its mouth open.
+    const jaw = new THREE.Group(); jaw.position.set(0,-0.05,0.01); head.add(jaw); S.jawGrp=jaw;
+    const chin  = new THREE.Mesh(new THREE.SphereGeometry(0.145,10,7), matA);
+    chin.scale.set(0.86,0.40,1.62); chin.position.set(0,-0.045,0.19); jaw.add(chin);
+    const gape  = new THREE.Mesh(new THREE.SphereGeometry(0.115,9,7), dark);
+    gape.scale.set(0.88,0.36,1.55); gape.position.set(0,0.015,0.17); jaw.add(gape);
+    const fangs = new THREE.Group(); fangs.position.set(0,-0.085,0.30); head.add(fangs); S.fangGrp=fangs;
+    [-1,1].forEach(s=>{
+      // ConeGeometry points +Y; PI-0.30 about X swings the tip DOWN AND FORWARD
+      // (a plain PI+0.30 aims it backwards, into the throat).
+      const f = new THREE.Mesh(new THREE.ConeGeometry(0.026,0.17,6), fangM);
+      f.position.set(s*0.075,-0.075,0); f.rotation.set(Math.PI-0.30,0,-s*0.10); fangs.add(f);
+    });
+    // ---- TONGUE. Forked and near-black, and it FLICKS (see tickSnakeHood) instead
+    // of hanging out as a permanent yellow rod.
+    const tongue = new THREE.Group(); tongue.position.set(0,-0.075,0.47); head.add(tongue); S.tongueGrp=tongue;
+    const stem = new THREE.Mesh(new THREE.BoxGeometry(0.018,0.012,0.14), tongueM); stem.position.z=0.07; tongue.add(stem);
+    [-1,1].forEach(s=>{
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(0.013,0.010,0.10), tongueM);
+      tip.position.set(s*0.024,0,0.185); tip.rotation.y=-s*0.40; tongue.add(tip);
+    });
+    // ---- HOOD — ONE continuous spade-shaped MEMBRANE. Getting here took three
+    // goes: five flat plates read as a plank, seven overlapping ones read as a
+    // sawtooth (the silhouette is what gives it away, and rectangles can't make a
+    // curve). So the membrane is now a single ShapeGeometry off a bezier outline —
+    // pinched at the nape, bulging wide, rounded over the crown — skinned deep blue
+    // on the FORWARD face and scale-black on the back. The spreading ribs survive
+    // only as keels on the DORSAL side, which is the one place a real cobra's ribs
+    // actually show. Blue front + ochre SPECTACLE spots + the dark throat band are
+    // the last thing you see before it strikes.
+    // One Group scale drives the whole flare (see setSnakeHood).
+    const hood = new THREE.Group(); hood.position.set(0,0.03,-0.15); hood.rotation.x = -0.30;   // leans back over the body
+    const sh = new THREE.Shape();
+    sh.moveTo(0,0);                                                      // wider than tall — a fan, not a balloon
+    sh.bezierCurveTo(-0.34,0.05, -0.66,0.30, -0.52,0.56);
+    sh.bezierCurveTo(-0.38,0.80,  0.38,0.80,  0.52,0.56);
+    sh.bezierCurveTo( 0.66,0.30,  0.34,0.05,  0,0);
+    const memGeo = new THREE.ShapeGeometry(sh, 16);                      // shared by all three skins — dispose is idempotent
+    const front = new THREE.Mesh(memGeo, matBlot); front.position.z= 0.026; hood.add(front);
+    // The dark skin is cut slightly LARGER, so black shows as a margin all round
+    // the blue instead of the membrane reading as a flat blue shield. It takes TWO
+    // plates, not one flipped plate: matA is FrontSide, so a single back-facing
+    // sheet leaves the margin invisible from the front — a see-through notch round
+    // the hood. So: a forward-facing rim tucked just behind the blue, and a
+    // back-facing sheet for the dorsal view.
+    const rim  = new THREE.Mesh(memGeo, matA); rim.position.z = 0.014; rim.scale.set(1.09,1.06,1); hood.add(rim);
+    const back = new THREE.Mesh(memGeo, matA); back.position.z=-0.026; back.rotation.y=Math.PI;
+    back.scale.set(1.09,1.06,1); hood.add(back);
+    [-1.02,-0.68,-0.34,0,0.34,0.68,1.02].forEach(a=>{
+      const rib = new THREE.Group(); rib.rotation.z = a; hood.add(rib);   // hinge at the nape
+      const len = 0.68*(0.52+0.48*Math.cos(a*1.30));                      // stays inside the outline
+      const keel = new THREE.Mesh(new THREE.BoxGeometry(0.046,len,0.026), matB);
+      keel.position.set(0,len*0.5+0.04,-0.040); rib.add(keel);            // rib ridge on the back
+    });
+    [-1,1].forEach(s=>{                                                   // SPECTACLE eyespots
+      const sp = new THREE.Mesh(new THREE.CircleGeometry(0.078,12), spotM);
+      sp.position.set(s*0.195,0.48,0.030); sp.userData.noFlash=true; front.add(sp);
+    });
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.62,0.070,0.012), matA);  // dark throat band under them
+    band.position.set(0,0.26,0.030); front.add(band);
+    const nape = new THREE.Mesh(new THREE.BoxGeometry(0.19,0.11,0.30), matA); nape.position.set(0,0,-0.06); hood.add(nape);
     head.add(hood); S.hoodGrp = hood;
+    setSnakeHood(S, 0);                                                  // folded flat to the neck
   } else if(worm){
     const skull = new THREE.Mesh(new THREE.SphereGeometry(0.5,12,10), matA); skull.scale.set(1,0.92,1.18); skull.castShadow=true; head.add(skull);
     const lip   = new THREE.Mesh(new THREE.TorusGeometry(0.3,0.09,8,14), matB); lip.position.z=0.42; head.add(lip);   // puckered mouth ring
@@ -4816,24 +4938,56 @@ function rollSnakeSpawns(when){
   return got.length;
 }
 
-// Position the head + every body segment from the head's path trail, adding the
-// sine lateral undulation. Called every frame after the head moves.
+// THE single place the cobra's threat pose is set, so the flare, the gaping jaw,
+// the bared fangs and the flattened neck can never drift out of sync — the
+// drop-ambush landing pins h=1 through here too. h is 0..1.
+function setSnakeHood(S, h){
+  S._hood = h = clamp(h, 0, 1);
+  if(!S.hoodGrp) return;
+  // x spreads the fan (the ribs converge as it folds), y raises it, z lets the
+  // membrane bow forward as it opens. Folded ≈ tucked flat against the neck.
+  S.hoodGrp.scale.set(0.24 + h*0.84, 0.34 + h*0.80, 0.55 + h*0.45);
+  if(S.jawGrp)  S.jawGrp.rotation.x = h*0.55;                     // mouth gapes as it commits
+  if(S.fangGrp) S.fangGrp.scale.set(1, 0.10 + h*0.90, 1);         // fangs swing down out of the roof
+  // A hooded cobra spreads its neck ribs well past the hood itself — the forward
+  // segments go WIDE and FLAT. Scale only: no layout path ever touches segment
+  // scale (layoutSnake/layoutSnakeCoil set position + rotation), so this is safe.
+  const n = Math.min(5, S.segs.length);
+  for(let i=0;i<n;i++){
+    const k = h * (1 - i/5);
+    S.segs[i].mesh.scale.set(1 + k*0.55, 1 - k*0.26, 1);
+  }
+}
 // Drive the cobra's hood open/shut. `want` is 0..1; the flare is eased so the hood
-// SNAPS open (0.22 s) as it commits and folds away slowly when the threat passes —
-// the tell that a strike is coming. No-op for the other variants (no hoodGrp).
+// SNAPS open as it commits and folds away slowly when the threat passes — the tell
+// that a strike is coming. Rates unchanged since the hood shipped: 4.5 opening
+// (0.22 s time constant, ~0.65 s to fully spread) against 1.8 closing (~1.6 s).
+// Also runs the tongue flick. No-op for the other variants (no hoodGrp).
 function tickSnakeHood(S, want, dt){
   if(!S.hoodGrp) return;
   const rate = want > S._hood ? 4.5 : 1.8;
-  S._hood += (want - S._hood) * Math.min(1, rate*dt);
-  const h = S._hood;
-  S.hoodGrp.scale.set(0.30 + h*0.82, 0.45 + h*0.70, 1);   // x spreads the fan, y raises it
+  setSnakeHood(S, S._hood + (want - S._hood) * Math.min(1, rate*dt));
+  if(S.tongueGrp){
+    // Out for ~0.35 s on a ~2.2 s cycle, and twice as often once it has something
+    // in front of it — snakes taste the air hardest when they're tracking.
+    S._flick = (S._flick + dt*(0.45 + want*0.5)) % 1;
+    const p = S._flick, out = p<0.17 ? Math.sin(p/0.17*Math.PI) : 0;
+    S.tongueGrp.scale.set(1, 1, 0.04 + out*0.96);
+    S.tongueGrp.rotation.y = Math.sin(p*46)*out*0.28;
+  }
 }
 
+// Position the head + every body segment from the head's path trail, adding the
+// sine lateral undulation. Called every frame after the head moves.
 function layoutSnake(S){
   const path=S.path, hp=path[0]||S.pos;
   const lift=(S._climb||0)*3.4;                          // rearing up a tree trunk mid tree-grab
-  S.head.position.set(hp.x, terrainY(hp.x,hp.z)+0.5+lift, hp.z);
-  S.head.rotation.set((S._climb||0)*-0.5, S.heading, 0);
+  // A hooded cobra RISES: the forward third lifts clear of the ground, the head
+  // tips down over you and weaves. Purely visual — S.pos (the hitbox/aim/minimap
+  // anchor) stays on the deck, and the rise is well inside hitTop 1.7.
+  const rear=(S._hood||0)*0.95;
+  S.head.position.set(hp.x, terrainY(hp.x,hp.z)+0.5+lift+rear, hp.z);
+  S.head.rotation.set((S._climb||0)*-0.5 + rear*0.22, S.heading, Math.sin(S.slither*0.7)*rear*0.20);
   const N=S.segs.length;
   S.segs.forEach((s,i)=>{
     const arc=(i+1)*SNAKE.SEG_SPACING;
@@ -4851,7 +5005,7 @@ function layoutSnake(S){
     // physical wavelength however long the body grows.
     const lat=Math.sin(S.slither + arc*0.7)*SNAKE.AMP;    // side-to-side undulation
     const gx=p.x+perpx*lat, gz=p.z+perpz*lat;
-    s.mesh.position.set(gx, terrainY(gx,gz)+lerp(0.5,0.3,i/Math.max(1,N))+lift*Math.max(0,1-i/5), gz);
+    s.mesh.position.set(gx, terrainY(gx,gz)+lerp(0.5,0.3,i/Math.max(1,N))+lift*Math.max(0,1-i/5)+rear*Math.max(0,1-i/4.5), gz);
     s.mesh.rotation.set(0, Math.atan2(dirx,dirz), 0);
   });
 }
@@ -5244,7 +5398,7 @@ function updateSnakes(dt){
       if(under && !playerOffGround()){
         S.pos.set(player.pos.x, terrainY(player.pos.x,player.pos.z)+0.5, player.pos.z);
         S.target=player; S.targetKind='player'; S.aggroTimer=SNAKE.AGGRO_TIME;
-        S._hood=1; if(S.hoodGrp) S.hoodGrp.scale.set(1.12,1.15,1);    // hood snaps wide as it lands
+        setSnakeHood(S, 1);                                           // hood snaps wide, jaw gapes, fangs out
         S.ambushTree=null; S.ambushCd=SNAKE.AMBUSH_CD;
         snakeUncoil(S);
         showKillfeed('☠️ A black cobra DROPS out of the tree onto you!');

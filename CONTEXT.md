@@ -710,4 +710,57 @@ hashes identically to the pre-change build, verified by A/B in the same browser.
   Interpretive calls: cobra killfeed icon is ☠️ (no cobra emoji exists); venom cure = water + herb;
   drop-ambush chosen over strike-from-branch; `SNAKE.MAX` raised to 6 so "all three at once, twice" fits.
 
+## Cobra visual pass — scale skin, spade head, membrane hood, rear-up (2026-07-27b)
+Pure aesthetics on the black cobra: **no mechanic, tuning or spawn number changed**. Verified by
+mesh fingerprint (geometry types + params + material colour/opacity/shininess/emissive/specular/map/side
++ local transforms, world positions excluded because the spawn heading is random) that the **pink worm
+(19 parts) and sand python (25 parts) hash IDENTICALLY** to the pre-change build, A/B'd against
+`git show HEAD:index.html` served side by side in a second tab. Cobra went 45 → 60 meshes.
+- **⚠ Colour convention — read this before touching any hex here.** `renderer.outputEncoding` is
+  `sRGBEncoding` while colours and textures go in un-decoded, so the framebuffer is gamma-lifted on
+  output and **everything renders ~2× lighter than its literal**. A `0x1c1e2b` body came out steel-grey;
+  the shipped skin bottoms out at `#000000`. This is the convention the whole file is already authored
+  against — judge colours on screen, never on the hex. `dossiers/render_cobra.py` reproduces the same
+  gamma so the offline sheet doesn't lie.
+- **Scale skin (`cobraScaleTex`).** Per-snake 64² CanvasTexture: offset rows of keeled scales, graphite
+  at the root fading to black at the tip, each with a cool blue rim; `repeat(4,2)`. `matA`/`matB` are the
+  same map at two brightnesses, so the segment banding finally shows (the old `0x121218`/`0x08080d` were
+  three units apart — invisible). **Deliberately NOT cached at module scope** like `giraffeTex()`/
+  `elephantTex()`: serpent materials are per-snake so the death collapse can fade them, and
+  `disposeObject3D` frees every texture hanging off a material — a shared instance would be pulled out
+  from under the second cobra on the map.
+- **Head.** Box+cone → scaled spheres: a flattened wedge skull with **venom-gland cheeks**, a blunt
+  snout, **brow ridges**, small amber eyes with dark pupils (the old ones were 0.065 golf balls in the
+  tongue's material), a **hinged jaw**, two **fangs**, and a **forked flicking tongue** (was a fixed
+  yellow plank). New per-snake `eyeM`/`spotM`/`fangM`, all in `S.mats` so the collapse fades them.
+- **Hood.** Third attempt at this shape: five flat plates read as a plank (prior session), seven
+  overlapping ones read as a sawtooth — the silhouette gives it away and rectangles can't make a curve.
+  Now **one `ShapeGeometry` off a bezier outline**, wider than tall, blue on the front, with the
+  spreading ribs kept only as **keels on the dorsal side**. The dark backing takes **two** plates, not
+  one flipped plate: `matA` is FrontSide, so a single back-facing sheet leaves the enlarged margin
+  invisible from the front — a see-through notch round the hood.
+- **Ventral scutes.** The belly is now an **arc of the body cylinder** wrapping the underside
+  (`thetaStart -0.65, thetaLength 1.30`; `rotateX(PI/2)` maps theta 0 to -Y) instead of a flat box that
+  hung off the tube like a bolted-on plank. `matBlot` is `DoubleSide` for the cobra.
+- **One pose function.** `setSnakeHood(S,h)` is the only place the threat pose is set — flare, jaw
+  rotation, fang drop and the **flattened neck** (first 5 segments scaled wide+flat; safe because no
+  layout path ever touches segment *scale*). `tickSnakeHood` calls it, and so does the drop-ambush
+  landing, which used to poke `hoodGrp.scale` directly with hand-copied numbers.
+- **Motion.** A hooded cobra now **rears** — `layoutSnake` lifts the head + forward third by `_hood*0.95`,
+  tips the head down and adds a slow weave. Purely visual: `S.pos` (hitbox/aim/minimap anchor) stays on
+  the deck and the rise is well inside `hitTop` 1.7. **Hood ease rates untouched** (4.5 open / 1.8 close
+  = 0.22 s time constant, ~0.65 s to full spread, ~1.6 s to fold).
+- **Verified:** 60 s live sim with all three variants — 0 errors, 0 NaN, hood cycles 0↔1; venom bite
+  still sets 240 s, bleeds to exactly 1 HP and holds without killing; drop-ambush still fires and pins
+  the hood/jaw/fangs wide; `snakeBiteDmg` still scales (5 → 10 at +5 growth); `rollSnakeSpawns` untouched.
+  **Disposal: 0 orphan objects/geometries/textures** over 4 spawn→dispose cycles, through the real
+  death-collapse path, and across `resetGame` — with HP bars forced visible so their CanvasTextures
+  actually uploaded. The shared `memGeo` and skin texture are each referenced by several meshes;
+  `dispose()` is idempotent in three r128, so the repeated frees are no-ops.
+- **⚠ Tooling note:** the Browser pane composites blank/black for this page even while
+  `renderer.info.render` reports ~1350 draw calls, and render-to-texture readback returns all zeros
+  (`INVALID_OPERATION` on `render()` into an FBO) — so **neither pane screenshots nor `readRenderTargetPixels`
+  are a usable feedback loop here**. Everything visual was iterated through `dossiers/render_cobra.py`;
+  everything behavioural through in-page `javascript_exec`, which works fine.
+
 Each phase is an independent commit so it can be iterated in isolation.

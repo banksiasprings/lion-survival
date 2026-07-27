@@ -229,9 +229,12 @@ is no such thing as a free hit on a serpent.
   feed on a herd all run will be biting for 70+ by the time you meet it.
 
 #### ☠️ Black cobra — the one that doesn't chase you
-- **Near-black body over a bright blue belly**, yellow eyes, and a **hood that FLARES** — an upright
-  blue-fronted fan that snaps open the moment it commits to a strike. If you see the hood, you're already
-  in range. HP **300** (the squishiest serpent, ~4 spears).
+- **Near-black scaled body over a blue ventral stripe**, amber eyes, a flat wedge of a head, and a **hood
+  that FLARES** — a spade-shaped blue membrane, black-rimmed, with two ochre spectacle spots and a dark
+  throat band, that snaps open the moment it commits to a strike. When it flares it also **rears up** off
+  the ground, spreads its neck flat, gapes its jaw and drops its **fangs** into view — every one of those
+  is the same tell. If you see the hood, you're already in range. HP **300** (the squishiest serpent,
+  ~4 spears).
 - **It only bites for 5.** That is not a mistake — the bite is a delivery system. **The venom is the weapon.**
 - **☠️ VENOM.** One bite poisons you for **a full in-game day (240 s)**. Over the first **60 seconds** it
   bleeds you from full health down to **exactly 1 HP** — and then holds you there. **The venom itself never
