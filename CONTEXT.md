@@ -763,4 +763,82 @@ mesh fingerprint (geometry types + params + material colour/opacity/shininess/em
   are a usable feedback loop here**. Everything visual was iterated through `dossiers/render_cobra.py`;
   everything behavioural through in-page `javascript_exec`, which works fine.
 
+## Cobra night hunter — bite 20, growth-scaled, day-ambush ↔ night-hunt (2026-07-28)
+Steven's note: *"the cobra is boring because it just sits in a tree."* It now runs on the **clock** —
+canopy drop-ambush by day, an active ground hunter after dark. **No new Three.js object, geometry,
+material or texture is created for any of this**; the night states reuse `layoutSnakeCoil`,
+`layoutSnake`, `snakeStep` and `snakeUncoil`, so the disposal story is unchanged. **Pink worm and sand
+python are untouched** — `makeSnake`'s only diff is added *state fields*, no mesh code was touched, and a
+600 s / 2.5-cycle full-loop soak shows both only ever in `CRUISE`/`SIESTA_TRAVEL`/`SIESTA_SLEEP`, never in
+a night state.
+- **Bite 5 → 20, and it still injects venom.** Full HP → 80 on the bite, venom then bleeds to 1 HP. The
+  combination is lethal in two: verified 100 → 80 → (58 s) 1 → bite → −19 → `gameState 'over'`.
+  **The venom mechanic itself is byte-for-byte unchanged** and re-verified end to end: 1.65 HP/s to a hard
+  floor of exactly 1 HP, held for the full `CYCLE` 240 s, regen blocked, both cures working (watering hole
+  240→0, Healing Herb 240→0 + heal).
+- **Growth already applied to the cobra** — `snakeBiteDmg(S) = S.v.BITE_DMG + S.growth` has been universal
+  since 2026-07-27, so item 1 of the brief needed no code. Re-verified through the real
+  `snakeBite → snakeCredit → snakeGrowCheck → addSnakeSegment` path: 5 kills → 19 segments → **25 dmg**.
+  Damage table: base **20** · +1 **21** · +3 **23** · +5 **25** · +10 **30** · at the `SEG_MAX` 50 cap (+36) **56**.
+  `WRAP_DPS` and `GRAB_DMG` still deliberately do NOT scale (and the cobra has neither anyway).
+- **`NIGHT_DESCEND` → `NIGHT_HUNT` → (dawn) `AMBUSH_TRAVEL` → `AMBUSH_COIL`.** New cobra-only states,
+  gated on the variant's new `night:true` flag. The day↔night switch is driven **per-serpent inside
+  `updateSnakes`** (not from `updateDayNight`) so each cobra flips on its own terms and no other creature's
+  clock has to know serpents exist — the same reasoning the midday siesta already used.
+  - **Descent** (`NIGHT_DESCEND_T` 1.1 s): the canopy coil unwinds *down the trunk*, widening and
+    quickening, via `layoutSnakeCoil` with a lerped centre/radius/spin. `S.pos` (aim/minimap/hitbox) comes
+    down with it. Announced in the killfeed **only within 45 m** — a global message would hand the player
+    the position of every cobra on the map at dusk.
+  - **Patrol** `NIGHT_ROAM_R` **40 m** around `S.nightAnchor` (the base of the tree it came down from), at
+    `SPEED_ROAM` 6. `pickNightPatrolSpot` rejects steep ground and wall-blocked spots, repicks every
+    `NIGHT_PATROL_T` 9 s. A chase that drags it past `NIGHT_REANCHOR` 1.6× the radius **moves the anchor**
+    rather than rubber-banding it back to one tree.
+  - **Detection**: player at the module's existing `DETECT` 22 × `stealth.visMul` (so crouch-in-grass still
+    hides you — measured `visMul` 0.595 → 13 m); creatures at `NIGHT_HUNT_R` **26** (the wild dog's
+    `HUNT_PREY_RANGE`). `snakeNightTarget` scans lion / dog / gorilla (skipping `perched`) / rhino / prey,
+    nearest wins, player first.
+  - **Strike**: closes at `SPEED_HUNT` 14, **commits inside `NIGHT_STRIKE_R` 6** (`_commitT`), bites at the
+    shared `MELEE_R` 3.0 on the variant's 1.6 s cooldown. No drop-from-canopy in this state.
+  - **Dawn**: `retreatToTreeAtDawn` reuses `pickAmbushTree` (big canopy, near the player's side, near us).
+    No tree in reach → `CRUISE` + `ambushCd 6` so the existing CRUISE gate retries.
+  - **Mid-strike at dawn completes first.** The retreat is gated on `_commitT<=0`, so a cobra inside strike
+    range when the sun comes up finishes the strike, then leaves. `NIGHT_DAWN_GRACE` 8 s is the hard
+    backstop. Verified: dawn at frame 39 → killing bite at frame 41 → `AMBUSH_TRAVEL` at frame 42.
+- **⚠ Give-up rule (an interpretive addition, not in the brief — flagged).** First cut, a night cobra
+  locked onto the nearest prey and chased it forever: at speed 14 it cannot run down an impala, so it never
+  patrolled, never bit anything, and the hood sat pinned open the whole time. Fixed with
+  `NIGHT_GIVEUP` **4 s** — a target the gap hasn't *closed* on is dropped and skipped for `NIGHT_SKIP` 10 s,
+  and it goes back to working the ground. Slow things (lion, rhino, gorilla, cornered dog) are unaffected
+  because the gap does close, resetting the timer. Without this the feature does not read as a hunt.
+- **The night look is the folded hood.** On a night hunt `tickSnakeHood`'s `want` is tied to `_commitT`,
+  **not** to the day rule's mere proximity (`HOOD_R` 7) — so it travels through the dark hood-down and only
+  spreads in the last few metres. Switching target clears the commitment, so a flare can't ride over from
+  something it was about to bite a moment ago. Since `layoutSnake` already rears the head off `_hood`, a
+  committing night cobra rears as it flares — free, and the only warning you get. Growth shows in the
+  slither for nothing (the delay-buffer body already scales).
+- **Everyone-fights-everyone needed no new wiring.** The nine `state!=='AMBUSH_COIL'` guards that make a
+  treed serpent unreachable (`nearestSnake`, the lion/gorilla/rhino/elephant foe-scans, `nearestAnimalInFront`,
+  the vendetta gate) all pass for `NIGHT_HUNT`, so a grounded cobra is automatically a legal target for
+  everything and its bites already tag each victim's own retaliation hook. Verified live: a night cobra
+  hunted a wild dog 14→2.8 m, bit twice (20 then 21 after growth), killed it, and the dog's
+  `lastHitKind==='snake'` / `lastHitBy===cobra` fired the pack grudge.
+- **Minimap** unchanged and correct by construction: the hollow-ring branch is gated on `AMBUSH_COIL`, so a
+  treed cobra is still a ring and a night hunter is a solid violet dot (verified — exactly 1 stroke call
+  with one cobra in each state).
+- **Disposal: 0 orphan objects / 0 geometries / 0 textures**, over **7** full spawn → grow-to-34/42-segments
+  → night-hunt → descend → tree → real death-collapse cycles, with the HP bars forced visible so their
+  CanvasTextures actually uploaded. (An earlier audit showed a positive *object* delta; that was the harness
+  — crossing dawn fires `spawnDailyWave`, and prey killed without `updatePrey` running are never reaped.
+  Isolated, it is 0/0/0 every cycle.) A 600 s full-game-loop soak: **0 errors, 0 NaN**.
+- **⚠ Balance (report, not silently tuned):** (a) **the cobra is now a top-tier threat** — 20 + venom means
+  two bites kill from full, and after dark it comes to find you instead of waiting; the counterplay is that
+  a tree or a wall still stops it (no tree-grab), so height is the night answer. (b) **A cobra on the ground
+  at night is itself exposed** — in the soak one of the two cobras was killed by the ecosystem before dawn,
+  which never happened while they only sat in canopies. Night-hunting cuts both ways, and cobra population
+  will run lower than it did. (c) The give-up rule (4 s / 10 s skip) is my call, made to stop the feature
+  degenerating into an endless antelope chase. (d) `pickAmbushTree` is reused for the dawn retreat rather
+  than a strict "nearest tree" as the brief worded it — it already scores by closeness *and* canopy size and
+  keeps one code path; a cobra that re-trees somewhere useless is just scenery again. (e) Detection ranges
+  were matched to the wild dog (22/26) rather than invented.
+
 Each phase is an independent commit so it can be iterated in isolation.

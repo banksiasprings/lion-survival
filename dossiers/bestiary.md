@@ -1,6 +1,6 @@
 # Lion Survival — Bestiary & Rules (canonical reference)
 
-*The plain-English "how the world works" doc. Kept current — last updated 2026-07-19.*
+*The plain-English "how the world works" doc. Kept current — last updated 2026-07-28.*
 *Exact numbers live in `index.html`: `SPECIES`, `GOR`, `RHINO`, `ELE`, `PLAYER` configs.*
 
 ---
@@ -13,7 +13,8 @@
 - **Up a tree = safe.** Grapple (`1`/`G`) into a climbable tree and lions/rhinos/elephants **cannot reach
   you** (no stamina cost to stay up there — wait out anything). **Exceptions:** the **gorilla** and the
   **sand python** can both see a treed player and will climb over to **tree-grab** you back to the ground —
-  and a **black cobra** may already be coiled in a canopy waiting to drop on whoever walks under it.
+  and a **black cobra** may already be coiled in a canopy waiting to drop on whoever walks under it —
+  **though after dark that cobra is down on the ground hunting you instead.**
 - **While grappling/climbing/standing on a wall** you're also out of a ground animal's reach.
 - How well you're seen scales with a stealth value (`stealth.visMul`): crouch ×0.55, crouch-in-grass an
   extra ×0.45, standing still ×0.85, sprinting ×1.2 (loud & obvious). Lions, the gorilla (grounded
@@ -228,14 +229,16 @@ is no such thing as a free hit on a serpent.
 - It is also the **fastest grower** in the game, and its bite scales with every segment — a worm left to
   feed on a herd all run will be biting for 70+ by the time you meet it.
 
-#### ☠️ Black cobra — the one that doesn't chase you
+#### ☠️ Black cobra — ambush by day, hunter by night
 - **Near-black scaled body over a blue ventral stripe**, amber eyes, a flat wedge of a head, and a **hood
   that FLARES** — a spade-shaped blue membrane, black-rimmed, with two ochre spectacle spots and a dark
   throat band, that snaps open the moment it commits to a strike. When it flares it also **rears up** off
   the ground, spreads its neck flat, gapes its jaw and drops its **fangs** into view — every one of those
   is the same tell. If you see the hood, you're already in range. HP **300** (the squishiest serpent,
   ~4 spears).
-- **It only bites for 5.** That is not a mistake — the bite is a delivery system. **The venom is the weapon.**
+- **It bites for 20 AND poisons you.** Full health → 80 on the bite, then the venom takes you to 1 HP.
+  **Two cobra bites in quick succession kill you from full**, and every kill it makes adds **+1 to that
+  bite** (a cobra that has eaten five things bites for 25; at the 50-segment cap, 56).
 - **☠️ VENOM.** One bite poisons you for **a full in-game day (240 s)**. Over the first **60 seconds** it
   bleeds you from full health down to **exactly 1 HP** — and then holds you there. **The venom itself never
   kills you.** What kills you is the next hit from anything at all, because you have no buffer left. Health
@@ -244,11 +247,24 @@ is no such thing as a free hit on a serpent.
 - **CURE — water.** Wade into the **watering hole** and the venom flushes out immediately. That's a long
   walk on 1 HP to the one place lions gather to drink and serpents bed down at midday. The **🌿 Healing Herb**
   ability also purges it (and heals) if you're carrying one.
-- **TREE DROP-AMBUSH.** It doesn't hunt you — at speed 14 a sprint leaves it behind easily. Instead it
-  finds a **climbable tree**, coils in the canopy with the hood folded flat, and **waits**. Walk under that
-  tree and it **DROPS on you** and bites on landing. On the minimap a treed cobra shows as a **hollow violet
-  ring** rather than a solid dot — you can see where it is; noticing that it's *above* you is your problem.
-  After a drop it won't re-tree for 22 s.
+- **☀️ BY DAY — TREE DROP-AMBUSH.** It finds a **climbable tree**, coils in the canopy with the hood folded
+  flat, and **waits**. Walk under that tree and it **DROPS on you** and bites on landing. On the minimap a
+  treed cobra shows as a **hollow violet ring** rather than a solid dot — you can see where it is; noticing
+  that it's *above* you is your problem. After a drop it won't re-tree for 22 s.
+- **🌙 AT NIGHT — IT COMES DOWN AND HUNTS YOU.** At dusk it **pours down the trunk** and works the ground
+  in a **40 m patrol** around that tree until dawn: patrol → close → strike → move on. It will hunt
+  **anything** — you, wild dogs, lions, a gorilla, a rhino, prey. It spots you at the usual **22 m
+  (× your stealth)** and creatures at **26 m**, and **commits inside 6 m** — which is when the hood snaps
+  open. While it's travelling the hood stays **folded**, so at night the flare is your only warning and
+  it comes late.
+  - **It gives up on what it can't catch.** At speed 14 it can't run down an impala, so a target it hasn't
+    closed on in 4 s is dropped (and left alone for 10 s) and it goes back to patrolling. Slow things —
+    lions, rhinos, gorillas, a cornered dog — it runs down.
+  - **At dawn it retreats** to the nearest good tree, climbs, and goes back to being an ambush. If it's
+    **mid-strike when the sun comes up it finishes the strike first**.
+- **The counterplay is the clock.** A cobra you can see coiled in a canopy is a hazard you can walk around.
+  The same cobra after dark is coming to find you — and a poisoned player at 1 HP dies to its next bite.
+  A tree or a wall still stops it (it can't tree-grab), so height is the answer at night.
 - **No wrap, no tree-grab.** It can't pull you out of a tree — but it can be waiting in one.
 
 ### 🦒 Giraffe — tall prey, too fast to chase
@@ -292,8 +308,9 @@ to sneak up for a pounce. All die to **1 spear** (kudu takes 2).
 - **Giant serpents** hunt prey + you, and **fight back against every attacker**. The **sand python**
   additionally **constricts elephants, gorillas and rhinos** (100 dmg/s) — the only animal that can kill a
   big three outright in seconds — and **tree-grabs** you like the gorilla. The **pink worm** just bites, but
-  nothing outruns it. The **black cobra** doesn't chase at all — it drops on you out of a tree and poisons
-  you. All three **grow a segment per kill**, **hit harder for every segment**, and **sleep through midday**.
+  nothing outruns it. The **black cobra** runs on the clock — a drop-ambush from a canopy by day, an
+  **active ground hunter after dark** that will strike you, a dog, a lion or anything else it finds. All
+  three **grow a segment per kill**, **hit harder for every segment**, and **sleep through midday**.
 - **Prey** (zebra→kudu, giraffe) just flee — except a cornered **warthog** gores back. They also flee the
   giant serpents and scatter when a vulture dives.
 - **Everything reheals at each day/night turn**, so bring enough firepower to finish a fight in one round.

@@ -4570,9 +4570,11 @@ function updateSkyVultures(dt){
 //       (32 — the fastest thing on the ground). No wrap, no tree: it just bites.
 //    ☠️ black cobra — slender near-black body over a BLUE belly, with a HOOD that
 //       flares as it commits to a strike. 300 hp and only 14 speed, so a sprint
-//       leaves it behind — but it doesn't chase. It climbs a tree, coils in the
-//       canopy and DROPS on whatever walks underneath. Its bite is a scratch (5);
-//       the VENOM is the weapon (see VENOM / applyVenom).
+//       leaves it behind. It runs on the CLOCK: by DAY it climbs a tree, coils in
+//       the canopy and DROPS on whatever walks underneath; at DUSK it pours down
+//       the trunk and HUNTS the ground around that tree until dawn, striking
+//       anything it finds (see NIGHT_DESCEND / NIGHT_HUNT). Bites for 20 AND
+//       injects VENOM — two strikes kill from full (see VENOM / applyVenom).
 //  All three are a head + a chain of body segments that FOLLOW the head through a
 //  spatial delay-buffer (each lags ~1 unit behind the one in front) with a sine
 //  LATERAL undulation; all GROW +1 segment per kill they credit (soft cap 50), which
@@ -4624,6 +4626,19 @@ const SNAKE = {
   AMBUSH_CD: 22,                   // after a drop, won't re-tree for this long
   AMBUSH_SPEED: 8,                 // pace on the way to the ambush tree
   HOOD_R: 7.0,                     // the cobra flares its hood inside this of its target
+  // ---- night hunt (black cobra only) ----
+  // The cobra is a DAY ambusher and a NIGHT hunter. At dusk it pours down the
+  // trunk and works the ground around that tree until dawn.
+  NIGHT_DESCEND_T: 1.1,            // seconds to unwind down the trunk at nightfall
+  NIGHT_ROAM_R: 40,                // patrols this far from the tree base it came down
+  NIGHT_HUNT_R: 26,                // spots a CREATURE to hunt within this (player uses DETECT)
+  NIGHT_STRIKE_R: 6,               // inside this it has COMMITTED — hood flares, and dawn waits
+  NIGHT_COMMIT_T: 4,               // a commitment lasts this long unless refreshed or spent
+  NIGHT_DAWN_GRACE: 8,             // hard cap on 'finish the strike' — it always gets back to a tree
+  NIGHT_PATROL_T: 9,               // repick a patrol spot at least this often
+  NIGHT_REANCHOR: 1.6,             // a chase this many roam-radii out moves its hunting ground
+  NIGHT_GIVEUP: 4,                 // drop a target it hasn't CLOSED on in this long
+  NIGHT_SKIP: 10,                  // ...and don't re-pick that one for this long
 };
 // Per-variant stats + look. Everything else is shared above.
 const SNAKE_VARIANTS = {
@@ -4633,11 +4648,12 @@ const SNAKE_VARIANTS = {
   worm:   { key:'worm',   icon:'🪱', label:'pink worm',
             HEALTH:500,  BITE_DMG:40, BITE_CD:1.0, SPEED_ROAM:9.0, SPEED_HUNT:32,   // 2× the python — fastest on the ground
             wrap:false, tree:false, mm:'#d96aa0', mmHot:'#ff9ecb' },
-  // The bite barely scratches (5) — the VENOM is the weapon. It lies up in a tree
-  // and DROPS on whoever walks under it. See VENOM / applyVenom.
+  // A solid bite (20) AND the venom on top — two of these in quick succession
+  // kill from full health. By DAY it lies up in a tree and DROPS on whoever walks
+  // under it; by NIGHT it comes down and hunts (see VENOM / applyVenom, NIGHT_HUNT).
   cobra:  { key:'cobra',  icon:'☠️', label:'black cobra',
-            HEALTH:300,  BITE_DMG:5,  BITE_CD:1.6, SPEED_ROAM:6.0, SPEED_HUNT:14,   // outrunnable by a sprint — the poison is the threat
-            wrap:false, tree:false, venom:true, ambush:true, mm:'#5b2f8a', mmHot:'#b07bff' },
+            HEALTH:300,  BITE_DMG:20, BITE_CD:1.6, SPEED_ROAM:6.0, SPEED_HUNT:14,   // outrunnable by a sprint — the poison is the threat
+            wrap:false, tree:false, venom:true, ambush:true, night:true, mm:'#5b2f8a', mmHot:'#b07bff' },
 };
 
 // Body gauge at segment i. Tapers head→tail across the STARTING length; segments
@@ -4758,7 +4774,9 @@ function makeSnake(x, z, variantKey){
     wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(), wanderTimer:rand(2,5),
     path:[], slither:rand(0,10), dying:false, deathT:0, _collapsed:false,
     // --- new state ---
-    state:'CRUISE',                             // CRUISE | WRAP | TREEGRAB | SIESTA_TRAVEL | SIESTA_SLEEP | AMBUSH_TRAVEL | AMBUSH_COIL
+    // CRUISE | WRAP | TREEGRAB | SIESTA_TRAVEL | SIESTA_SLEEP | AMBUSH_TRAVEL | AMBUSH_COIL
+    //        | NIGHT_DESCEND | NIGHT_HUNT      (the last two are cobra-only)
+    state:'CRUISE',
     wrap:null, wrapT:0, wrapCd:0, coilPhase:rand(0,6.28),
     grabCd:0, actionTimer:0, _climb:0,
     siestaDay:0, siestaSpot:null, sleepT:0,
@@ -4771,6 +4789,13 @@ function makeSnake(x, z, variantKey){
     // gaping jaw, the fangs and the flattened neck through the one setSnakeHood().
     ambushTree:null, ambushCd:rand(0,8), _hood:0,
     hoodGrp:null, jawGrp:null, fangGrp:null, tongueGrp:null, _flick:rand(0,1),
+    // cobra: night hunt. nightAnchor is the patch of ground it works (the base of
+    // the tree it came down from); _commitT > 0 means it has committed to a strike,
+    // which is what flares the hood and what dawn waits for. All per-snake, so two
+    // cobras can be in different states on the same night without touching.
+    nightTree:null, nightAnchor:null, patrolSpot:null, patrolT:0,
+    descendT:0, _commitT:0, _dawnT:0,
+    _chaseEnt:null, _chaseD:0, _chaseT:0, _skipEnt:null, _skipT:0,   // give-up-on-what-it-can't-catch
   };
 
   // BODY — built through the same append path growth uses.
@@ -5213,6 +5238,87 @@ function pickAmbushTree(S){
   return best;
 }
 
+// ---- NIGHT HUNT (black cobra) ----------------------------------------
+// The cobra keeps its day job — coiled in a canopy, dropping on whatever walks
+// under — but a snake that only ever sits in a tree is scenery. At nightfall it
+// pours down the trunk and works the ground around that tree until dawn: patrol,
+// close, strike, move on. It is the ONE serpent that changes shape with the clock,
+// so all of this is gated on the variant's `night` flag; python and worm never
+// enter these states.
+//
+// Start the descent: the coil that was wound round the canopy unwinds DOWN the
+// trunk, widening and speeding up as it reaches the ground. Reuses layoutSnakeCoil
+// (the same helper the wrap, the siesta and the canopy coil already use), so no
+// new geometry, material or motion state is created for any of this.
+function startNightDescent(S){
+  S.nightTree = S.ambushTree || null;
+  S.ambushTree = null;
+  S.descendT = 0;
+  S.state = 'NIGHT_DESCEND';
+  setSnakeHood(S, 0);                    // comes down folded — it isn't threatening anything yet
+}
+// On the ground and hunting. `anchor` is the patch of ground it will work: the base
+// of the tree it came down from, or wherever it happened to be at nightfall.
+function enterNightHunt(S, ax, az){
+  snakeUncoil(S);                        // the one place that knows how to put a coiled body back on its trail
+  S.state = 'NIGHT_HUNT';
+  S.nightAnchor = {x:ax, z:az};
+  S.nightTree = null; S.ambushTree = null;
+  S.patrolSpot = null; S.patrolT = 0;
+  S._commitT = 0; S._dawnT = 0; S.descendT = 0;
+  S._chaseEnt = null; S._chaseT = 0; S._skipEnt = null; S._skipT = 0;
+}
+// Dawn: back up a tree for the day. Reuses pickAmbushTree — the same scoring the
+// cobra already uses to choose somewhere worth lying up (big canopy, near the
+// player's side of the map, near us). No tree in reach → drop to CRUISE and let
+// the existing CRUISE gate retry in a few seconds.
+function retreatToTreeAtDawn(S){
+  const at = pickAmbushTree(S);
+  S.target = null; S.targetKind = null; S._commitT = 0; S._dawnT = 0;
+  S.nightAnchor = null; S.patrolSpot = null;
+  if(at){ S.ambushTree = at; S.state = 'AMBUSH_TRAVEL'; }
+  else  { S.state = 'CRUISE'; S.ambushCd = 6; }
+}
+// Nearest thing worth striking. The player (exposed, inside the serpent's normal
+// DETECT) outranks creatures; otherwise it's whatever is closest inside
+// NIGHT_HUNT_R — lion, wild dog, gorilla, rhino or prey. Everything here is
+// already a legal serpent target under the everyone-fights-everyone rule, and
+// biting any of them tags that creature's own retaliation hook (see snakeBite).
+function snakeNightTarget(S){
+  const skipped = (elapsed < (S._skipT||0)) ? S._skipEnt : null;   // recently given up on
+  if(!playerOffGround() && player.health>0 && skipped!==player){
+    const dp = Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z);
+    if(dp < SNAKE.DETECT*stealth.visMul) return {pos:player.pos, kind:'player', ent:player};
+  }
+  let best=null, bd=SNAKE.NIGHT_HUNT_R;
+  const scan=(list, kind, skip)=>{
+    list.forEach(e=>{
+      if(e.health<=0 || e===skipped || (skip && skip(e))) return;
+      const d = Math.hypot(e.pos.x-S.pos.x, e.pos.z-S.pos.z);
+      if(d<bd){ bd=d; best={pos:e.pos, kind, ent:e}; }
+    });
+  };
+  scan(lionMeshes, 'lion');
+  scan(dogMeshes, 'dog');
+  scan(gorillaMeshes, 'gorilla', G=>G.state==='perched');   // one up a tree is out of reach
+  scan(rhinoMeshes, 'rhino');
+  scan(preyMeshes, 'prey');
+  return best;
+}
+// A spot to work next, inside NIGHT_ROAM_R of the anchor and on legal ground.
+function pickNightPatrolSpot(S){
+  const a = S.nightAnchor || {x:S.pos.x, z:S.pos.z};
+  for(let k=0;k<8;k++){
+    const ang = rand(0, Math.PI*2), r = rand(6, SNAKE.NIGHT_ROAM_R);
+    const x = clamp(a.x + Math.cos(ang)*r, -MAPR, MAPR);
+    const z = clamp(a.z + Math.sin(ang)*r, -MAPR, MAPR);
+    if(snakeSlope(x,z) > 0.5) continue;                      // don't try to climb a hillside
+    if(segHitsWall(S.pos.x, S.pos.z, x, z)) continue;        // don't pick a spot behind a wall
+    return {x, z};
+  }
+  return {x:clamp(a.x,-MAPR,MAPR), z:clamp(a.z,-MAPR,MAPR)};  // fall back to the anchor itself
+}
+
 // Is a creature grudge still worth holding? (alive, still in its list, in leash)
 function snakeFoeValid(S){
   const t=S.target, k=S.targetKind;
@@ -5279,18 +5385,56 @@ function updateSnakes(dt){
       if(biter){ S.lastHitBy=biter; S.lastHitKind='lion'; }
     }
 
+    // ---- DAY ↔ NIGHT SWITCH (black cobra) -------------------------------
+    // Driven per-serpent from here rather than from updateDayNight, so each cobra
+    // flips on its own terms — one that is mid-strike at dawn finishes the strike
+    // first — and no other creature's clock has to know serpents exist.
+    // NIGHT: come down out of the canopy (or off whatever it was doing) and hunt.
+    // DAY:   find a tree, climb it, and go back to being an ambush.
+    if(S.v.night){
+      if(!dn.isDay){
+        if(S.state==='AMBUSH_COIL'){
+          const t = S.ambushTree;
+          startNightDescent(S);
+          // Only announced if it comes down near enough to matter — a global
+          // "a cobra descended" would hand you the position of every cobra on
+          // the map the moment the sun goes down.
+          if(Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z) < 45)
+            showKillfeed('🌙 A black cobra pours down out of the tree');
+          if(!t) enterNightHunt(S, S.pos.x, S.pos.z);        // tree vanished under it — just hunt from here
+        } else if(S.state==='AMBUSH_TRAVEL' || S.state==='CRUISE'){
+          enterNightHunt(S, S.pos.x, S.pos.z);
+        } else if(S.state==='SIESTA_TRAVEL' || S.state==='SIESTA_SLEEP'){
+          S.siestaSpot=null; enterNightHunt(S, S.pos.x, S.pos.z);   // a siesta that ran into dusk ends here
+        }
+      } else if(S.state==='NIGHT_HUNT'){
+        // Mid-strike at dawn → finish it. _commitT is only alive while it is inside
+        // NIGHT_STRIKE_R of a live target, and NIGHT_DAWN_GRACE caps the wait so a
+        // cobra stuck in a brawl still always ends the night up a tree.
+        S._dawnT += dt;
+        if(S._commitT<=0 || S._dawnT > SNAKE.NIGHT_DAWN_GRACE) retreatToTreeAtDawn(S);
+      }
+    }
+
     // ---- Cobra hood ----
     // Flares as it closes on whatever it's about to bite (the tell that a strike is
-    // coming), and stays folded flat while it lies coiled in an ambush tree or
-    // asleep — so the drop is still a surprise. No-op on python/worm.
+    // coming), and stays folded flat while it lies coiled in an ambush tree, asleep,
+    // or travelling on a night hunt — so the drop, and the strike, stay a surprise.
+    // On a night hunt the flare is tied to the COMMIT, not to mere proximity: it
+    // moves through the dark hood-folded and only spreads in the last few metres.
+    // No-op on python/worm.
     if(S.hoodGrp){
-      let tp=null;
-      if(S.state!=='AMBUSH_COIL' && S.state!=='SIESTA_SLEEP'){
+      let want = 0;
+      if(S.state==='NIGHT_HUNT'){
+        want = S._commitT>0 ? 1 : 0;
+      } else if(S.state!=='AMBUSH_COIL' && S.state!=='SIESTA_SLEEP' && S.state!=='NIGHT_DESCEND'){
+        let tp=null;
         if(S.targetKind==='player') tp = player.pos;
         else if(S.target && S.target.health>0) tp = S.target.pos;
         else if(S._preyTarget && S._preyTarget.health>0) tp = S._preyTarget.pos;
+        want = (tp && Math.hypot(tp.x-S.pos.x, tp.z-S.pos.z) < SNAKE.HOOD_R) ? 1 : 0;
       }
-      tickSnakeHood(S, (tp && Math.hypot(tp.x-S.pos.x, tp.z-S.pos.z) < SNAKE.HOOD_R) ? 1 : 0, dt);
+      tickSnakeHood(S, want, dt);
     }
     if(S.flashTimer>0){ S.flashTimer-=dt; const f=S.flashTimer>0; S.mesh.traverse(o=>{ if(o.isMesh && !o.userData.noFlash) o.material=f?FLASH_MAT:o.userData.origMat; }); }
     snakeGrowCheck(S);
@@ -5426,6 +5570,88 @@ function updateSnakes(dt){
       if(S.state==='AMBUSH_TRAVEL'){ pushSnakePath(S); layoutSnake(S); return; }
     }
 
+    // ============ NIGHT DESCENT (black cobra) ============
+    // Dusk. The coil that was wound round the canopy unwinds DOWN the trunk,
+    // widening and quickening as it nears the ground, then takes up the hunt at
+    // the tree base. Struck on the way down → it just lands and hunts.
+    if(S.state==='NIGHT_DESCEND'){
+      const t = S.nightTree;
+      const cx = t ? t.pos.x : S.pos.x, cz = t ? t.pos.z : S.pos.z;
+      const base = terrainY(cx,cz), top = base + (t ? (t.perchY||3) : 3);
+      S.descendT += dt;
+      const k = clamp(S.descendT / SNAKE.NIGHT_DESCEND_T, 0, 1);
+      S.pos.set(cx, lerp(top, base+0.5, k), cz);        // head drives aim/minimap/hitbox the whole way down
+      if(hurt || k>=1){ enterNightHunt(S, cx, cz); layoutSnake(S); return; }
+      layoutSnakeCoil(S, cx, S.pos.y, cz, lerp(0.62, 1.05, k), 0.06*(1-k), dt, lerp(0.35, 1.2, k));
+      return;
+    }
+
+    // ============ NIGHT HUNT (black cobra) ============
+    // On the ground, working the patch of savannah around the tree it came down
+    // from: patrol → close → strike → move on. Everything it can strike is
+    // something that can strike back, so every bite here goes through the same
+    // snakeBite that tags the victim's own retaliation hook.
+    if(S.state==='NIGHT_HUNT'){
+      S._commitT = Math.max(0, S._commitT - dt);
+
+      // A live grudge outranks everything — that is the counter-attack rule.
+      let tgt=null, biteKind=null;
+      if(S.aggroTimer>0 && S.targetKind==='player' && player.health>0 && !playerOffGround()){ tgt=player.pos; biteKind='player'; }
+      else if(S.aggroTimer>0 && S.targetKind==='prey' && S.target && S.target.health>0){ tgt=S.target.pos; biteKind='prey'; S._preyTarget=S.target; }
+      else if(S.aggroTimer>0 && snakeFoeValid(S)){ tgt=S.target.pos; biteKind=S.targetKind; }
+      else {
+        if(S.targetKind && S.targetKind!=='player'){ S.target=null; S.targetKind=null; }
+        const pick = snakeNightTarget(S);
+        if(pick){
+          tgt = pick.pos; biteKind = pick.kind;
+          if(pick.kind==='player'){ S.target=player; S.targetKind='player'; }
+          else { S.target = pick.ent; S.targetKind = pick.kind; if(pick.kind==='prey') S._preyTarget = pick.ent; }
+        }
+      }
+
+      if(tgt){
+        const dx=tgt.x-S.pos.x, dz=tgt.z-S.pos.z, d=Math.hypot(dx,dz);
+        // GIVE UP ON WHAT IT CAN'T CATCH. A 14-speed cobra cannot run down an
+        // impala, and a night spent trailing one across the map is neither a hunt
+        // nor a patrol — it also pinned the hood open the whole time. So: if the
+        // gap hasn't CLOSED in NIGHT_GIVEUP seconds, drop that one and go back to
+        // working the ground. Slow things (lion, rhino, gorilla, a cornered dog)
+        // are unaffected — the gap closes, so the timer keeps resetting.
+        const ent = S.target || player;
+        // A commitment is to ONE strike: switching target drops it, so the hood
+        // can't ride over from something it was about to bite a moment ago.
+        if(S._chaseEnt !== ent){ S._chaseEnt = ent; S._chaseD = d; S._chaseT = 0; S._commitT = 0; }
+        if(d < S._chaseD - 0.5){ S._chaseD = d; S._chaseT = 0; } else S._chaseT += dt;
+        if(S._chaseT > SNAKE.NIGHT_GIVEUP && d > SNAKE.MELEE_R){
+          S._skipEnt = ent; S._skipT = elapsed + SNAKE.NIGHT_SKIP;
+          S.target=null; S.targetKind=null; S._preyTarget=null; S.aggroTimer=0;
+          S._chaseEnt=null; S._commitT=0; S.patrolSpot=null;
+          pushSnakePath(S); layoutSnake(S); return;
+        }
+        if(d < SNAKE.NIGHT_STRIKE_R) S._commitT = SNAKE.NIGHT_COMMIT_T;    // COMMITTED — the hood spreads
+        if(d > SNAKE.MELEE_R) snakeStep(S, tgt.x, tgt.z, S.v.SPEED_HUNT, dt);
+        else {
+          faceSnake(S, dx, dz, dt); S.pos.y = terrainY(S.pos.x,S.pos.z)+0.5;
+          if(S.biteCd<=0){ snakeBite(S, biteKind); S.biteCd=S.v.BITE_CD; S._commitT=0; }   // strike spent → hood folds
+        }
+        // A chase that drags it clean out of its patch MOVES the patch — it hunts
+        // where the game is instead of rubber-banding back to one tree all night.
+        const a=S.nightAnchor;
+        if(a && Math.hypot(S.pos.x-a.x, S.pos.z-a.z) > SNAKE.NIGHT_ROAM_R*SNAKE.NIGHT_REANCHOR){ a.x=S.pos.x; a.z=S.pos.z; }
+      } else {
+        // Nothing in reach → patrol the anchor's radius. Slow, hood down, tasting
+        // the air (tickSnakeHood keeps the tongue flicking).
+        S._chaseEnt = null; S._commitT = 0;
+        S.patrolT -= dt;
+        if(!S.patrolSpot || S.patrolT<=0){ S.patrolSpot = pickNightPatrolSpot(S); S.patrolT = SNAKE.NIGHT_PATROL_T; }
+        const sp = S.patrolSpot;
+        if(Math.hypot(sp.x-S.pos.x, sp.z-S.pos.z) < 1.6) S.patrolSpot = null;
+        else snakeStep(S, sp.x, sp.z, S.v.SPEED_ROAM, dt);
+      }
+
+      pushSnakePath(S); layoutSnake(S); return;
+    }
+
     // ============ CRUISE ============
     // Midday → down tools and go find a warm patch of grass by the water.
     if(S.state==='CRUISE' && S.siestaDay!==dn.day && dayProg>=SNAKE.SIESTA_LO && dayProg<=SNAKE.SIESTA_HI && S.aggroTimer<=0){
@@ -5436,9 +5662,11 @@ function updateSnakes(dt){
     }
 
     // Nothing to fight and no siesta due → the cobra goes and lies up in a tree.
-    // Gated on the player being out of detection range, so it never turns its back
-    // on someone it can already see.
-    if(S.state==='CRUISE' && S.v.ambush && S.ambushCd<=0 && S.aggroTimer<=0
+    // DAY ONLY: after dark it belongs on the ground (the day/night switch above
+    // moves it to NIGHT_HUNT, and this gate makes that structural rather than
+    // relying on the switch having fired first). Also gated on the player being out
+    // of detection range, so it never turns its back on someone it can already see.
+    if(S.state==='CRUISE' && S.v.ambush && dn.isDay && S.ambushCd<=0 && S.aggroTimer<=0
        && Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z) > SNAKE.DETECT*stealth.visMul){
       const at = pickAmbushTree(S);
       if(at){ S.ambushTree=at; S.state='AMBUSH_TRAVEL'; S.target=null; S.targetKind=null;
