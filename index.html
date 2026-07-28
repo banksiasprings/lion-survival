@@ -2828,7 +2828,7 @@ function updatePrey(dt){
               const ax=player.pos.x-P.pos.x,az=player.pos.z-P.pos.z,al=Math.hypot(ax,az)||1;
               player.knockback.x=(ax/al)*ELE.KB; player.knockback.z=(az/al)*ELE.KB;
               shakeTime=Math.max(shakeTime,0.5); shakeAmt=0.012; playSound('spotted'); showKillfeed('🐘 The elephant tramples you!');
-            } else { tgt.health-=ELE.GORE; tgt.flashTimer=0.25; tgt.stunTimer=Math.max(tgt.stunTimer||0,ELE.GORE_STUN);
+            } else { tgt.health-=ELE.GORE; tgt.flashTimer=0.25; stagger(tgt, ELE.GORE_STUN);   // only a rhino is staggered — a lion just keeps coming
               // the victim FIGHTS BACK — it turns on the elephant. Every kind it can
               // trample has a route back at it; none is trampled with impunity.
               if(tk==='rhino'){ tgt.target=P; tgt.targetKind='prey'; tgt.aggroTimer=RHINO.AGGRO_TIME; }
@@ -3602,7 +3602,7 @@ function updateGorillas(dt){
         if(td < GOR.SWIPE_RANGE + 0.8){
           tgt.health   -= GOR.SWIPE_DMG;
           tgt.flashTimer = 0.15;
-          tgt.stunTimer  = Math.max(tgt.stunTimer||0, 0.8);
+          stagger(tgt, 0.8);                              // tanks only — a swiped lion/serpent/dog fights straight back
           if(rhinoMeshes.includes(tgt)){                 // hit a rhino → it turns on the gorilla
             tgt.target = G; tgt.targetKind = 'gorilla'; tgt.aggroTimer = RHINO.AGGRO_TIME;
             showKillfeed('🦍 Gorilla swiped the rhino');
@@ -3924,7 +3924,7 @@ function rhinoSmack(R){
     shakeTime=Math.max(shakeTime,0.40); shakeAmt=0.009; playSound('spotted');
     showKillfeed('🦏 The rhino gores you!');
   } else if(t){
-    t.health -= RHINO.GORE_DMG; t.flashTimer=0.25; t.stunTimer=Math.max(t.stunTimer||0, RHINO.GORE_STUN);
+    t.health -= RHINO.GORE_DMG; t.flashTimer=0.25; stagger(t, RHINO.GORE_STUN);   // only the elephant is big enough to be staggered
     // Tag the victim so ITS retaliation hook turns it back on the rhino. Every
     // creature the rhino can gore now has a route back at it.
     if(R.targetKind==='lion' || R.targetKind==='snake' || R.targetKind==='dog' || R.targetKind==='prey'){
@@ -4235,7 +4235,7 @@ function dogBite(D, what){
     else if(k==='lion'){ T.lastHitBy=D; T.lastHitKind='dog'; }
     else if(k==='eagle'){ T.lastHitBy=D; T.lastHitKind='dog';                       // avenging a raked pack-mate
       if(T.health<=0) showKillfeed('🐕 The pack caught the eagle on the ground!'); }
-    else if(k==='secretary'){ T.lastHitBy=D; T.lastHitKind='dog'; T.stunTimer=Math.max(T.stunTimer||0,0.4);
+    else if(k==='secretary'){ T.lastHitBy=D; T.lastHitKind='dog';                 // no stagger — the bird keeps its footing and answers
       if(T.health<=0) showKillfeed('🐕 The pack pulled down the secretary bird!'); }
   }
 }
@@ -4823,11 +4823,11 @@ function eagleStrike(E, T){
   if(T.health<=0) return false;
   T.health -= EAGLE.STRIKE_DMG; T.flashTimer=0.25;
   if(kind==='prey'){
-    T.state='flee'; T.alertTimer=3; T.stunTimer=Math.max(T.stunTimer||0,0.6);
+    T.state='flee'; T.alertTimer=3; stagger(T, 0.6);        // bolting is AI; the stagger is tanks-only now
     T.lastHitBy=E; T.lastHitKind='eagle';
     showKillfeed(T.health<=0 ? '🦅 The eagle kills a '+T.label+'!' : '🦅 The eagle strikes a '+T.label);
   } else {                                   // wild dog — the pack grudge watchdog answers
-    T.lastHitBy=E; T.lastHitKind='eagle'; T.stunTimer=Math.max(T.stunTimer||0,0.5);
+    T.lastHitBy=E; T.lastHitKind='eagle';                   // no stagger — the raked dog rounds on it immediately
     showKillfeed(T.health<=0 ? '🦅 The eagle kills a wild dog!' : '🦅 The eagle rakes a wild dog!');
   }
   return true;
@@ -5168,9 +5168,8 @@ function secretaryKick(B, what){
     // 60 + the spine-break term (see SECR.SPINE_SEGS): full health bar at zero
     // growth, gone by SPINE_SEGS segments. A serpent that has fed survives the kick.
     const spine = S.maxHealth * Math.max(0, 1 - (S.growth||0)/SECR.SPINE_SEGS);
-    S.health -= SECR.SNAKE_DMG + spine; S.flashTimer=0.25;
-    S.stunTimer = Math.max(S.stunTimer||0, SNAKE.ROCK_STUN);
-    S.lastHitBy=B; S.lastHitKind='secretary';                 // → the serpent watchdog turns it on the bird
+    S.health -= SECR.SNAKE_DMG + spine; S.flashTimer=0.25;   // no stagger — a serpent is not a tank; it whips straight back
+    S.lastHitBy=B; S.lastHitKind='secretary';               // → the serpent watchdog turns it on the bird
     S.target=B; S.targetKind='secretary'; S.aggroTimer=SNAKE.AGGRO_TIME;
     playSound('throw');
     if(S.health<=0){
@@ -5420,11 +5419,13 @@ const SNAKE_VARIANTS = {
   worm:   { key:'worm',   icon:'🪱', label:'pink worm',
             HEALTH:500,  BITE_DMG:40, BITE_CD:1.0, SPEED_ROAM:9.0, SPEED_HUNT:32,   // 2× the python — fastest on the ground
             wrap:false, tree:false, mm:'#d96aa0', mmHot:'#ff9ecb' },
-  // A solid bite (20) AND the venom on top — two of these in quick succession
-  // kill from full health. By DAY it lies up in a tree and DROPS on whoever walks
-  // under it; by NIGHT it comes down and hunts (see VENOM / applyVenom, NIGHT_HUNT).
+  // A solid bite (20) AND the venom on top — ONE of these kills from full health
+  // in ~2.5 s, because BITE_CD is 0.5: the fast-strike specialist, 2 bites/second,
+  // 40 dmg/s before growth and before the venom. By DAY it lies up in a tree and
+  // DROPS on whoever walks under it; by NIGHT it comes down and hunts
+  // (see VENOM / applyVenom / applyCreatureVenom, NIGHT_HUNT).
   cobra:  { key:'cobra',  icon:'☠️', label:'black cobra',
-            HEALTH:300,  BITE_DMG:20, BITE_CD:1.6, SPEED_ROAM:6.0, SPEED_HUNT:14,   // outrunnable by a sprint — the poison is the threat
+            HEALTH:300,  BITE_DMG:20, BITE_CD:0.5, SPEED_ROAM:6.0, SPEED_HUNT:14,   // outrunnable by a sprint — the strike rate + poison are the threat
             wrap:false, tree:false, venom:true, ambush:true, night:true, mm:'#5b2f8a', mmHot:'#b07bff' },
 };
 
@@ -5871,6 +5872,38 @@ function applyVenom(){
     playSound('spotted');
   }
 }
+// ---- VENOM ON A CREATURE (2026-07-29) --------------------------------
+// Steven: the venom should hit anything the cobra bites, not just the player.
+// Same shape as the player's — bleed to a floor of 1 HP over VENOM.TTF seconds,
+// then hold there for the rest of an in-game day — but the DPS is scaled off the
+// victim's own maxHealth so "one minute to the floor" holds whatever the size:
+// a 25-HP wild dog and a 500-HP pink worm are both on 1 HP at 60 s.
+// It never kills by itself (same rule as the player's), but a 1-HP animal in this
+// savannah is dead the moment anything touches it — including the cobra's next
+// bite. That is what makes the cobra a hard counter to the other predators.
+// The cures are player-only by design: an animal rides it out or it doesn't.
+function applyCreatureVenom(T){
+  if(!T || T.health <= VENOM.FLOOR) return;
+  T.poisonT  = venomDuration();                                     // a re-bite refreshes, never stacks
+  T.venomDps = Math.max(0.01, ((T.maxHealth||1) - VENOM.FLOOR) / VENOM.TTF);
+}
+// Ticked once per frame for every animal from animate(), so no creature module
+// has to know venom exists and no future damage site can forget to drain it.
+function updateCreatureVenom(dt){
+  const tick = o => {
+    if(!(o.poisonT > 0)) return;
+    o.poisonT -= dt;
+    // Guarded on health > FLOOR *before* the Math.max — a bare clamp would
+    // RESURRECT an animal something else had already killed. (Same trap the
+    // player's venom hit in test on 2026-07-27.)
+    if(o.health > VENOM.FLOOR) o.health = Math.max(VENOM.FLOOR, o.health - (o.venomDps||0)*dt);
+  };
+  lionMeshes.forEach(tick); preyMeshes.forEach(tick); gorillaMeshes.forEach(tick);
+  rhinoMeshes.forEach(tick); dogMeshes.forEach(tick); skyVultureMeshes.forEach(tick);
+  secretaryMeshes.forEach(tick);
+  eagleMeshes.forEach(E=>{ if(!E.dying) tick(E); });
+  snakeMeshes.forEach(S=>{ if(!S.dying) tick(S); });                 // …don't drain something already collapsing
+}
 // Water flushes it: wading into the watering hole is the cure (the Healing Herb
 // also purges it — see useActiveAbility). Both are deliberate risks: the hole is
 // where the pride drinks and where serpents bed down at midday.
@@ -5899,6 +5932,7 @@ function snakeBite(S, kind){
     const P=S._preyTarget;
     P.health -= dmg; P.flashTimer=0.2; P.state='flee'; P.alertTimer=3;
     if(P.species==='elephant'){ P.aggroT=ELE.RAGE_TIME; P.lastHitBy=S; P.lastHitKind='snake'; }   // the bull turns on the serpent
+    if(S.v.venom) applyCreatureVenom(P);
     snakeCredit(S, P);
     if(P.health<=0) showKillfeed(S.v.icon+' The '+S.v.label+' swallows a '+P.label+'!');
   } else if(S.target && S.target.health>0){
@@ -5908,7 +5942,7 @@ function snakeBite(S, kind){
     // serpent bites is left without a way to bite back.
     const T=S.target;
     T.health -= dmg; T.flashTimer=0.25;
-    T.stunTimer = Math.max(T.stunTimer||0, SNAKE.CREATURE_BITE_STUN);
+    stagger(T, SNAKE.CREATURE_BITE_STUN);       // tanks only — a bitten lion/dog/gorilla keeps fighting
     if(kind==='lion'){ T.lastHitBy=S; T.lastHitKind='snake'; }                       // → pride-retaliation watchdog mobs the serpent
     else if(kind==='dog'){ T.lastHitBy=S; T.lastHitKind='snake'; }                   // → the pack's grudge watchdog
     else if(kind==='secretary'||kind==='eagle'){                                     // a bird that stood in the wrong place
@@ -5921,8 +5955,11 @@ function snakeBite(S, kind){
     }
     else if(kind==='rhino'){ T.target=S; T.targetKind='snake'; T.aggroTimer=RHINO.AGGRO_TIME; }
     else if(kind==='gorilla'){ T.lastDamagedBy=S; T.lastDamageTime=elapsed; }        // → gorilla retaliation override
+    else if(kind==='snake'){ T.lastHitBy=S; T.lastHitKind='snake'; }                 // serpent vs serpent → the other one's watchdog answers
+    if(S.v.venom) applyCreatureVenom(T);                                             // the cobra poisons whatever it bites
     snakeCredit(S, T);
-    if(T.health<=0) showKillfeed(S.v.icon+' The '+S.v.label+' killed '+(SNAKE_VICTIM_NOUN[kind]||('a '+kind))+'!');
+    if(T.health<=0) showKillfeed(S.v.icon+' The '+S.v.label+' killed '+
+      (kind==='snake' ? ('the '+T.v.label) : (SNAKE_VICTIM_NOUN[kind]||('a '+kind)))+'!');
   }
 }
 
@@ -6092,6 +6129,37 @@ function snakeNightTarget(S){
   scan(preyMeshes, 'prey');
   return best;
 }
+// Who a CRUISING serpent goes after — the 🪱 pink worm and 🐍 sand python (and a
+// cobra that has no ambush tree). Steven, 2026-07-29: the worm "went through a
+// lion and a gorilla" because its hunt list was PREY ONLY. Both serpents now hunt
+// PREDATORS as well, which makes them full participants in
+// everyone-fights-everyone instead of glorified herbivore-eaters.
+//   IN:  lion, wild dog, gorilla (not one up a tree), grounded birds, prey, and
+//        serpents of a DIFFERENT variant.
+//   OUT: its own variant — it doesn't hunt its own kind; and the two TANKS, the
+//        elephant and the rhino, which intimidate it and can still stomp it.
+//        Both stay retaliation targets: bite one and its watchdog answers, and the
+//        python's WRAP (checked before this) still coils elephant/gorilla/rhino.
+// Kept separate from snakeNightTarget rather than merged with it: that one is the
+// cobra's night behaviour, tuned in cb7f991, and is deliberately left alone.
+function snakeCruiseTarget(S){
+  let best=null, bd=SNAKE.HUNT_PREY_R;
+  const scan=(list, kind, skip)=>{
+    list.forEach(e=>{
+      if(e===S || e.health<=0 || (skip && skip(e))) return;
+      const d = Math.hypot(e.pos.x-S.pos.x, e.pos.z-S.pos.z);
+      if(d<bd){ bd=d; best={kind, ent:e}; }
+    });
+  };
+  scan(lionMeshes, 'lion');
+  scan(dogMeshes, 'dog');
+  scan(gorillaMeshes, 'gorilla', G=>G.state==='perched');                  // one up a tree is out of reach
+  scan(secretaryMeshes, 'secretary', B=>!secretaryGrounded(B));            // its own predator — the fight cuts both ways
+  scan(eagleMeshes, 'eagle', E=>E.dying || !eagleGrounded(E));
+  scan(snakeMeshes, 'snake', O=>O.dying || O.v.key===S.v.key || O.state==='AMBUSH_COIL');
+  scan(preyMeshes, 'prey', P=>P.species==='elephant');                     // the bull is not on the menu
+  return best;
+}
 // A spot to work next, inside NIGHT_ROAM_R of the anchor and on legal ground.
 function pickNightPatrolSpot(S){
   const a = S.nightAnchor || {x:S.pos.x, z:S.pos.z};
@@ -6118,7 +6186,10 @@ function snakeFoeValid(S){
                // The secretary bird is the serpent's dedicated predator — biting it
                // back is the other half of that fight. A bird that got airborne
                // (escape flight / a soaring eagle) is out of reach and drops the grudge.
-               : (k==='secretary'||k==='eagle') ? groundBirdValid(t, k) : false;
+               : (k==='secretary'||k==='eagle') ? groundBirdValid(t, k)
+               // Serpent vs serpent (2026-07-29): a worm and a python will fight.
+               // One collapsing, or a cobra up an ambush tree, is not a live foe.
+               : k==='snake' ? (snakeMeshes.includes(t) && !t.dying && t.state!=='AMBUSH_COIL') : false;
   if(!inList) return false;
   return Math.hypot(t.pos.x-S.pos.x, t.pos.z-S.pos.z) < SNAKE.FOE_LEASH;
 }
@@ -6251,6 +6322,10 @@ function updateSnakes(dt){
       // Pulse the hit-flash ~2×/s rather than holding it — a permanently white
       // victim would just erase the model for the whole 8 s.
       if(Math.floor(S.wrapT*2) !== Math.floor((S.wrapT-dt)*2)) e.flashTimer = 0.12;
+      // EXEMPT from the stun policy on purpose: this is the wrap MECHANIC (the
+      // victim is physically coiled, not staggered), refreshed every frame. It
+      // deliberately bypasses stagger()'s tanks-only filter, or coiling a gorilla
+      // would no longer hold it.
       e.stunTimer  = Math.max(e.stunTimer||0, 0.25);               // target immobilised (all three honour stunTimer)
       snakeCredit(S, e);
       S.pos.set(e.pos.x, terrainY(e.pos.x,e.pos.z)+0.5, e.pos.z);  // the python is locked in place too
@@ -6502,7 +6577,16 @@ function updateSnakes(dt){
     else {
       if(S.aggroTimer<=0 || !snakeFoeValid(S)){ if(S.targetKind && S.targetKind!=='player'){ S.target=null; S.targetKind=null; } }
       if(!playerOffGround()){ const dp=Math.hypot(player.pos.x-S.pos.x,player.pos.z-S.pos.z); if(dp<SNAKE.DETECT*stealth.visMul){ tgt=player.pos; biteKind='player'; } }
-      if(!tgt){ let prey=null,pd=SNAKE.HUNT_PREY_R; preyMeshes.forEach(P=>{ if(P.health<=0) return; const d=P.pos.distanceTo(S.pos); if(d<pd){pd=d;prey=P;} }); if(prey){ tgt=prey.pos; biteKind='prey'; S._preyTarget=prey; } }
+      // Nearest thing worth biting inside HUNT_PREY_R — PREDATORS INCLUDED now,
+      // not just prey (see snakeCruiseTarget).
+      if(!tgt){
+        const pick = snakeCruiseTarget(S);
+        if(pick){
+          tgt = pick.ent.pos; biteKind = pick.kind;
+          if(pick.kind==='prey') S._preyTarget = pick.ent;
+          else { S.target = pick.ent; S.targetKind = pick.kind; }   // snakeBite's creature branch reads S.target
+        }
+      }
     }
 
     if(tgt){
@@ -6771,6 +6855,33 @@ function buildBoltMesh(){
   return g;
 }
 
+// ---- STUN POLICY (2026-07-29) ---------------------------------------------
+// Steven: "the knockback is too powerful — take stun off all animals except
+// elephant and rhino", and "axe, spear, hammer do damage only; rocks keep the
+// knockback". Two rules, kept in ONE place so no damage site — present or
+// future — can quietly drift from them:
+//   1. CREATURE-ON-CREATURE stagger only lands on the two TANKS (elephant,
+//      rhino). They are the interruptible heavies. Every other animal takes its
+//      damage and keeps doing whatever its AI was already doing — a lion that
+//      was mid-charge stays mid-charge. Predators being stagger-locked into
+//      paralysis was what broke the fight loop.
+//   2. Of the player's weapons ONLY the thrown rock stuns — and a rock stuns
+//      ANYTHING it hits, tank or not. The rock is the stun weapon; axe, spear,
+//      hammer, crossbow bolt and boomerang are pure damage.
+// Deliberately NOT routed through here: the sand python's WRAP, which holds its
+// victim with a continuously-refreshed stunTimer. That is a tuned mechanic, not
+// a hit-stagger, and it would break if a gorilla stopped being stunnable.
+// player.stunTimer is a separate thing entirely and is untouched throughout.
+function stunnable(o){                                    // the two tanks, and only them
+  return !!o && (o.species === 'elephant' || rhinoMeshes.includes(o));
+}
+function stagger(o, t){                                   // creature-on-creature — tank filter applies
+  if(stunnable(o)) o.stunTimer = Math.max(o.stunTimer||0, t);
+}
+function rockStun(o, t){                                  // a thrown rock — ignores the tank filter
+  o.stunTimer = Math.max(o.stunTimer||0, t);
+}
+
 // Measure an animal's hit cylinder from its actual mesh (so thrown weapons hit the
 // WHOLE body, not a tiny sphere at its feet). Called once per spawn.
 function setHitbox(o){
@@ -6888,13 +6999,15 @@ function updateThrownRocks(dt){
     const m = r.mult || 1;
     const ic    = r.crossbow ? '🏹' : r.spear ? '🗡️' : '🪨';   // rocks use m; spear dmg per-target; bolt is flat 50
     const wname = r.crossbow ? 'Bolt' : r.spear ? 'Spear' : 'Rock';
+    // The ROCK is the stun weapon (see the stun policy above) — a spear or a bolt
+    // is pure damage now, so a speared lion keeps coming at you.
+    const isRock = !r.spear && !r.crossbow;
     let hit = false;
     lionMeshes.forEach(L=>{
       if(projHit(r, L)){                              // whole-body hit cylinder
         L.health -= r.crossbow ? 50 : r.spear ? L.maxHealth/5 : m;     // spear: exactly 5 to down a lion; bolt: 50 (one-shots)
         L.lastHitBy=player; L.lastHitKind='player';   // hit a lion → the whole pride turns on you (via the retaliation watchdog)
-        L.stunTimer = 5;
-        L.state = 'stunned';
+        if(isRock){ L.stunTimer = 5; L.state = 'stunned'; }   // rock only — a spear/bolt no longer freezes it
         L.flashTimer = 0.25;
         hit = true;
         if(L.health<=0){ showKillfeed(ic+' '+wname+' kill!'); }
@@ -6905,7 +7018,7 @@ function updateThrownRocks(dt){
     if(!hit) preyMeshes.forEach(P=>{
       if(projHit(r, P)){
         P.health -= r.crossbow ? 50 : r.spear ? (P.species==='kudu' ? P.maxHealth/2 : P.species==='giraffe' ? P.maxHealth/3 : P.species==='elephant' ? P.maxHealth/15 : P.maxHealth) : 9*m;
-        P.flashTimer = 0.25; P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;
+        P.flashTimer = 0.25; if(isRock) P.stunTimer = 2.5; P.state='flee'; P.alertTimer = 3;   // fleeing is AI, not stun — that stays
         if(P.species==='elephant'){ P.aggroT = ELE.RAGE_TIME; P.lastHitBy=player; P.lastHitKind='player'; }   // enrages it → it hones in on YOU
         hit = true;
         showKillfeed(P.health<=0 ? ic+' Kill — '+P.label+'!' : (P.species==='elephant' ? '🐘 The elephant turns on you!' : ic+' Stunned the '+P.label));
@@ -6917,8 +7030,8 @@ function updateThrownRocks(dt){
       if(G.state!=='perched' && G.state!=='sleeping' && projHit(r, G)){
         G.health -= r.crossbow ? 50 : r.spear ? G.maxHealth/10 : 8*m;   // spear: 10 to down the gorilla; bolt: 50
         G.flashTimer = 0.25;
-        G.stunTimer = Math.max(G.stunTimer||0, (r.spear||r.crossbow) ? GOR.SPEAR_STUN : GOR.ROCK_STUN);  // daze the brute
-        hit = true; showKillfeed(r.crossbow ? '🏹 Bolt punches the gorilla!' : r.spear ? '🗡️ Spear staggers the gorilla!' : '🪨 Rock dazes the gorilla!');
+        if(isRock) rockStun(G, GOR.ROCK_STUN);   // only the rock dazes the brute now
+        hit = true; showKillfeed(r.crossbow ? '🏹 Bolt punches the gorilla!' : r.spear ? '🗡️ Spear bites into the gorilla!' : '🪨 Rock dazes the gorilla!');
       }
     });
     // The rhino: tanky, takes many throws — and being hit reveals you exactly, so
@@ -6927,7 +7040,7 @@ function updateThrownRocks(dt){
       if(projHit(r, R)){
         R.health -= r.crossbow ? 50 : r.spear ? RHINO.SPEAR_DMG : RHINO.ROCK_DMG;
         R.flashTimer = 0.25;
-        R.stunTimer = Math.max(R.stunTimer||0, (r.spear||r.crossbow) ? RHINO.SPEAR_STUN : RHINO.ROCK_STUN);
+        if(isRock) rockStun(R, RHINO.ROCK_STUN);   // rock stuns the tank; spear/bolt just wound it
         R.target = player; R.targetKind = 'player'; R.aggroTimer = RHINO.AGGRO_TIME;   // it locks onto you
         hit = true; showKillfeed(R.health<=0 ? ic+' The rhino is down!' : '🦏 The rhino wheels on you!');
       }
@@ -6937,8 +7050,8 @@ function updateThrownRocks(dt){
     if(!hit) dogMeshes.forEach(D=>{
       if(projHit(r, D)){
         D.health -= r.crossbow ? 50 : r.spear ? D.maxHealth : 15*m;   // spear/bolt one-shot; rock ~2
-        D.flashTimer = 0.25; D.stunTimer = Math.max(D.stunTimer||0, DOG.ROCK_STUN);
-        wildDogsVendetta = true;                                       // ← the whole pack turns on you
+        D.flashTimer = 0.25; if(isRock) rockStun(D, DOG.ROCK_STUN);
+        wildDogsVendetta = true;                                      // ← the whole pack turns on you
         hit = true; showKillfeed(D.health<=0 ? ic+' Wild dog down — the pack turns on you!' : '🐕 You wound a dog — the pack turns on you!');
       }
     });
@@ -6965,7 +7078,7 @@ function updateThrownRocks(dt){
     if(!hit) secretaryMeshes.forEach(B=>{
       if(B.health>0 && projHit(r, B)){
         B.health -= r.crossbow ? 50 : r.spear ? B.maxHealth : 14*m;   // spear one-shots / bolt 50 / rock chips
-        B.flashTimer = 0.25; B.stunTimer = Math.max(B.stunTimer||0, 0.9);
+        B.flashTimer = 0.25; if(isRock) rockStun(B, 0.9);
         hit = true; showKillfeed(B.health<=0 ? ic+' '+wname+' drops the secretary bird!' : ic+' '+wname+' hits the secretary bird!');
       }
     });
@@ -6975,7 +7088,7 @@ function updateThrownRocks(dt){
       if(S.health>0 && !S.dying && projHitSnake(r, S)){
         const wasAggro = S.aggroTimer>0;
         S.health -= r.crossbow ? 50 : r.spear ? SNAKE.SPEAR_DMG : 15*m;   // spear 80 / bolt 50 / rock ~15
-        S.flashTimer = 0.25; S.stunTimer = Math.max(S.stunTimer||0, SNAKE.ROCK_STUN);
+        S.flashTimer = 0.25; if(isRock) rockStun(S, SNAKE.ROCK_STUN);
         S.target = player; S.targetKind = 'player'; S.aggroTimer = SNAKE.AGGRO_TIME;
         S.lastHitBy = player; S.lastHitKind = 'player';
         hit = true;
@@ -7258,27 +7371,29 @@ function updateBoomerang(r, dt, i){
   if(r.t >= r.life){ killObj(r.mesh); thrownRocks.splice(i,1); playSound('collect'); }   // caught
 }
 // Apply the boomerang's 100-dmg hit, reusing each animal's wound + retaliation hooks.
+// NO STUN anywhere in here (2026-07-29): the thrown rock is the only stun weapon
+// now — see the stun policy by setHitbox. The boomerang is pure damage.
 function boomerangStrike(kind, o){
   const D = 100;
   o.flashTimer = 0.25;
   if(kind==='lion'){
-    o.health -= D; o.stunTimer = 5; o.state='stunned';
+    o.health -= D;
     o.lastHitBy=player; o.lastHitKind='player';                 // pride vendetta (watchdog reads the HP drop)
     showKillfeed(o.health<=0 ? '🪃 Boomerang kill — lion!' : '🪃 Boomerang cracks a lion!');
   } else if(kind==='prey'){
-    o.health -= D; o.stunTimer = 2.5; o.state='flee'; o.alertTimer = 3;
+    o.health -= D; o.state='flee'; o.alertTimer = 3;            // it bolts — that's AI, not a stun
     if(o.species==='elephant'){ o.aggroT = ELE.RAGE_TIME; o.lastHitBy=player; o.lastHitKind='player'; }   // the bull hones in on you
     showKillfeed(o.health<=0 ? '🪃 Boomerang kill — '+o.label+'!' : '🪃 Boomerang hits the '+o.label);
   } else if(kind==='gorilla'){
-    o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, GOR.SPEAR_STUN);
-    showKillfeed(o.health<=0 ? '🪃 Boomerang kill — gorilla!' : '🪃 Boomerang staggers the gorilla!');
+    o.health -= D;
+    showKillfeed(o.health<=0 ? '🪃 Boomerang kill — gorilla!' : '🪃 Boomerang bites into the gorilla!');
   } else if(kind==='rhino'){
-    o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, RHINO.SPEAR_STUN);
+    o.health -= D;
     o.target = player; o.targetKind = 'player'; o.aggroTimer = RHINO.AGGRO_TIME;   // it wheels on you
     showKillfeed(o.health<=0 ? '🪃 Boomerang kill — rhino!' : '🪃 Boomerang cracks the rhino!');
   } else if(kind==='dog'){
-    o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, DOG.ROCK_STUN);
-    wildDogsVendetta = true;                                          // the whole pack turns on you
+    o.health -= D;
+    wildDogsVendetta = true;                                       // the whole pack turns on you
     showKillfeed(o.health<=0 ? '🪃 Boomerang kill — wild dog! The pack turns on you!' : '🪃 Boomerang cracks a dog — the pack turns on you!');
   } else if(kind==='skyvulture'){
     o.health -= D;   // an airborne vulture survives (retreats); the dead-loop announces a grounded kill
@@ -7287,10 +7402,10 @@ function boomerangStrike(kind, o){
     o.health -= D;   // the eagle CAN die airborne — it falls (see updateMartialEagles' dying branch)
     showKillfeed(o.health<=0 ? '🪃 Boomerang kill — martial eagle!' : '🪃 Boomerang cracks the eagle!');
   } else if(kind==='secretary'){
-    o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, 0.9);
+    o.health -= D;
     showKillfeed(o.health<=0 ? '🪃 Boomerang kill — secretary bird!' : '🪃 Boomerang cracks the secretary bird!');
   } else if(kind==='snake'){
-    o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, SNAKE.ROCK_STUN);
+    o.health -= D;
     o.target = player; o.targetKind = 'player'; o.aggroTimer = SNAKE.AGGRO_TIME;
     o.lastHitBy = player; o.lastHitKind = 'player';
     showKillfeed(o.health<=0 ? '🪃 Boomerang bites deep — the '+o.v.label+'!' : '🪃 Boomerang cracks the '+o.v.label+'!');
@@ -7457,6 +7572,9 @@ const MELEE_TOOL = {
 // Apply a heavy melee blow, reusing each animal's proper wound + retaliation hooks.
 // `tool` is a MELEE_TOOL entry so the message carries the RIGHT tool name + verb, and
 // every entity (incl. gorilla & rhino, which had no kill line before) reports a kill.
+// NO STUN anywhere in here (2026-07-29): melee is pure damage, the thrown rock is
+// the stun weapon — see the stun policy by setHitbox. Axe and hammer do not freeze
+// ANYTHING, not even the elephant or the rhino: hit a lion and it keeps mauling you.
 function dealKitMelee(hit, dmg, tool){
   const o = hit.o;
   o.flashTimer = 0.25;
@@ -7464,27 +7582,27 @@ function dealKitMelee(hit, dmg, tool){
   const kill = ()=> tool.icon+' The '+tool.name+' '+tool.kill+' the '+t+'!';
   if(hit.kind==='lion'){
     t='lion';
-    o.health -= dmg; o.stunTimer = 3; o.state='stunned';
+    o.health -= dmg;
     o.lastHitBy=player; o.lastHitKind='player';             // the whole pride turns on you (via the retaliation watchdog)
     showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the lion!');
   } else if(hit.kind==='prey'){
     t=o.label;
-    o.health -= dmg; o.stunTimer = 2; o.state='flee'; o.alertTimer = 3;
+    o.health -= dmg; o.state='flee'; o.alertTimer = 3;      // it bolts — that's AI, not a stun
     if(o.species==='elephant'){ o.aggroT = ELE.RAGE_TIME; o.lastHitBy=player; o.lastHitKind='player'; }   // the bull hones in on you
     showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the '+o.label);
   } else if(hit.kind==='gorilla'){
     t='gorilla';
-    o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, GOR.ROCK_STUN);
-    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' staggers the gorilla!');
+    o.health -= dmg;
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the gorilla!');
   } else if(hit.kind==='rhino'){
     t='rhino';
-    o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, RHINO.ROCK_STUN);
+    o.health -= dmg;
     o.target = player; o.targetKind = 'player'; o.aggroTimer = RHINO.AGGRO_TIME;   // it wheels on you
     showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the rhino — it wheels on you!');
   } else if(hit.kind==='dog'){
     t='wild dog';
-    o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, DOG.ROCK_STUN);
-    wildDogsVendetta = true;                                          // the whole pack turns on you
+    o.health -= dmg;
+    wildDogsVendetta = true;                                       // the whole pack turns on you
     showKillfeed(o.health<=0 ? kill()+' The pack turns on you!' : tool.icon+' The '+tool.name+' '+tool.hit+' a dog — the pack turns on you!');
   } else if(hit.kind==='skyvulture'){
     t='vulture';
@@ -7496,11 +7614,11 @@ function dealKitMelee(hit, dmg, tool){
     showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the eagle!');
   } else if(hit.kind==='secretary'){
     t='secretary bird';
-    o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, 0.9);
+    o.health -= dmg;
     showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the secretary bird!');
   } else if(hit.kind==='snake'){
     t=o.v.label;
-    o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, SNAKE.ROCK_STUN);
+    o.health -= dmg;
     o.target = player; o.targetKind = 'player'; o.aggroTimer = SNAKE.AGGRO_TIME;   // it whips around to bite you
     o.lastHitBy = player; o.lastHitKind = 'player';
     showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the '+o.v.label+'!');
@@ -8075,15 +8193,21 @@ function rollBirdSpawns(){
 // At each day↔night turn every animal recovers to full health (the herds and
 // predators heal up between rounds).
 function healAllAnimals(){
-  lionMeshes.forEach(L=>{ L.health=L.maxHealth; });
-  preyMeshes.forEach(P=>{ P.health=P.maxHealth; });
-  gorillaMeshes.forEach(G=>{ G.health=G.maxHealth; });
-  rhinoMeshes.forEach(R=>{ R.health=R.maxHealth; });
-  dogMeshes.forEach(D=>{ D.health=D.maxHealth; });
-  skyVultureMeshes.forEach(V=>{ V.health=V.maxHealth; });
-  eagleMeshes.forEach(E=>{ if(!E.dying) E.health=E.maxHealth; });   // …nor an eagle already falling
-  secretaryMeshes.forEach(B=>{ B.health=B.maxHealth; });
-  snakeMeshes.forEach(S=>{ if(!S.dying) S.health=S.maxHealth; });   // don't revive a collapsing snake
+  // A POISONED animal does NOT reheal (2026-07-29). The player's venom blocks
+  // regen for its whole duration; this day/night reheal is the animals' only
+  // regen, so letting it fire would erase a cobra's venom every 120 s — half the
+  // 240 s the poison is supposed to hold. They recover at the first turn AFTER
+  // poisonT runs out.
+  const ok = o => !(o.poisonT > 0);
+  lionMeshes.forEach(L=>{ if(ok(L)) L.health=L.maxHealth; });
+  preyMeshes.forEach(P=>{ if(ok(P)) P.health=P.maxHealth; });
+  gorillaMeshes.forEach(G=>{ if(ok(G)) G.health=G.maxHealth; });
+  rhinoMeshes.forEach(R=>{ if(ok(R)) R.health=R.maxHealth; });
+  dogMeshes.forEach(D=>{ if(ok(D)) D.health=D.maxHealth; });
+  skyVultureMeshes.forEach(V=>{ if(ok(V)) V.health=V.maxHealth; });
+  eagleMeshes.forEach(E=>{ if(!E.dying && ok(E)) E.health=E.maxHealth; });   // …nor an eagle already falling
+  secretaryMeshes.forEach(B=>{ if(ok(B)) B.health=B.maxHealth; });
+  snakeMeshes.forEach(S=>{ if(!S.dying && ok(S)) S.health=S.maxHealth; });   // don't revive a collapsing snake
 }
 
 function updateDayNight(dt){
@@ -8628,6 +8752,7 @@ function animate(){
   updateMartialEagles(dt);    // 🦅 sky hunter — soar high on level wings, bank → stoop → strike → mantle → rebound
   updateSecretaryBirds(dt);   // 🦩 ground bird — strides solo, hunts serpents, hesitates then STOMPS
   updateSnakes(dt);           // 🐍 sand python / 🪱 pink worm — hunt, wrap, tree-grab, siesta, grow on kills
+  updateCreatureVenom(dt);    // ☠️ cobra venom draining every bitten ANIMAL (the player's ticks in updateHealth)
   updateHealthBars(dt);       // floating HP bars (after every animal has moved)
   updateCarcasses(dt);
   updateVultures(dt);

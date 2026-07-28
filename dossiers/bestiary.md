@@ -38,7 +38,19 @@
 - Campfires scare lions off (they flee fire).
 
 **Your weapons & hunting:**
-- **Rocks** (`F`, hold up to 10): chip damage + a long **stun**. Your main tool for stunning big threats.
+
+> **⚠️ STUN IS ROCKS ONLY.** The **thrown rock is the only weapon in the game that stuns anything** — and it
+> stuns *everything* it hits, from a wild dog to the elephant. The **axe, hammer, spear, crossbow bolt and
+> boomerang do damage and nothing else**: hit a lion with the axe and it keeps mauling you, hit the elephant
+> with the hammer and it keeps trampling. Rocks are cheap and weak; that's the trade. **Rock the tank, then
+> hit it with everything else** is now the core combat loop.
+>
+> Between *animals* the same idea holds: only the **elephant and the rhino** can be staggered by another
+> creature. A lion, gorilla, wild dog or serpent that gets hit just keeps fighting — no more predators
+> freezing solid mid-brawl.
+
+- **Rocks** (`F`, hold up to 10): chip damage + a long **stun** — **the only stun weapon there is**. Your
+  main tool for interrupting big threats.
 - **Spear** (equip the **Spear** kit ability, then **LMB**/`Z`): hurls far harder than a rock. **Costs 1 rock
   + 2 wood per throw** now (the toolbar slot greys out when you can't afford it).
 - **Tusk Boomerang** (equip the **🪃 Tusk Boomerang** ability — **craft it from 1 elephant tusk** first):
@@ -128,14 +140,16 @@ bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks f
 - **The only animal that can see & grab a treed player** — it closes in and **tree-grabs** you down.
 - **SMASHES walls** in its path. **Pursues from far (40 m).**
 - **Smacks you for ~50 — half your health in one hit** (cooldown ~1.7 s, plus knockback). Brutal up close.
-- **Stunned by rocks/spears** (your counter — stun it, then run or climb). **Flees when near death.**
+- **Stunned by ROCKS only** (your counter — rock it, then run or climb). A spear/bolt/axe/hammer just
+  wounds it and it keeps swinging. **Flees when near death.**
 
 ### 🦏 Rhino — neutral until you poke it
 - HP 220 (~14 spears). Roams and mostly ignores you… until provoked.
 - **Poor senses** — you can sneak past, especially crouched in grass. Attack it (or get close & exposed)
   and it **charges and gores** you (35 dmg + knockback), tracking you as it comes.
 - After it lands a hit it's **winded and slow** for a moment — that's your window to escape.
-- **Can't pass through walls** (wall it off). **Stunned by rocks/spears.** **Flees when near death.**
+- **Can't pass through walls** (wall it off). **Stunned by ROCKS only** — one of just two animals a rock
+  still staggers reliably, and the only thing that will interrupt a charge. **Flees when near death.**
 - **Fights back against lions, the gorilla, and the elephant** if they attack it.
 
 ### 🐘 Elephant — the towering bull (biggest, tankiest)
@@ -144,8 +158,11 @@ bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks f
   lions/gorilla/rhino for 26**. It **smashes walls** in its path.
 - **Enrages when hit** — spear or rock it and it locks onto you and charges *even if you hide*, for a few
   seconds. Otherwise it only aggros when you're **close AND visible** (crouch-in-grass avoids it).
-- **Stunned by rocks/spears.** Only **flees when near death.**
+- **Stunned by ROCKS only** — with the rhino it's one of the two animals anything can still stagger. A
+  spear or bolt enrages it without slowing it down. Only **flees when near death.**
 - **Everything fights it and it fights everything** — a rhino/gorilla/lion it tramples will turn on it.
+- **Serpents leave it alone.** Neither the pink worm nor the sand python will *pick* a fight with the bull
+  (or the rhino) — they're intimidated by the tanks. Bite one yourself and it still answers.
 
 ### 🐕 African wild dogs — the fast pack (they run you down)
 - **Nightmare-fuel look** — a dark dire-wolf silhouette: **bared white fangs**, a **black spike crest down the
@@ -252,6 +269,14 @@ line up a burst of damage; blundering into one is the worst.
 **All fight back against ANY attacker** — you, a lion, a wild dog, the gorilla, a rhino, the elephant. There
 is no such thing as a free hit on a serpent.
 
+**⚠ THE WORM AND THE PYTHON NOW HUNT PREDATORS, NOT JUST PREY.** They used to slither straight past a lion
+on their way to a zebra. Now anything inside **30 m** is on the menu — **lions, wild dogs, gorillas, grounded
+birds, prey, and serpents of the other kind** (a worm will fight a python; it won't fight another worm). The
+two exceptions are the **elephant and the rhino**, which they won't start on — though the python will still
+**wrap** those, and both will bite back hard at anything that hits them first. In a soak this shifted the
+serpents' predation clean off the herds: **prey survivors more than doubled** while the gorilla population
+roughly halved.
+
 #### 🐍 Sand python — the tanky constrictor
 - **Sandy tan** with darker **carpet-python brown blotches**. HP **1000** (**by far the tankiest thing in
   the game** — ~13 spears / 20 bolts / 10 boomerangs). **Bites for 50** on a **1 s cooldown**.
@@ -283,9 +308,14 @@ is no such thing as a free hit on a serpent.
   the ground, spreads its neck flat, gapes its jaw and drops its **fangs** into view — every one of those
   is the same tell. If you see the hood, you're already in range. HP **300** (the squishiest serpent,
   ~4 spears).
-- **It bites for 20 AND poisons you.** Full health → 80 on the bite, then the venom takes you to 1 HP.
-  **Two cobra bites in quick succession kill you from full**, and every kill it makes adds **+1 to that
-  bite** (a cobra that has eaten five things bites for 25; at the 50-segment cap, 56).
+- **⚡ IT STRIKES TWICE A SECOND.** Bite cooldown is **0.5 s** — the fastest attack rate of anything in the
+  game. **20 damage a bite = 40 damage per second** before growth and before the poison. Where the python
+  and worm land one bite a second, the cobra lands two.
+- **It bites for 20 AND poisons you.** Full health → 80 on the first bite, and at two bites a second it is
+  **five bites and ~2.25 seconds from full health to dead** if it stays on you (measured) — the venom barely
+  gets a chance to matter.
+  Every kill it makes adds **+1 to that bite** (a cobra that has eaten five things bites for 25; at the
+  50-segment cap, 56 — i.e. **112 damage per second**).
 - **☠️ VENOM.** One bite poisons you for **a full in-game day (240 s)**. Over the first **60 seconds** it
   bleeds you from full health down to **exactly 1 HP** — and then holds you there. **The venom itself never
   kills you.** What kills you is the next hit from anything at all, because you have no buffer left. Health
@@ -294,6 +324,13 @@ is no such thing as a free hit on a serpent.
 - **CURE — water.** Wade into the **watering hole** and the venom flushes out immediately. That's a long
   walk on 1 HP to the one place lions gather to drink and serpents bed down at midday. The **🌿 Healing Herb**
   ability also purges it (and heals) if you're carrying one.
+- **☠️ THE VENOM HITS ANIMALS TOO.** Anything the cobra bites is poisoned on the same terms — lions, wild
+  dogs, gorillas, prey, even other serpents. Whatever its size, it is bled down to **1 HP in 60 seconds**
+  and **held there for the full in-game day**, and the day/night reheal will **not** heal it while the poison
+  is in it. It never kills them outright, but a 1-HP animal in this savannah dies to the next thing that
+  touches it. **There is no cure for animals** — water and the herb are yours alone; they ride it out or they
+  don't. This makes the cobra a hard counter to almost every other predator on the map: a wild dog it bit
+  once is finished, and so is a 500-HP pink worm.
 - **☀️ BY DAY — TREE DROP-AMBUSH.** It finds a **climbable tree**, coils in the canopy with the hood folded
   flat, and **waits**. Walk under that tree and it **DROPS on you** and bites on landing. On the minimap a
   treed cobra shows as a **hollow violet ring** rather than a solid dot — you can see where it is; noticing

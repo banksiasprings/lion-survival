@@ -941,4 +941,87 @@ module hashes identically to `HEAD` (15 663 chars either side), as do `makeVultu
   and without one it would re-dive on the same frame. (f) Neither bird drops a body part, matching the wild
   dog's "pure challenge" precedent.
 
+## Stun policy, cobra strike rate, creature venom & serpent predator-hunting (2026-07-29)
+Six changes in one commit, all combat tuning — **no new Three.js object, geometry, material or texture is
+created anywhere in this batch**, so the disposal story is untouched. Merged on top of the birds session
+(`7349f39`), which landed first. **Serpent meshes are byte-identical**: pink worm (19 parts), sand python
+(25) and black cobra (60) all hash the same as the pre-change build, A/B'd in two tabs against
+`git show HEAD:index.html`. *(Fingerprint caveat worth keeping: the cobra's hood is a `ShapeGeometry`, and
+three r128 embeds the Shape's **random uuid** inside `geometry.parameters` — so a naive param hash differs
+between two cobras in the **same** build. Strip `"uuid":"…"` before comparing or the check lies.)*
+- **⚠ Stun is now governed in ONE place** — `stunnable()` / `stagger()` / `rockStun()`, declared just above
+  `setHitbox`. Two rules:
+  1. **Creature-on-creature stagger only lands on the two TANKS** (elephant, rhino). Every other animal takes
+     its damage and keeps executing its AI. Steven: predators were "stagger-locked into paralysis", which
+     broke the fight loop. Routed through `stagger()`: elephant trample, gorilla swipe, rhino gore, dog bite,
+     eagle strike, secretary kick, `snakeBite`'s creature branch.
+  2. **Of the player's weapons only the thrown ROCK stuns — and it stuns anything it hits, tank or not.**
+     Axe, hammer, spear, crossbow bolt and boomerang are pure damage. `updateThrownRocks` gates on a new
+     `isRock = !r.spear && !r.crossbow`; `dealKitMelee` and `boomerangStrike` had every `stunTimer` /
+     `state='stunned'` write deleted. **Fleeing is not stun** — `state='flee'`/`alertTimer` writes stay,
+     because that is prey AI, not paralysis.
+  - **Two deliberate exemptions, both commented in place:** the sand python's **WRAP** (a continuously
+    refreshed `stunTimer` that *is* the mechanic — routing it through `stagger()` would stop it holding a
+    gorilla; verified the wrap still kills a gorilla in ~1.6 s), and **`player.stunTimer`**, which is a
+    separate system and is untouched everywhere.
+  - Verified matrix: rock → elephant 2.5 s / dog 0.9 / lion 5 / rhino 1.2 / gorilla 1.5; spear, bolt,
+    boomerang, axe, hammer → **0 s on every target**; `stagger()` applies only to elephant + rhino.
+- **☠️ Cobra bite cooldown `1.6 → 0.5`** (`SNAKE_VARIANTS.cobra.BITE_CD`). **2 bites/second = 40 dmg/s** at
+  base 20, rising to 112 dmg/s at the `SEG_MAX` 50 cap (bite 56). Measured against a live grounded player:
+  **5 bites, 2.25 s, 44.4 effective dps** (bite 40 + the venom co-ticking) full health → `gameState 'over'`.
+  Fast enough that the venom is no longer the thing that gets you — the strike rate is.
+  *(Harness note: `snakeBite('player')` early-returns on `playerOffGround()`, and a freshly `resetGame`d
+  player sits at y=2 until `updatePlayer` settles them onto the terrain — run a few `updatePlayer` frames
+  first or the bite silently no-ops and the test reads as "0 damage".)*
+- **☠️ Venom now applies to ANIMALS** (`applyCreatureVenom` / `updateCreatureVenom`, ticked from `animate()`
+  between `updateSnakes` and `updateHealthBars`). Same shape as the player's, but **`venomDps` is scaled off
+  the victim's own `maxHealth`** — `(maxHealth-1)/60` — so "1 HP at 60 s" holds at any size (verified: 25-HP
+  dog, 58-HP lion and 500-HP worm all sit on exactly 1 HP at t=60 s). Applied in `snakeBite`'s prey **and**
+  creature branches when `S.v.venom`.
+  - ⚠ **It floors at 1 HP and never kills**, exactly like the player's — that is the explicit "(1 HP over
+    60 s, held 240 s)" spec. Same `health > FLOOR` guard *before* the `Math.max`, so it can't resurrect
+    something already killed by another source. One line (`Math.max(VENOM.FLOOR, …)` → `0`) makes it lethal
+    if that's wanted instead.
+  - ⚠ **`healAllAnimals` now skips a poisoned animal.** The day/night reheal fires every 120 s but venom runs
+    240 s, so without this the poison was erased halfway through every time — it is the animal analogue of
+    the player's "regen blocked". They heal at the first turn *after* `poisonT` expires (verified both ways).
+  - **No cure path for animals** (water + herb stay player-only) and no HUD indicator; the HP bar staying up
+    while they bleed is the tell, and it falls out of the existing damage-detection in `updateHealthBars`.
+- **🪱 Worm + 🐍 python now hunt PREDATORS, not just prey** — new `snakeCruiseTarget(S)`, used by the CRUISE
+  branch in place of the old prey-only scan. In: lion, wild dog, gorilla (not perched), grounded
+  secretary/eagle, prey, and serpents of a **different variant**. Out: **its own variant**, and the two
+  **tanks** (elephant, rhino — "those can still stomp it"), which stay retaliation-only targets. Serpent-vs-
+  serpent needed a `'snake'` arm in `snakeFoeValid` and in `snakeBite`'s creature branch (plus a variant-label
+  kill line). **Kept separate from `snakeNightTarget`** rather than merged with it — that one is the cobra's
+  night behaviour from `cb7f991` and is deliberately untouched.
+- **Verified**: 600 s / 3-day soak × 3 reps per build, **0 errors, 0 NaN**; cobra still cycles
+  `AMBUSH_COIL → NIGHT_DESCEND → NIGHT_HUNT → AMBUSH_TRAVEL` and worm/python never enter a night state;
+  player venom unchanged (240 s, 1.65 dps, 1 HP at 60 s, held, both cures); **disposal 0 objects / 0
+  geometries / 0 textures** over 4 grow-to-34-segment → poison → real-death-collapse cycles with HP bars
+  forced to upload. *(A looser audit showed +1 texture/cycle — that was **other** animals' HP-bar
+  CanvasTextures uploading as venom damaged them, not a leak; strip the world to serpents only and it's
+  0/0/0 from cycle 1.)*
+- **⚠ Balance (report, not silently tuned) — A/B, 3 reps × 600 s each, serpents seeded 1 of each:**
+  | | pre-change | post-change |
+  |---|---|---|
+  | lions left | 0.7 | 1.7 |
+  | wild dogs left | 0 | 0 |
+  | gorillas left | 3.0 | **1.7** |
+  | rhinos left | 5.0 | 5.0 |
+  | **prey left** | **35.7** | **76.3** |
+  | serpents left | 2.3 | 1.7 |
+  (a) The real, robust delta is **prey survivors more than doubling** — the serpents moved their predation
+  off the herds and onto the predators. (b) **Gorillas take the hit** (3.0 → 1.7): they're now actively
+  hunted by cruising serpents. (c) **Rhinos are flat at 5.0**, confirming the tank exclusion works. (d) Lion
+  and dog attrition is *not* meaningfully worse — dogs already went to 0 in both builds, which matches the
+  pre-existing note in the 2026-07-27 section. (e) Serpents themselves die slightly more often now that they
+  fight each other and nothing is stagger-locked while fighting back.
+- **⚠ Two spec conflicts in the brief, resolved and flagged:** (i) rule 1 said "stun only elephant + rhino"
+  but the test matrix said "rocks stun everything they hit, per (2)" *and* "elephant + axe → no stun". Only
+  one reading satisfies all four stated tests: **the weapon rule governs player weapons (rock-only), the
+  animal rule governs creature-on-creature (tanks-only)** — which is what shipped, and it leaves both rules
+  doing real work. (ii) "dead in a minute" vs "(1 HP over 60 s, held 240 s)" for creature venom — shipped the
+  explicit math (floors at 1), since a 1-HP animal is functionally dead and a killing venom would have to
+  route a new "died with no killer" path through eight separate dead-loops.
+
 Each phase is an independent commit so it can be iterated in isolation.
