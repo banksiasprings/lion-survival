@@ -841,4 +841,104 @@ a night state.
   keeps one code path; a cobra that re-trees somewhere useless is just scenery again. (e) Detection ranges
   were matched to the wild dog (22/26) rather than invented.
 
+## Three birds: martial eagle (sky hunter) + secretary bird (ground snake-hunter) (2026-07-29)
+Two new self-contained creature modules dropped in **right after the sky vulture** (`config → mesh → spawn
+→ FSM → dead-loop`, the same shape as rhino/dog/vulture/serpent), so they ride every existing seam:
+`setHitbox`/`attachHealthBar`, `killObj` disposal, the floating HP bar, `healAllAnimals`, the minimap, and
+the thrown-weapon / boomerang / melee hit paths. **The sky vulture is byte-for-byte untouched** — its whole
+module hashes identically to `HEAD` (15 663 chars either side), as do `makeVulture`/`updateVultures`/
+`removeVultures`/`spawnVultures` (the small carcass scavengers). A whole-file line diff is **871 lines added,
+4 lines changed**, and all four changed lines are named below.
+- **🦅 Martial eagle (`EAGLE` / `eagleMeshes[]` / `makeMartialEagle` / `updateMartialEagles`).** The
+  vulture's deliberate opposite. FSM `SOAR → BANK → STOOP → LAND → REBOUND → SOAR`. Soars at
+  `ALT = TREE_H*3.6` (**21.6**, vs the vulture's 12) in **long straight transects with the wings held dead
+  level** (`animateEagle`'s flap is 0 in SOAR — the wings only breathe at ±0.035; the vulture flaps 0.55 at
+  11 Hz and wanders). Stoop = `SOAR_SPD × DIVE_MUL` = **15 × 3.5 = 52.5**, wings swept back via a
+  `rotation.y` yaw on the shoulder Groups and talons thrown forward. `STRIKE_DMG` **25**. A landed strike
+  arms `rand(CD_MIN 90, CD_MAX 120)`; a **miss** only costs `MISS_CD` 14 and it re-soars.
+  **Never scavenges** — `eaglePickTarget` scans *only* the player (stealth-gated, `playerOffGround`
+  excluded), `EAGLE.SMALL_BUCK` (`gazelle`/`impala`/`warthog`) and wild dogs; it never touches `carcasses`,
+  lions, gorillas, rhinos, elephants, giraffe, zebra, kudu, wildebeest or serpents. Verified species-by-species.
+  110 hp; **it CAN die airborne** (unlike the vulture) — `E.dying` drops it out of the sky at `FALL_SPD` 14,
+  tumbling, and the dead-loop frees it on contact with the ground. **No new object is created for the fall.**
+- **🦩 Secretary bird (`SECR` / `secretaryMeshes[]` / `makeSecretaryBird` / `updateSecretaryBirds`).**
+  Walks. FSM `ROAM → STALK → CIRCLE → STRIKE`, plus `FLY/LANDING`. Solo — no pack centroid, deliberately,
+  so it never reads as a wild dog. `HUNT_SNAKE_R` **70**: it will cross most of the map for a serpent
+  (`AMBUSH_COIL` excluded — a treed cobra is unreachable, which is exactly why the **night** cobra is the
+  interesting fight). The **hesitation is the signature**: `CIRCLE` orbits the coil at `CIRCLE_R` 4.0 for
+  1.1–2.6 s before it commits, then `STRIKE` bristles the crest (`animateSecretary`'s `bristle` drives the
+  six quill cones on their nape Group) through a 0.45 s windup and lands the stomp. **It drops the kill and
+  returns to ROAM — it does not eat.** Player damage **15**, only if you're inside `KICK_R` 3.2.
+  **Flight is a last resort** (`secretaryInDanger`: <45% HP, or a lion/gorilla/rhino inside 7 m) and
+  `FLY_CD` 18 stops a hurt bird flapping up the instant it lands — it gives ground on foot and regens
+  `REGEN` 1.5/s while clear instead. (A first cut had no cooldown and the bird thrashed take-off/land
+  forever, spamming the killfeed.)
+- **⚠ The stomp's damage is an interpretive call — read this before retuning it.** The brief said
+  "60 damage — one-shots young, high-growth snakes need multiple hits". **60 flat one-shots nothing**:
+  serpents carry 300 (cobra) / 500 (worm) / 1000 (python) and never scale HP with growth. So the kick is
+  `SECR.SNAKE_DMG` 60 **plus a spine-break term worth the serpent's whole health bar at zero growth,
+  fading linearly to nothing by `SECR.SPINE_SEGS` 6 segments of growth** — which makes both halves of the
+  brief literally true and puts the difficulty on the axis Steven named. Measured:
+  worm growth 0 → **1** kick · 3 → **2** · 8 → **9**; python 0 → **1**; cobra 3 → **2**, 6+ → **5**.
+  Killfeed says "snaps its spine" while the term is live, "stomps to death" once it isn't.
+- **Everyone-fights-everyone.** The whole integration turns on one predicate, `eagleGrounded(E)` /
+  `secretaryGrounded(B)` (and the shared `nearestGroundBird` / `groundBirdValid` helpers next to
+  `nearestSnake`): **a bird in the air is not a legal target for anything with legs.**
+  - **Lions** gained `fight_bird`, mirroring `fight_snake` exactly — 4 one-line touches in the lion code
+    (the `ptOk` guard, the `prideThreat` dispatch, the proactive 13 m scan, the movement branch, the speed
+    list). The lion FSM only closes to contact; **the maul damage is applied inside each bird's own module**
+    (`EAGLE.LION_DPS` 16 / `SECR.LION_DPS` 14), the same seam the rhino and the serpent already use, so lion
+    AI stays a movement decision. Verified: 3 lions on a mantling eagle → `fight_bird`, 64 hp off in 10 s,
+    bird tagged `lastHitKind:'lion'`; the same eagle **soaring → no lion ever enters `fight_bird`, 0 damage**.
+  - **Gorilla** foe-scan + engage-validity + swipe branch all gained both birds, grounded-only. Verified:
+    `engaging` → "🦍 Gorilla swiped at the secretary bird", bird tagged `'gorilla'`.
+  - **Serpents** gained `'secretary'`/`'eagle'` in `snakeFoeValid` and `snakeNightTarget`, and a
+    `snakeBite` branch that wounds + tags. Verified both directions: a night cobra locks onto the bird
+    (`targetKind:'secretary'`) while the bird works it (`B.snake === cobra`); ungrown cobra loses in 3 s,
+    grown cobra (bite 28) kills the bird instead.
+    ⚠ The bite branch deliberately **does NOT reset the bird's state** — a first cut knocked it back into its
+    hesitation circle on every bite, and a serpent striking on a 1.6 s cooldown could then hold it off forever
+    so it never landed the one kick it exists to land.
+  - **Wild dogs**: `dogThreatValid` accepts both kinds via `groundBirdValid` (so a raked pack chases the
+    eagle only once it's on the deck — mirroring the existing `skyvulture`/`LANDED` rule), and `dogBite`
+    gained tagging branches. Verified: raked dog → `dogPackThreat.kind === 'eagle'` **only while the eagle is
+    grounded**; grudge is dropped the instant it climbs.
+  - New `SNAKE_VICTIM_NOUN` map so the serpent's creature-kill line reads "killed the secretary bird", not
+    "killed a secretary".
+- **Spawn cadence** (`rollBirdSpawns`, called from `spawnDailyWave` — they are NOT part of the dawn wave):
+  **1 of each guaranteed on day 1**, then the eagle rolls `BIRD_SPAWN_CHANCE` 0.5 on **day 4 and day 8** and
+  the secretary bird on **day 6**. Nothing on any other day. Measured over 400 trials × 10 days:
+  day 1 = 100%/100%, day 4 = 49.5% eagle, day 6 = 48.5% secretary, day 8 = 49% eagle, **every other day 0%**.
+  Caps `EAGLE.MAX` 3 / `SECR.MAX` 2 hold through `rollBirdSpawns`.
+- **Silhouette test** (measured from the live meshes, heading zeroed): vulture span **5.31** / 22 parts /
+  alt 12 / 80 hp · eagle span **8.57** / 47 parts / alt **21.6** / 110 hp · secretary span 4.75 but
+  **3.81 tall** (the tallest) / 41 parts / ground / 90 hp. Offline sheet:
+  `dossiers/birds_render.png` (`dossiers/render_birds.py`, gamma-matched — see the sRGB note above).
+  ⚠ **The Browser pane's compositor wedged again** (black screenshot while `renderer.info.render.calls`
+  reported 2953) — as the tooling note predicts, everything visual went through the offline projector and
+  everything behavioural through in-page `javascript_exec`, which works fine.
+- **Disposal: 0 orphan objects / 0 geometries / 0 textures**, over spawn → damage → attack → **real** death
+  path (eagle: fall-then-free; secretary: dead-loop) → despawn, with HP bars forced visible so their
+  CanvasTextures actually uploaded, re-run after the mesh polish pass. The strong check also passes: every
+  geometry fires `dispose` **exactly once** (258/258 through `resetGame`, 0 missed, 0 left in the scene).
+  Materials fire more than once because one material is shared across many meshes in a bird and
+  `disposeObject3D` traverses per-mesh — `dispose()` is idempotent in three r128, same as the cobra.
+  Soaks: 600 s full-`animate()`-order ecosystem loop → **0 errors, 0 NaN**, all three birds alive the whole
+  run; a second 400 s soak with serpents seeded → 0 errors, and **the secretary bird cleared both serpents
+  off the map** (STALK 292 / CIRCLE 503 / STRIKE 120 ticks).
+- **⚠ Balance (report, not silently tuned):** (a) the **eagle is a light touch by design** — 25 damage on a
+  90–120 s cooldown means ~3–4 strikes per 10 minutes, so it's atmosphere plus a nasty surprise, not a
+  threat you have to answer; if Steven wants it to bite, `CD_MIN/CD_MAX` is the one knob. (b) The
+  **secretary bird measurably changes serpent population** — in the 400 s soak it wiped both serpents. That
+  is the "real predator-prey with snakes" the brief asked for, but it does mean serpents will run rarer on
+  maps where a bird survives. Counter-pressure exists (a grown cobra beats it; lions and the gorilla mob it
+  on the ground). (c) The **spine-break formula** is mine, forced by the brief being internally inconsistent
+  with serpent HP — flagged above with the full kick-count table. (d) The eagle's `hitR` comes out **4.57**
+  (the largest in the game) because `setHitbox` measures the bounding cylinder and this bird has an 8.6 m
+  wingspan; ranged still can't cheat it, because `projHit` also gates on `y < pos.y + hitTop` (1.8), so a
+  ground-level throw can't clip a bird 21 m up. (e) `EAGLE.MISS_CD` 14 (a whiff costing far less than a hit)
+  is an interpretive addition — the brief said "miss → rebound without damage, re-soar" but gave no number,
+  and without one it would re-dive on the same frame. (f) Neither bird drops a body part, matching the wild
+  dog's "pure challenge" precedent.
+
 Each phase is an independent commit so it can be iterated in isolation.

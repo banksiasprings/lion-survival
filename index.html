@@ -420,6 +420,8 @@ let rhinoMeshes = [];     // neutral megafauna — roams, charges only when prov
 let dogMeshes   = [];     // African wild dogs — fast pack predator (see DOG / updateWildDogs)
 let wildDogsVendetta = false;  // set when the player wounds ANY dog → the WHOLE pack hunts you relentlessly until the pack is wiped or you die (never calms, unlike the lion pride)
 let skyVultureMeshes = [];  // sky vultures — big raptor that cruises high, dives on smaller prey, NEVER dies airborne (see SKYV / updateSkyVultures). Distinct from the small carcass-circling scavengers (vultures[]).
+let eagleMeshes = [];     // 🦅 martial eagles — sky HUNTER: soars high on level wings, stoops on small ground quarry (see EAGLE / updateMartialEagles)
+let secretaryMeshes = []; // 🦩 secretary birds — solo ground bird, stomp-kicks SERPENTS (see SECR / updateSecretaryBirds)
 let snakeMeshes = [];     // giant serpents — 🐍 sand python & 🪱 pink worm (see SNAKE_VARIANTS / updateSnakes)
 
 // Savanna environment (Phase 1) — also feeds stealth (Phase 3) & grapple (Phase 4)
@@ -2225,12 +2227,14 @@ function updateLions(dt){
       const ptOk = pt && (pt.kind!=='player' || !player.inTree)
                       && (pt.kind!=='gorilla' || (pt.ent.state!=='perched' && pt.ent.state!=='sleeping'))
                       && (pt.kind!=='snake' || (!pt.ent.dying && pt.ent.state!=='AMBUSH_COIL'))   // a serpent up a tree is out of reach
+                      && ((pt.kind!=='eagle' && pt.kind!=='secretary') || groundBirdValid(pt.ent, pt.kind))   // …and so is a bird in the air
                       && lpos.distanceTo(pt.ent.pos) < 60;
       if(ptOk){
         if(pt.kind==='player'){ L.state='chase'; prideAlert.pos.copy(ppos); prideAlert.timer=9; }
         else if(pt.kind==='gorilla'){ L.state='fight_gorilla'; L._gorTarget=pt.ent; }
         else if(pt.kind==='rhino'){ L.state='fight_rhino'; L._rhinoTarget=pt.ent; }
         else if(pt.kind==='snake'){ L.state='fight_snake'; L._snakeTarget=pt.ent; }
+        else if(pt.kind==='eagle' || pt.kind==='secretary'){ L.state='fight_bird'; L._birdTarget=pt.ent; L._birdKind=pt.kind; }
         else { L.state='mob'; L._mobTarget=pt.ent; }              // elephant / other big prey
       } else if(dist < detR){
         L.state = 'chase';
@@ -2247,6 +2251,11 @@ function updateLions(dt){
         L.state = 'fight_snake';                            // mob a nearby serpent — it bites back hard
       } else if(L.state==='fight_snake'){
         L.state = 'wander';                                 // serpent gone/dead/up a tree
+      } else if((eagleMeshes.length||secretaryMeshes.length) && (L._bird=nearestGroundBird(lpos,13))){
+        L.state = 'fight_bird';                             // a bird caught on the deck is fair game
+        L._birdTarget = L._bird.ent; L._birdKind = L._bird.kind;
+      } else if(L.state==='fight_bird'){
+        L.state = 'wander';                                 // it got airborne / died
       } else if(L.state==='chase'){
         // fed lions give up sooner; hungry ones commit further
         const giveUp = dist > HALF || (L.hunger < 28 && dist > 26) || dist > 40;
@@ -2308,6 +2317,11 @@ function updateLions(dt){
       const Sn=L._snakeTarget;
       if(Sn && Sn.health>0 && !Sn.dying && Sn.state!=='AMBUSH_COIL'){ dir.copy(Sn.pos).sub(lpos); dir.y=0;
         if(dir.length()<=2.4) dir.set(0,0,0); else dir.normalize(); }   // close in & hold; updateSnakes deals the bite + the serpent strikes back
+      else L.state='wander';
+    } else if(L.state==='fight_bird'){
+      const Bd=L._birdTarget;
+      if(groundBirdValid(Bd, L._birdKind)){ dir.copy(Bd.pos).sub(lpos); dir.y=0;
+        if(dir.length()<=2.2) dir.set(0,0,0); else dir.normalize(); }   // close in & hold; the bird's own loop applies the maul
       else L.state='wander';
     } else if(L.state==='mob'){
       const M=L._mobTarget;
@@ -2383,7 +2397,7 @@ function updateLions(dt){
     } else if(L.state==='converge'){
       L.burst = clamp(L.burst + dt*0.12, 0, 1);
       speed = L.isMale ? 9 : 11;
-    } else if(L.state==='fight_gorilla' || L.state==='fight_rhino' || L.state==='fight_snake' || L.state==='mob'){
+    } else if(L.state==='fight_gorilla' || L.state==='fight_rhino' || L.state==='fight_snake' || L.state==='fight_bird' || L.state==='mob'){
       speed = L.isMale ? 10 : 12;
     } else if(L.state==='scavenge'){
       speed = L.isMale ? 7 : 8;
@@ -3474,6 +3488,10 @@ function updateGorillas(dt){
     preyMeshes.forEach(P=>{ if(P.species!=='elephant' || P.health<=0) return; const d = P.pos.distanceTo(gpos); if(d < fd){ fd = d; foe = P; } });  // a rampaging elephant is a foe too
     // …and a serpent on the ground. (One coiled up an ambush tree is out of reach.)
     snakeMeshes.forEach(S=>{ if(S.health<=0 || S.dying || S.state==='AMBUSH_COIL') return; const d = S.pos.distanceTo(gpos); if(d < fd){ fd = d; foe = S; } });
+    // …and either bird, but ONLY while it's on the ground (a mantling eagle, a striding
+    // secretary bird). Anything with wings up in the air is simply out of its reach.
+    eagleMeshes.forEach(E=>{ if(E.health<=0 || E.dying || !eagleGrounded(E)) return; const d = E.pos.distanceTo(gpos); if(d < fd){ fd = d; foe = E; } });
+    secretaryMeshes.forEach(B=>{ if(B.health<=0 || !secretaryGrounded(B)) return; const d = B.pos.distanceTo(gpos); if(d < fd){ fd = d; foe = B; } });
 
     // The pride bites back: lions pressed against a GROUNDED gorilla wear it down
     // (a perched/sleeping gorilla is up its tree, out of reach). Its swipes punish
@@ -3554,7 +3572,8 @@ function updateGorillas(dt){
       // target down/gone, or it broke the leash → stand down, back to mood state
       if(!tgt || tgt.health <= 0
          || !(lionMeshes.includes(tgt) || rhinoMeshes.includes(tgt) || preyMeshes.includes(tgt)
-              || dogMeshes.includes(tgt) || (snakeMeshes.includes(tgt) && !tgt.dying && tgt.state!=='AMBUSH_COIL'))
+              || dogMeshes.includes(tgt) || (snakeMeshes.includes(tgt) && !tgt.dying && tgt.state!=='AMBUSH_COIL')
+              || groundBirdValid(tgt, eagleMeshes.includes(tgt) ? 'eagle' : 'secretary'))
          || tgt.pos.distanceTo(gpos) > GOR.LION_DETECT*1.7){
         G.target = null; G.swung = false; G.phase = 'rush';
         G.state = isNight ? 'perched' : 'roaming';
@@ -3594,6 +3613,12 @@ function updateGorillas(dt){
           } else if(dogMeshes.includes(tgt)){                      // hit a dog → the whole pack turns on the gorilla
             tgt.lastHitBy=G; tgt.lastHitKind='gorilla';
             showKillfeed(tgt.health<=0 ? '🦍 Gorilla crushed a wild dog!' : '🦍 Gorilla swiped a wild dog');
+          } else if(eagleMeshes.includes(tgt)){                    // caught the eagle on the deck
+            tgt.lastHitBy=G; tgt.lastHitKind='gorilla';
+            showKillfeed(tgt.health<=0 ? '🦍 Gorilla smashed the martial eagle!' : '🦍 Gorilla swiped at the eagle');
+          } else if(secretaryMeshes.includes(tgt)){
+            tgt.lastHitBy=G; tgt.lastHitKind='gorilla';
+            showKillfeed(tgt.health<=0 ? '🦍 Gorilla smashed the secretary bird!' : '🦍 Gorilla swiped at the secretary bird');
           } else { showKillfeed('🦍 Gorilla swiped the '+(tgt.label||'beast')); }   // e.g. the elephant (it fights back on its own)
           if(td < 18){ shakeTime = Math.max(shakeTime,0.16); shakeAmt = 0.004; }
         }
@@ -3808,6 +3833,29 @@ function nearestSnake(pos, maxD){
     const d=pos.distanceTo(S.pos); if(d<bd){ bd=d; best=S; }
   }
   return best;
+}
+// Nearest bird that is actually ON THE GROUND — the only state in which anything
+// with legs can get at one. A soaring eagle and a secretary bird mid-escape-flight
+// are both unreachable, which is the whole point of having wings. Returns
+// {ent,kind} so the caller can tag the right retaliation hook.
+function nearestGroundBird(pos, maxD){
+  let best=null, bd=maxD||Infinity;
+  for(const E of eagleMeshes){
+    if(E.health<=0 || E.dying || !eagleGrounded(E)) continue;
+    const d=pos.distanceTo(E.pos); if(d<bd){ bd=d; best={ent:E, kind:'eagle'}; }
+  }
+  for(const B of secretaryMeshes){
+    if(B.health<=0 || !secretaryGrounded(B)) continue;
+    const d=pos.distanceTo(B.pos); if(d<bd){ bd=d; best={ent:B, kind:'secretary'}; }
+  }
+  return best;
+}
+// Is a bird still a legal thing for a ground animal to be fighting?
+function groundBirdValid(t, kind){
+  if(!t || !(t.health>0)) return false;
+  if(kind==='eagle')     return eagleMeshes.includes(t) && !t.dying && eagleGrounded(t);
+  if(kind==='secretary') return secretaryMeshes.includes(t) && secretaryGrounded(t);
+  return false;
 }
 
 function animateRhino(R, dt, gait){
@@ -4121,6 +4169,9 @@ function dogThreatValid(){
   if(k==='prey')    return preyMeshes.includes(t);
   // A raptor that raked one of them is only worth chasing once it's on the ground.
   if(k==='skyvulture') return skyVultureMeshes.includes(t) && t.state==='LANDED';
+  // …and the same for the eagle (it mantles on the deck after a strike — that's the
+  // window in which the pack it just raked can get its own back) and the ground bird.
+  if(k==='eagle' || k==='secretary') return groundBirdValid(t, k);
   return false;
 }
 
@@ -4182,6 +4233,10 @@ function dogBite(D, what){
     else if(k==='gorilla'){ T.lastDamagedBy=D; T.lastDamageTime=elapsed; }
     else if(k==='prey'){ T.lastHitBy=D; T.lastHitKind='dog'; if(T.species==='elephant') T.aggroT=ELE.RAGE_TIME; }
     else if(k==='lion'){ T.lastHitBy=D; T.lastHitKind='dog'; }
+    else if(k==='eagle'){ T.lastHitBy=D; T.lastHitKind='dog';                       // avenging a raked pack-mate
+      if(T.health<=0) showKillfeed('🐕 The pack caught the eagle on the ground!'); }
+    else if(k==='secretary'){ T.lastHitBy=D; T.lastHitKind='dog'; T.stunTimer=Math.max(T.stunTimer||0,0.4);
+      if(T.health<=0) showKillfeed('🐕 The pack pulled down the secretary bird!'); }
   }
 }
 
@@ -4557,6 +4612,723 @@ function updateSkyVultures(dt){
       if(V.state==='LANDED'){ killObj(V.mesh); skyVultureMeshes.splice(i,1); kills++; showKillfeed('🦅 The vulture is down!'); }
       else if(V.state!=='RETREAT'){ V.health=1; V.state='RETREAT'; V.stateT=0; V.target=null; V.land=null; showKillfeed('🦅 The wounded vulture screeches and climbs away!'); }
       else { V.health=1; }
+    }
+  }
+}
+
+// =====================================================================
+//  MARTIAL EAGLE — the sky HUNTER, and the deliberate opposite of the sky
+//  vulture. The vulture drifts, circles lazily and scavenges; the eagle SOARS
+//  higher on LEVEL wings in long straight purposeful lines, picks ONE small
+//  ground animal and commits to it: bank onto its line → tuck the wings →
+//  STOOP at 3.5× soar speed → strike for 25 → land wings-spread over the spot →
+//  rebound and climb back up. It NEVER touches carrion (that is the vulture's
+//  entire niche) and never takes on anything big — wild dogs, small buck and
+//  the player only. A landed strike costs it a 90–120 s cooldown, so it reads
+//  as a rare telegraphed event rather than constant harassment.
+//  Self-contained module (config → mesh → spawn → FSM → dead-loop) riding
+//  setHitbox / attachHealthBar / killObj / the HP bar / the minimap, exactly
+//  like the rhino, the dog and the vulture before it.
+// =====================================================================
+const EAGLE = {
+  MAX: 3,                          // hard cap on simultaneous eagles
+  HEALTH: 110,                     // tougher than the vulture (80) — it's the bigger bird
+  STRIKE_DMG: 25,                  // talon strike (spec)
+  CD_MIN: 90, CD_MAX: 120,         // sec between SUCCESSFUL strikes (spec) — a long, patient hunter
+  MISS_CD: 14,                     // a whiff costs far less: it rebounds and lines up again
+  HURT_CD: 30,                     // wounded mid-hunt → break off and stay off for a while
+  ALT: TREE_H*3.6,                 // ~21.6 — soars WELL above the vulture's 12 (altitude is the tell)
+  SOAR_SPD: 15,                    // level-winged cruise: straight lines, not circles
+  DIVE_MUL: 3.5,                   // stoop = 3.5× soar (spec "3-4×") → 52.5
+  CLIMB_SPD: 24,                   // rebound climb
+  DETECT: 60,                      // hunts by eye from height — sees further than the vulture (42)
+  STRIKE_R: 3.0,                   // talon reach at the bottom of the stoop
+  BANK_T: 1.3,                     // wheels onto the target's line before it commits (the tell)
+  STOOP_MAX: 3.2,                  // give up on a stoop after this — it's a committed dive, not a chase
+  LAND_T: 1.5,                     // wings-spread mantling pause on the ground after a strike
+  REBOUND_SPD: 12,                 // horizontal drift while climbing out
+  TURN: 2.2,
+  MELEE_CEIL: 3.0,                 // a melee weapon only reaches it this close to the ground
+  GROUND_CEIL: 3.0,                // …and the same ceiling makes it a legal target for every ground animal
+  FIGHT_R: 3.4,                    // a lion pressed against a GROUNDED eagle mauls it
+  LION_DPS: 16,                    // dps each such lion deals (the bird is fragile on the deck)
+  FALL_SPD: 14,                    // dead → it drops out of the sky before the dead-loop frees it
+  SMALL_BUCK: ['gazelle','impala','warthog'],   // "small buck" — never zebra/kudu/giraffe/elephant
+};
+
+function makeMartialEagle(x, z){
+  const group = new THREE.Group();
+  // Martial eagle plumage: dark chocolate above, PALE mottled below, near-black
+  // head with a white throat, big yellow eye. (Colours read ~2× lighter on screen —
+  // renderer.outputEncoding is sRGB while colours go in un-decoded. See CONTEXT.md.)
+  const dark  = new THREE.MeshLambertMaterial({color:0x1f1408});  // dark chocolate mantle/back
+  const black = new THREE.MeshLambertMaterial({color:0x0a0703});  // near-black flight feathers
+  const hood  = new THREE.MeshLambertMaterial({color:0x0c0802});  // near-black HOOD — the contrast that sells the head
+  const pale  = new THREE.MeshLambertMaterial({color:0xb8ab92});  // pale mottled underside (what you see from below)
+  const white = new THREE.MeshLambertMaterial({color:0xdcd8ca});  // white throat
+  const beakM = new THREE.MeshLambertMaterial({color:0x1e1e22});  // heavy hooked beak
+  const ceraM = new THREE.MeshLambertMaterial({color:0xa87c10});  // cere / legs / talons (yellow)
+  const eyeM  = new THREE.MeshLambertMaterial({color:0xbe9200});  // big yellow eye
+  const pupM  = new THREE.MeshLambertMaterial({color:0x080808});
+  const box=(w,h,d,mat,px,py,pz)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); m.position.set(px,py,pz); group.add(m); return m; };
+  const cone=(r,h,mat,px,py,pz,rx)=>{ const m=new THREE.Mesh(new THREE.ConeGeometry(r,h,7),mat); m.position.set(px,py,pz); if(rx!=null) m.rotation.x=rx; group.add(m); return m; };
+  const sph=(r,mat,px,py,pz)=>{ const m=new THREE.Mesh(new THREE.SphereGeometry(r,8,6),mat); m.position.set(px,py,pz); group.add(m); return m; };
+
+  // Fuselage — a deeper, longer barrel than the vulture's, forward = +Z.
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(0.42,0.22,2.05,10), dark); body.rotation.x=Math.PI/2; group.add(body);
+  box(0.60,0.44,1.05, dark, 0,0.03,0.10);            // heavy chest
+  // PALE MOTTLED UNDERSIDE — the field mark, and the ONLY one you can read from
+  // directly below, which is where this bird spends its life. Tucked into the
+  // underside of the fuselage (not bolted on) and speckled dark.
+  box(0.50,0.16,1.22, pale, 0,-0.26,0.02);
+  [[-0.13,0.30],[0.12,0.10],[-0.04,-0.13],[0.15,-0.34],[-0.16,-0.02]]
+    .forEach(([sx,sz])=> box(0.08,0.045,0.08, hood, sx,-0.335,sz));
+  // Short thick neck straight into a big NEAR-BLACK head (no bare vulture neck),
+  // with the WHITE THROAT sitting proud of it — the head's whole read is that contrast.
+  box(0.38,0.36,0.34, hood, 0,0.16,1.02);
+  box(0.40,0.40,0.48, hood, 0,0.31,1.30);            // skull
+  box(0.30,0.17,0.28, white, 0,0.145,1.36);          // white throat, proud under the chin
+  cone(0.075,0.22, hood, 0,0.55,1.18, -0.35);        // short nape crest (martial eagles carry one)
+  cone(0.06,0.17, hood, -0.11,0.53,1.14, -0.35);
+  cone(0.06,0.17, hood,  0.11,0.53,1.14, -0.35);
+  // BIG YELLOW EYES with dark pupils, set forward under a heavy brow.
+  sph(0.095, eyeM, -0.155,0.35,1.47); sph(0.095, eyeM, 0.155,0.35,1.47);
+  sph(0.046, pupM, -0.168,0.35,1.55); sph(0.046, pupM, 0.168,0.35,1.55);
+  box(0.42,0.07,0.22, hood, 0,0.46,1.47);            // heavy brow ridge (the eagle's glare)
+  // Hooked beak: a yellow cere, a forward cone, and a hook cone turning down at the tip.
+  box(0.18,0.15,0.12, ceraM, 0,0.25,1.50);
+  cone(0.115,0.40, beakM, 0,0.22,1.68, Math.PI/2+0.30);
+  cone(0.065,0.21, beakM, 0,0.11,1.85, Math.PI);     // the hook, pointing down
+  // Long wedge tail.
+  const tail=new THREE.Mesh(new THREE.BoxGeometry(0.86,0.06,1.10), black); tail.position.set(0,0.02,-1.56); group.add(tail);
+
+  // WINGS — broad, and the silhouette signature: FOUR splayed primary "fingers" at
+  // each tip. A pivot Group per side rolls (rotation.z) to flap and yaws
+  // (rotation.y) to SWEEP the wings back for the stoop.
+  const mkWing=(side)=>{
+    const w=new THREE.Group(); w.position.set(side*0.30, 0.16, 0.06);
+    const inner=new THREE.Mesh(new THREE.BoxGeometry(1.45,0.08,0.92), dark);  inner.position.set(side*0.80,0,0.02); w.add(inner);
+    const cov  =new THREE.Mesh(new THREE.BoxGeometry(1.30,0.05,0.70), pale);  cov.position.set(side*0.80,-0.055,0.04); w.add(cov);   // pale under-coverts — the view from below
+    const outer=new THREE.Mesh(new THREE.BoxGeometry(1.60,0.06,0.70), black); outer.position.set(side*2.05,0,-0.10); outer.rotation.y=side*-0.12; w.add(outer);
+    // Four splayed primary "fingers" — kept overlapping the outer arm and each other so
+    // they read as one spread HAND, not four detached planks (they did, first cut).
+    [0,1,2,3].forEach(k=>{
+      const fg=new THREE.Mesh(new THREE.BoxGeometry(0.86,0.045,0.15), black);
+      fg.position.set(side*(2.86 + k*0.05), 0.01*k, -0.20 - k*0.15);
+      fg.rotation.y = side*(-0.14 - k*0.10); fg.rotation.z = side*(0.03 + k*0.035);
+      w.add(fg);
+    });
+    group.add(w); return w;
+  };
+  const wingL=mkWing(1), wingR=mkWing(-1);
+
+  // FEET — heavy yellow legs + big talons, tucked flying / thrown forward on the strike.
+  const mkFoot=(side)=>{
+    const f=new THREE.Group(); f.position.set(side*0.16,-0.16,-0.05);
+    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.06,0.50,6), ceraM); leg.position.y=-0.25; f.add(leg);
+    [-0.11,0,0.11].forEach(tx=>{ const toe=new THREE.Mesh(new THREE.ConeGeometry(0.045,0.26,5), pupM); toe.position.set(tx,-0.54,0.09); toe.rotation.x=Math.PI-0.45; f.add(toe); });
+    const hind=new THREE.Mesh(new THREE.ConeGeometry(0.04,0.22,5), pupM); hind.position.set(0,-0.54,-0.09); hind.rotation.x=Math.PI+0.45; f.add(hind);
+    group.add(f); return f;
+  };
+  const footL=mkFoot(1), footR=mkFoot(-1);
+
+  group.traverse(o=>{ if(o.isMesh) o.userData.origMat=o.material; });   // hit-flash restore refs
+  const ty=terrainY(x,z);
+  group.position.set(x, ty+EAGLE.ALT, z); group.scale.setScalar(1.15); group.name='martialeagle';   // bigger than the vulture
+  scene.add(group);
+
+  const E={
+    mesh:group, wings:[wingL,wingR], feet:[footL,footR],
+    pos:new THREE.Vector3(x, ty+EAGLE.ALT, z),
+    health:EAGLE.HEALTH, maxHealth:EAGLE.HEALTH,
+    state:'SOAR', stateT:0, strikeCd:rand(8,25), flashTimer:0, dying:false, deathT:0,
+    heading:rand(0,Math.PI*2), wingPhase:Math.random()*Math.PI*2, footExt:0, sweep:0, roll:0,
+    target:null, targetKind:null, soarDest:null, soarTimer:0, landSpot:null, landTimer:0,
+    _prevHealth:EAGLE.HEALTH, lastHitBy:null, lastHitKind:null,
+  };
+  group.rotation.y=E.heading;
+  setHitbox(E); attachHealthBar(E); eagleMeshes.push(E);
+  return E;
+}
+
+function spawnMartialEagle(){ const a=rand(0,Math.PI*2), r=rand(50,90); makeMartialEagle(clamp(player.pos.x+Math.cos(a)*r,-MAPR,MAPR), clamp(player.pos.z+Math.sin(a)*r,-MAPR,MAPR)); }
+
+// flap = flap amplitude (0 = held dead level — the soaring signature); foot 0=tucked
+// 1=thrown forward; sweep 0=spread 1=tucked back for the stoop; roll = bank angle.
+function animateEagle(E, dt, flap, foot, sweep, roll){
+  E.wingPhase += dt*(flap>0.02 ? 7.5 : 1.6);          // slower, deeper beat than the vulture's 11
+  E.sweep += clamp((sweep||0) - E.sweep, -dt*4, dt*4);
+  const a = flap>0.02 ? Math.sin(E.wingPhase)*flap : Math.sin(E.wingPhase)*0.035;   // level wings barely breathe
+  E.wings[0].rotation.z =  0.06 + a;                  // held LEVEL (the vulture sits at ±0.12 and flaps hard)
+  E.wings[1].rotation.z = -0.06 - a;
+  E.wings[0].rotation.y =  E.sweep*1.15;              // +Y sweeps the +X arm toward -Z (back)
+  E.wings[1].rotation.y = -E.sweep*1.15;
+  E.footExt += clamp((foot||0) - E.footExt, -dt*4, dt*4);
+  const tuck = -1.5*(1-E.footExt);
+  E.feet[0].rotation.x = tuck; E.feet[1].rotation.x = tuck;
+  E.roll += clamp((roll||0) - E.roll, -dt*2.5, dt*2.5);
+  E.mesh.rotation.z = E.roll;                          // banking read (local roll — Euler XYZ applies Z first)
+}
+
+// Fly toward (tx,tz) and lerp altitude toward (ground + targetY). Mirrors vultureFly
+// but climbs/descends at its own rate so a stoop actually drops fast.
+function eagleFly(E, tx, tz, targetY, spd, dt, vspd){
+  const dx=tx-E.pos.x, dz=tz-E.pos.z, d=Math.hypot(dx,dz);
+  if(d>0.01){ const step=Math.min(spd*dt,d); E.pos.x+=dx/d*step; E.pos.z+=dz/d*step; }
+  E.pos.x=clamp(E.pos.x,-HALF+2,HALF-2); E.pos.z=clamp(E.pos.z,-HALF+2,HALF-2);
+  const goalY=terrainY(E.pos.x,E.pos.z)+targetY, vs=(vspd||EAGLE.CLIMB_SPD);
+  E.pos.y += clamp(goalY-E.pos.y, -vs*dt, vs*dt);
+  E.mesh.position.copy(E.pos);
+  if(d>0.5){ const a=Math.atan2(dx,dz); let dd=a-E.heading; while(dd>Math.PI)dd-=Math.PI*2; while(dd<-Math.PI)dd+=Math.PI*2; E.heading+=dd*Math.min(1,EAGLE.TURN*dt); E.mesh.rotation.y=E.heading; }
+}
+
+// Is this eagle low enough to be reached / fought by everything on the ground?
+function eagleGrounded(E){ return (E.pos.y - terrainY(E.pos.x,E.pos.z)) <= EAGLE.GROUND_CEIL; }
+
+// Nearest valid quarry: SMALL ground creatures only — wild dogs, small buck and the
+// player. Never a lion, gorilla, rhino, elephant, giraffe, zebra, kudu, wildebeest,
+// serpent or another bird, and never carrion (the vulture's niche, untouched).
+function eaglePickTarget(E){
+  let best=null, bd=EAGLE.DETECT;
+  const test=(o,kind)=>{ if(!o||o.health<=0) return; const d=Math.hypot(o.pos.x-E.pos.x,o.pos.z-E.pos.z); if(d<bd){ bd=d; best={o,kind}; } };
+  if(!playerOffGround() && Math.hypot(player.pos.x-E.pos.x,player.pos.z-E.pos.z) < EAGLE.DETECT*stealth.visMul) test(player,'player');
+  preyMeshes.forEach(P=>{ if(EAGLE.SMALL_BUCK.indexOf(P.species)>=0) test(P,'prey'); });
+  dogMeshes.forEach(D=>test(D,'dog'));
+  return best;
+}
+function eagleTargetValid(E){
+  const t=E.target, k=E.targetKind;
+  if(!t || !(k==='player' ? player.health>0 : t.health>0)) return false;
+  if(k==='player') return !playerOffGround();
+  if(k==='prey')   return preyMeshes.includes(t);
+  if(k==='dog')    return dogMeshes.includes(t);
+  return false;
+}
+
+// The strike itself: 25 damage, and every branch TAGS the victim so its own
+// retaliation hook can answer (a dog pack that gets raked holds a grudge).
+function eagleStrike(E, T){
+  const kind=E.targetKind;
+  if(!T) return false;
+  if(kind==='player'){
+    if(playerOffGround()) return false;
+    player.health -= EAGLE.STRIKE_DMG;
+    const ax=player.pos.x-E.pos.x, az=player.pos.z-E.pos.z, al=Math.hypot(ax,az)||1;
+    player.knockback.x=(ax/al)*9; player.knockback.z=(az/al)*9;
+    player.stunTimer = Math.max(player.stunTimer||0, 0.35);
+    shakeTime=Math.max(shakeTime,0.24); shakeAmt=0.007; playSound('spotted');
+    showKillfeed('🦅 The martial eagle stoops and rakes you!');
+    return true;
+  }
+  if(T.health<=0) return false;
+  T.health -= EAGLE.STRIKE_DMG; T.flashTimer=0.25;
+  if(kind==='prey'){
+    T.state='flee'; T.alertTimer=3; T.stunTimer=Math.max(T.stunTimer||0,0.6);
+    T.lastHitBy=E; T.lastHitKind='eagle';
+    showKillfeed(T.health<=0 ? '🦅 The eagle kills a '+T.label+'!' : '🦅 The eagle strikes a '+T.label);
+  } else {                                   // wild dog — the pack grudge watchdog answers
+    T.lastHitBy=E; T.lastHitKind='eagle'; T.stunTimer=Math.max(T.stunTimer||0,0.5);
+    showKillfeed(T.health<=0 ? '🦅 The eagle kills a wild dog!' : '🦅 The eagle rakes a wild dog!');
+  }
+  return true;
+}
+
+function updateMartialEagles(dt){
+  if(gameState!=='playing') return;
+  eagleMeshes.forEach(E=>{
+    E.strikeCd=Math.max(0,E.strikeCd-dt); E.stateT+=dt;
+    if(E.flashTimer>0){ E.flashTimer-=dt; const f=E.flashTimer>0; E.mesh.traverse(o=>{ if(o.isMesh && !o.userData.noFlash) o.material=f?FLASH_MAT:o.userData.origMat; }); }
+
+    // DEATH — it drops out of the sky rather than blinking out mid-air; the
+    // dead-loop frees it once it hits the deck (no new object is created for this).
+    if(E.dying){
+      E.deathT+=dt;
+      const gy=terrainY(E.pos.x,E.pos.z)+0.35;
+      E.pos.y=Math.max(gy, E.pos.y - EAGLE.FALL_SPD*dt);
+      E.pos.x+=Math.sin(E.heading)*4*dt; E.pos.z+=Math.cos(E.heading)*4*dt;
+      E.mesh.position.copy(E.pos);
+      E.sweep += clamp(0.6 - E.sweep, -dt*4, dt*4);          // wings crumple back
+      E.wings[0].rotation.y =  E.sweep*1.15; E.wings[1].rotation.y = -E.sweep*1.15;
+      E.wings[0].rotation.z = 0.9; E.wings[1].rotation.z = -0.9;
+      E.mesh.rotation.z += dt*5.5;                           // tumble (set directly — animateEagle owns rotation.z)
+      return;
+    }
+
+    // ---- HURT WATCHDOG ----
+    // Any HP lost since last frame breaks off the hunt: it climbs out and stays off
+    // the hunt for HURT_CD. One place, so no damage site can silently skip it.
+    if(E.health < (E._prevHealth==null?E.health:E._prevHealth) - 0.001){
+      if(E.state==='BANK' || E.state==='STOOP' || E.state==='LAND'){
+        E.state='REBOUND'; E.stateT=0; E.target=null; E.strikeCd=Math.max(E.strikeCd, EAGLE.HURT_CD);
+        showKillfeed('🦅 The wounded eagle breaks off and climbs!');
+      }
+    }
+    E._prevHealth = E.health;
+
+    // Lions maul a GROUNDED eagle (it is only reachable while it mantles a kill).
+    // Damage lives here so the lion FSM stays a movement decision — the same seam
+    // the rhino and the serpent already use.
+    if(eagleGrounded(E)){
+      let biter=null, bbd=Infinity;
+      lionMeshes.forEach(L=>{ if(L.health<=0 || (L.stunTimer||0)>0) return;
+        const d=Math.hypot(L.pos.x-E.pos.x, L.pos.z-E.pos.z);
+        if(d < EAGLE.FIGHT_R){ E.health -= EAGLE.LION_DPS*dt; E.flashTimer=Math.max(E.flashTimer,0.05); if(d<bbd){bbd=d;biter=L;} } });
+      if(biter){ E.lastHitBy=biter; E.lastHitKind='lion';
+        if(E.state==='LAND'){ E.state='REBOUND'; E.stateT=0; } }   // mobbed on the deck → get airborne
+    }
+
+    if(E.state==='SOAR'){
+      // Straight, level, purposeful transects across the map — the visual opposite
+      // of the vulture's lazy circling. Waypoints are FAR (never a tight orbit).
+      if(E.strikeCd<=0 && !E.target){
+        const t=eaglePickTarget(E);
+        if(t){ E.target=t.o; E.targetKind=t.kind; E.state='BANK'; E.stateT=0; }
+      }
+      if(E.state==='SOAR'){
+        E.soarTimer-=dt;
+        if(E.soarTimer<=0 || !E.soarDest){
+          const a=rand(0,Math.PI*2), r=rand(70,150);     // long legs across the world
+          E.soarDest={x:clamp(E.pos.x+Math.cos(a)*r,-MAPR,MAPR), z:clamp(E.pos.z+Math.sin(a)*r,-MAPR,MAPR)};
+          E.soarTimer=rand(9,16);
+        }
+        eagleFly(E, E.soarDest.x, E.soarDest.z, EAGLE.ALT, EAGLE.SOAR_SPD, dt);
+        if(Math.hypot(E.soarDest.x-E.pos.x,E.soarDest.z-E.pos.z)<10) E.soarTimer=0;
+        animateEagle(E, dt, 0, 0, 0, 0);                  // wings DEAD LEVEL
+      }
+    } else if(E.state==='BANK'){
+      // Wheel onto the quarry's line, hard over — this is the warning you get.
+      if(!eagleTargetValid(E)){ E.target=null; E.state='SOAR'; E.stateT=0; }
+      else {
+        const T=E.targetKind==='player' ? player : E.target;
+        const side=(E.stateT<EAGLE.BANK_T*0.5)?1:-1;
+        eagleFly(E, T.pos.x + Math.sin(E.heading+side*1.4)*14, T.pos.z + Math.cos(E.heading+side*1.4)*14, EAGLE.ALT, EAGLE.SOAR_SPD*1.15, dt);
+        animateEagle(E, dt, 0.18, 0, 0.15, side*0.65);    // banked hard onto its line
+        if(E.stateT>=EAGLE.BANK_T){ E.state='STOOP'; E.stateT=0; }
+      }
+    } else if(E.state==='STOOP'){
+      // Wings TUCKED, straight down the line at 3.5× soar speed.
+      if(!eagleTargetValid(E)){ E.target=null; E.state='REBOUND'; E.stateT=0; E.strikeCd=Math.max(E.strikeCd,EAGLE.MISS_CD); }
+      else {
+        const T=E.targetKind==='player' ? player : E.target;
+        const gy=terrainY(T.pos.x,T.pos.z);
+        const spd=EAGLE.SOAR_SPD*EAGLE.DIVE_MUL;
+        eagleFly(E, T.pos.x, T.pos.z, (T.pos.y-gy)+1.3, spd, dt, spd);
+        animateEagle(E, dt, 0, 0.9, 1, 0);                // tucked + talons forward
+        if(Math.hypot(E.pos.x-T.pos.x, E.pos.z-T.pos.z) < EAGLE.STRIKE_R && (E.pos.y - T.pos.y) < EAGLE.STRIKE_R){
+          const landed = eagleStrike(E, T);
+          E.target=null;
+          if(landed){ E.strikeCd=rand(EAGLE.CD_MIN,EAGLE.CD_MAX); E.landSpot={x:E.pos.x,z:E.pos.z}; E.state='LAND'; E.stateT=0; E.landTimer=EAGLE.LAND_T; }
+          else       { E.strikeCd=Math.max(E.strikeCd,EAGLE.MISS_CD); E.state='REBOUND'; E.stateT=0; }
+        } else if(E.stateT>EAGLE.STOOP_MAX){              // whiffed — a stoop is committed, not a chase
+          E.target=null; E.strikeCd=Math.max(E.strikeCd,EAGLE.MISS_CD); E.state='REBOUND'; E.stateT=0;
+          showKillfeed('🦅 The eagle misses and pulls out of its stoop.');
+        }
+      }
+    } else if(E.state==='LAND'){
+      // Mantling: down on the spot with the wings held out wide over the kill.
+      const spot=E.landSpot||{x:E.pos.x,z:E.pos.z};
+      eagleFly(E, spot.x, spot.z, 0.45, 6, dt, 12);
+      E.mesh.rotation.y = E.heading + Math.sin(E.stateT*2.2)*0.28;
+      animateEagle(E, dt, 0, 1, -0.30, 0);                // wings thrown FORWARD + out (the mantle)
+      E.landTimer-=dt;
+      if(E.landTimer<=0){ E.state='REBOUND'; E.stateT=0; }
+    } else if(E.state==='REBOUND'){
+      eagleFly(E, E.pos.x+Math.sin(E.heading)*EAGLE.REBOUND_SPD, E.pos.z+Math.cos(E.heading)*EAGLE.REBOUND_SPD, EAGLE.ALT, EAGLE.CLIMB_SPD*0.8, dt);
+      animateEagle(E, dt, 0.85, 0, 0, 0);                 // hauling for height
+      if(E.pos.y >= terrainY(E.pos.x,E.pos.z)+EAGLE.ALT-0.8){ E.state='SOAR'; E.stateT=0; E.soarTimer=0; }
+    }
+  });
+
+  // Dead-loop: mark it dying (it falls), then free it once it's on the deck.
+  for(let i=eagleMeshes.length-1;i>=0;i--){
+    const E=eagleMeshes[i];
+    if(E.health<=0 && !E.dying){ E.dying=true; E.deathT=0; E.target=null; showKillfeed('🦅 The martial eagle falls out of the sky!'); }
+    if(E.dying && (E.pos.y - terrainY(E.pos.x,E.pos.z)) <= 0.4){
+      killObj(E.mesh); eagleMeshes.splice(i,1); kills++;
+    }
+  }
+}
+
+// =====================================================================
+//  SECRETARY BIRD — the ground bird, and the serpents' natural enemy. It
+//  walks: a tall grey-and-white bird on absurdly long legs with a black
+//  quill crest and a bare orange face, striding SOLO across the savanna
+//  (never a pack — the wild dogs own that behaviour). Its whole purpose is
+//  SNAKES: it hunts every serpent variant at top priority across most of the
+//  map, then HESITATES — circling the coil at arm's length, crest half-raised
+//  — before driving a STOMP KICK down onto it for 60. A young serpent dies to
+//  one kick; a fat grown one takes several and bites back hard. It does NOT
+//  eat what it kills: the serpent drops and the bird walks on to the next one.
+//  The player is not quarry — but stand in the way and you take 15.
+//  Flight is a last resort: it only takes off in serious danger.
+// =====================================================================
+const SECR = {
+  MAX: 2,                       // hard cap
+  HEALTH: 90,
+  SNAKE_DMG: 60,                // the stomp kick itself
+  // ⚠ The brief asked for "60 damage — one-shots young, high-growth snakes need
+  // multiple hits". 60 flat can't one-shot anything: serpents carry 300 (cobra) /
+  // 500 (worm) / 1000 (python) hp and never scale that with growth. So the kick is
+  // 60 PLUS a SPINE-BREAK term worth the serpent's whole health bar at zero growth,
+  // fading linearly to nothing by SPINE_SEGS segments of growth. That makes both
+  // halves of the brief literally true and puts the difficulty on the axis Steven
+  // named — a serpent that has FED is the one that survives being stomped.
+  //   worm(500): growth 0 → 1 kick · 2 → 2 · 4 → 3 · 6+ → 9
+  //   python(1000): growth 0 → 1 kick · 3 → 2 · 6+ → 17
+  //   cobra(300): growth 0 → 1 kick · 3 → 2 · 6+ → 5
+  SPINE_SEGS: 6,
+  PLAYER_DMG: 15,               // only if you're in the way (spec)
+  REGEN: 1.5,                   // hp/sec it claws back while roaming clear of trouble
+  FLY_CD: 18,                   // it will not re-launch inside this — flight is a last resort, not a tic
+  KICK_CD: 1.7,                 // sec between kicks
+  KICK_R: 3.2,                  // stomp reach
+  STRIKE_WINDUP: 0.45,          // the leg comes up, the crest bristles, THEN it lands
+  HUNT_SNAKE_R: 70,             // it will cross most of the map for a serpent — this is the point of it
+  DETECT: 16,                   // notices an exposed player this close (× stealth.visMul)
+  SPEED_WALK: 3.4,              // long-legged striding roam
+  SPEED_STALK: 8.0,             // purposeful approach once it has a serpent
+  SPEED_FLEE: 10,
+  CIRCLE_R: 4.0,                // the hesitate-and-circle radius
+  CIRCLE_MIN: 1.1, CIRCLE_MAX: 2.6,   // sec of hesitation before it commits
+  CIRCLE_SPD: 1.5,              // rad/sec around the coil
+  TURN: 5.0,
+  BODY_R: 0.5,
+  DANGER_R: 7.0,                // a lion / gorilla / rhino this close is "serious danger"
+  FLY_HP: 0.45,                 // …and so is being below 45% health
+  FLY_ALT: TREE_H*1.7,          // ~10 — a short heavy flapping escape, not a soar
+  FLY_SPD: 16,
+  FLY_T: 3.4,                   // sec airborne before it drops back in somewhere else
+  GROUND_CEIL: 2.0,             // above this it counts as airborne (out of ground reach)
+  FIGHT_R: 3.0, LION_DPS: 14,   // a lion pressed against a grounded one mauls it
+};
+
+function makeSecretaryBird(x, z){
+  const group = new THREE.Group();
+  // Tall grey/white body, black flight feathers + black "trousers", bare ORANGE face,
+  // black quill crest. (Colours read ~2× lighter on screen — see the sRGB note.)
+  const grey  = new THREE.MeshLambertMaterial({color:0x8a8f96});  // pale grey mantle
+  const white = new THREE.MeshLambertMaterial({color:0xd2d0c8});  // white breast/neck
+  const black = new THREE.MeshLambertMaterial({color:0x0a0a0a});  // flight feathers / trousers / crest
+  const orange= new THREE.MeshLambertMaterial({color:0xa8380c});  // bare orange face patch
+  const beakM = new THREE.MeshLambertMaterial({color:0x3a4048});  // grey hooked beak
+  const legM  = new THREE.MeshLambertMaterial({color:0x9c968a});  // long bare shanks
+  const eyeM  = new THREE.MeshLambertMaterial({color:0x080808});
+  const box=(w,h,d,mat,px,py,pz)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); m.position.set(px,py,pz); group.add(m); return m; };
+  const cone=(r,h,mat,px,py,pz,rx)=>{ const m=new THREE.Mesh(new THREE.ConeGeometry(r,h,6),mat); m.position.set(px,py,pz); if(rx!=null) m.rotation.x=rx; group.add(m); return m; };
+
+  // Torso — a compact barrel carried HIGH on the legs (forward = +Z).
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.19,1.05,10), grey); body.rotation.x=Math.PI/2; body.position.set(0,1.46,0); group.add(body);
+  box(0.36,0.30,0.70, white, 0,1.40,0.26);        // white breast
+  box(0.42,0.22,0.58, black, 0,1.30,-0.30);       // black rump / trouser tops
+  // Folded wings along the flanks — grey shoulder over black primaries. A pivot Group
+  // per side so they can be thrown open for the escape flight and the strike balance.
+  const mkWing=(side)=>{
+    const w=new THREE.Group(); w.position.set(side*0.28, 1.52, 0.02);
+    const sh=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.26,0.72), grey);  sh.position.set(side*0.05,-0.06,0.0); w.add(sh);
+    const pr=new THREE.Mesh(new THREE.BoxGeometry(0.10,0.20,0.86), black); pr.position.set(side*0.09,-0.18,-0.34); w.add(pr);
+    const ex=new THREE.Mesh(new THREE.BoxGeometry(1.15,0.06,0.62), grey);  ex.position.set(side*0.62,-0.02,0.0); w.add(ex);   // opens out in flight
+    const ex2=new THREE.Mesh(new THREE.BoxGeometry(0.95,0.05,0.44), black);ex2.position.set(side*1.62,-0.02,-0.14); w.add(ex2);
+    ex.visible=false; ex2.visible=false;
+    w.userData.ext=[ex,ex2];
+    group.add(w); return w;
+  };
+  const wingL=mkWing(1), wingR=mkWing(-1);
+
+  // Long SLENDER neck rising forward into a small head. (A first cut used a 0.145
+  // radius here and the bird read as a goose — the neck has to be thin next to the
+  // torso for the proportions to say "secretary bird".)
+  const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.115,0.76,8), white); neck.position.set(0,1.87,0.36); neck.rotation.x=-0.46; group.add(neck);
+  box(0.22,0.21,0.30, grey, 0,2.20,0.62);         // small skull
+  box(0.205,0.155,0.055, orange, 0,2.185,0.775);  // BARE ORANGE FACE (front)
+  box(0.045,0.15,0.20, orange, -0.108,2.19,0.68); box(0.045,0.15,0.20, orange, 0.108,2.19,0.68);   // …wrapping round the eye
+  box(0.05,0.05,0.045, eyeM, -0.10,2.225,0.745); box(0.05,0.05,0.045, eyeM, 0.10,2.225,0.745);
+  cone(0.062,0.26, beakM, 0,2.15,0.88, Math.PI/2+0.25);   // grey hooked bill
+  cone(0.035,0.12, beakM, 0,2.085,0.98, Math.PI);
+
+  // BLACK QUILL CREST — the signature. Six long thin quills on a pivot Group at the
+  // nape so they can BRISTLE (swing up and splay) the instant it commits to a kick.
+  // Thin and long on purpose: fatter cones merged into one black plank.
+  const crest=new THREE.Group(); crest.position.set(0,2.27,0.51);   // planted ON the nape, not floating behind it
+  [-0.10,-0.06,-0.02,0.02,0.06,0.10].forEach((qx)=>{
+    const len=0.50 - Math.abs(qx)*1.4;
+    const q=new THREE.Mesh(new THREE.ConeGeometry(0.016,len,5), black);
+    q.position.set(qx, len*0.30, -0.09 - Math.abs(qx)*0.5);
+    q.rotation.x = 1.28 + Math.abs(qx)*0.6;        // laid flat back along the nape at rest
+    q.rotation.z = qx*2.2;                          // fanned
+    crest.add(q);
+  });
+  group.add(crest);
+
+  // Two long central tail streamers (the other half of the silhouette) + a short fan.
+  box(0.34,0.05,0.52, grey, 0,1.28,-0.78);
+  box(0.055,0.045,1.35, black, -0.05,1.20,-1.42).rotation.x = 0.16;
+  box(0.055,0.045,1.35, black,  0.05,1.18,-1.44).rotation.x = 0.18;
+
+  // VERY LONG LEGS — a hip pivot Group per side: black feathered thigh, long bare
+  // shank, forward-splayed toes. These are what make it read as a secretary bird.
+  const mkLeg=(side)=>{
+    const l=new THREE.Group(); l.position.set(side*0.17, 1.26, -0.06);
+    const thigh=new THREE.Mesh(new THREE.CylinderGeometry(0.105,0.075,0.50,6), black); thigh.position.y=-0.25; l.add(thigh);
+    const shank=new THREE.Mesh(new THREE.CylinderGeometry(0.052,0.045,0.78,6), legM);  shank.position.y=-0.89; l.add(shank);
+    const foot =new THREE.Mesh(new THREE.BoxGeometry(0.13,0.06,0.20), legM);           foot.position.set(0,-1.29,0.05); l.add(foot);
+    [-0.05,0.0,0.05].forEach(tx=>{ const toe=new THREE.Mesh(new THREE.ConeGeometry(0.024,0.16,4), legM); toe.position.set(tx,-1.30,0.17); toe.rotation.x=Math.PI/2; l.add(toe); });
+    group.add(l); return l;
+  };
+  const legL=mkLeg(1), legR=mkLeg(-1);
+
+  group.traverse(o=>{ if(o.isMesh) o.userData.origMat=o.material; });
+  const ty=terrainY(x,z);
+  group.position.set(x,ty,z); group.name='secretarybird';
+  scene.add(group);
+
+  const B={
+    mesh:group, legs:[legL,legR], wings:[wingL,wingR], crest,
+    pos:new THREE.Vector3(x,ty,z),
+    health:SECR.HEALTH, maxHealth:SECR.HEALTH,
+    state:'ROAM', stateT:0, heading:rand(0,Math.PI*2), legPhase:Math.random()*Math.PI*2,
+    kickCd:rand(0,SECR.KICK_CD), bristle:0, windup:0, flashTimer:0, stunTimer:0,
+    snake:null, circleAng:0, circleT:0, circleDir:Math.random()<0.5?1:-1,
+    flyDest:null, flyT:0, flyCd:0, wingOpen:0,
+    wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(), wanderTimer:rand(1,3),
+    _prevHealth:SECR.HEALTH, lastHitBy:null, lastHitKind:null,
+  };
+  group.rotation.y=B.heading;
+  setHitbox(B); attachHealthBar(B); secretaryMeshes.push(B);
+  return B;
+}
+
+function spawnSecretaryBird(){ const a=rand(0,Math.PI*2), r=rand(45,85); makeSecretaryBird(clamp(player.pos.x+Math.cos(a)*r,-MAPR,MAPR), clamp(player.pos.z+Math.sin(a)*r,-MAPR,MAPR)); }
+
+// gait drives the long stride; `bristle` 0..1 raises + splays the crest; `open` 0..1
+// throws the wings out for the escape flight.
+function animateSecretary(B, dt, gait, bristleTarget, openTarget){
+  B.legPhase += dt*(3.2 + (gait||0)*5.0);                 // long slow strides, not a canid trot
+  B.legs.forEach((l,i)=>{ l.rotation.x = Math.sin(B.legPhase + i*Math.PI) * (0.10 + (gait||0)*0.55); });
+  B.bristle += clamp((bristleTarget||0) - B.bristle, -dt*5, dt*8);   // snaps up, settles slowly
+  B.crest.children.forEach((q,i)=>{
+    const base = 1.28 + Math.abs(q.position.x)*0.6;
+    q.rotation.x = base - B.bristle*1.15;                  // swings up off the nape
+    q.rotation.z = q.position.x*2.2 * (1 + B.bristle*1.6); // …and fans wider
+  });
+  B.wingOpen += clamp((openTarget||0) - B.wingOpen, -dt*4, dt*6);
+  B.wings.forEach((w,i)=>{
+    const side = i===0 ? 1 : -1;
+    w.rotation.z = -side*B.wingOpen*0.35;
+    w.userData.ext.forEach(m=>{ m.visible = B.wingOpen > 0.15; });
+  });
+}
+function faceSecretary(B, dx, dz, dt){
+  if(Math.abs(dx)<1e-5 && Math.abs(dz)<1e-5) return;
+  const a=Math.atan2(dx,dz); let dd=a-B.heading;
+  while(dd>Math.PI)dd-=Math.PI*2; while(dd<-Math.PI)dd+=Math.PI*2;
+  B.heading += dd*Math.min(1,SECR.TURN*dt); B.mesh.rotation.y=B.heading;
+}
+// Walk toward (tx,tz) with the same swept anti-tunnel wall guard the wild dog uses.
+function secretaryStep(B, tx, tz, speed, dt){
+  const bx=B.pos.x, bz=B.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
+  if(d>0.001){ const step=Math.min(speed*dt,d); B.pos.x+=dx/d*step; B.pos.z+=dz/d*step; }
+  B.pos.x=clamp(B.pos.x,-HALF+1,HALF-1); B.pos.z=clamp(B.pos.z,-HALF+1,HALF-1);
+  if(segHitsWall(bx,bz, B.pos.x,B.pos.z)){ B.pos.x=bx; B.pos.z=bz; }
+  collideWalls(B.pos, SECR.BODY_R); collideStoneWalls(B.pos, SECR.BODY_R);
+  B.pos.y=terrainY(B.pos.x,B.pos.z); B.mesh.position.copy(B.pos);
+  faceSecretary(B, tx-bx, tz-bz, dt);
+}
+function secretaryGrounded(B){ return (B.pos.y - terrainY(B.pos.x,B.pos.z)) <= SECR.GROUND_CEIL; }
+
+// Nearest live, reachable serpent — ANY variant. A cobra coiled up an ambush tree is
+// out of reach (the same AMBUSH_COIL guard every other ground animal uses), which is
+// exactly why a night-hunting cobra on the deck is the interesting fight.
+function secretaryPickSnake(B){
+  let best=null, bd=SECR.HUNT_SNAKE_R;
+  snakeMeshes.forEach(S=>{
+    if(S.health<=0 || S.dying || S.state==='AMBUSH_COIL') return;
+    const d=Math.hypot(S.pos.x-B.pos.x, S.pos.z-B.pos.z);
+    if(d<bd){ bd=d; best=S; }
+  });
+  return best;
+}
+function secretarySnakeValid(B){
+  const S=B.snake;
+  return !!S && S.health>0 && !S.dying && S.state!=='AMBUSH_COIL' && snakeMeshes.includes(S)
+         && Math.hypot(S.pos.x-B.pos.x, S.pos.z-B.pos.z) < SECR.HUNT_SNAKE_R*1.2;
+}
+// "Serious danger" — the only thing that gets this bird off the ground.
+function secretaryInDanger(B){
+  if(B.health < B.maxHealth*SECR.FLY_HP) return true;
+  const near=(list,skip)=>list.some(o=>o.health>0 && !(skip&&skip(o)) && Math.hypot(o.pos.x-B.pos.x,o.pos.z-B.pos.z) < SECR.DANGER_R);
+  return near(lionMeshes) || near(gorillaMeshes, G=>G.state==='perched'||G.state==='sleeping') || near(rhinoMeshes);
+}
+
+// THE STOMP KICK. 60 to a serpent (tagging it so it whips round and bites back),
+// 15 to the player if you happen to be standing in the strike.
+function secretaryKick(B, what){
+  if(what==='snake'){
+    const S=B.snake;
+    if(!S || S.health<=0 || S.dying) return;
+    // 60 + the spine-break term (see SECR.SPINE_SEGS): full health bar at zero
+    // growth, gone by SPINE_SEGS segments. A serpent that has fed survives the kick.
+    const spine = S.maxHealth * Math.max(0, 1 - (S.growth||0)/SECR.SPINE_SEGS);
+    S.health -= SECR.SNAKE_DMG + spine; S.flashTimer=0.25;
+    S.stunTimer = Math.max(S.stunTimer||0, SNAKE.ROCK_STUN);
+    S.lastHitBy=B; S.lastHitKind='secretary';                 // → the serpent watchdog turns it on the bird
+    S.target=B; S.targetKind='secretary'; S.aggroTimer=SNAKE.AGGRO_TIME;
+    playSound('throw');
+    if(S.health<=0){
+      showKillfeed(spine>0 ? '🦩 The secretary bird snaps the '+S.v.label+"'s spine!"
+                           : '🦩 The secretary bird stomps the '+S.v.label+' to death!');
+      B.snake=null; B.state='ROAM'; B.stateT=0;               // drops it and walks on — it does NOT eat
+    } else {
+      showKillfeed('🦩 The secretary bird kicks the '+S.v.label+'!');
+    }
+  } else if(what==='player'){
+    if(playerOffGround() || segHitsWall(B.pos.x,B.pos.z, player.pos.x,player.pos.z)) return;
+    player.health -= SECR.PLAYER_DMG;
+    const ax=player.pos.x-B.pos.x, az=player.pos.z-B.pos.z, al=Math.hypot(ax,az)||1;
+    player.knockback.x=(ax/al)*7; player.knockback.z=(az/al)*7;
+    shakeTime=Math.max(shakeTime,0.15); shakeAmt=0.005; playSound('spotted');
+    showKillfeed('🦩 You get in the secretary bird\'s way — it kicks you!');
+  }
+}
+
+function updateSecretaryBirds(dt){
+  if(gameState!=='playing') return;
+  secretaryMeshes.forEach(B=>{
+    B.kickCd=Math.max(0,B.kickCd-dt); B.stateT+=dt;
+    if(B.flashTimer>0){ B.flashTimer-=dt; const f=B.flashTimer>0; B.mesh.traverse(o=>{ if(o.isMesh && !o.userData.noFlash) o.material=f?FLASH_MAT:o.userData.origMat; }); }
+
+    // Lions maul a grounded one (damage here, movement stays the lion FSM's business).
+    if(secretaryGrounded(B)){
+      let biter=null, bbd=Infinity;
+      lionMeshes.forEach(L=>{ if(L.health<=0 || (L.stunTimer||0)>0) return;
+        const d=Math.hypot(L.pos.x-B.pos.x, L.pos.z-B.pos.z);
+        if(d < SECR.FIGHT_R){ B.health -= SECR.LION_DPS*dt; B.flashTimer=Math.max(B.flashTimer,0.05); if(d<bbd){bbd=d;biter=L;} } });
+      if(biter){ B.lastHitBy=biter; B.lastHitKind='lion'; }
+    }
+    B._prevHealth = B.health;
+
+    if((B.stunTimer||0)>0 && B.state!=='FLY'){
+      B.stunTimer-=dt; B.pos.y=terrainY(B.pos.x,B.pos.z); B.mesh.position.copy(B.pos);
+      animateSecretary(B, dt, 0, 0, 0); return;
+    }
+
+    // ---- ESCAPE FLIGHT — the rare one. Only serious danger gets it airborne, and
+    // FLY_CD keeps a hurt bird from flapping up the instant it lands (it walks off
+    // instead, and claws HP back while it's clear). Flight is a last resort. ----
+    B.flyCd=Math.max(0,(B.flyCd||0)-dt);
+    const danger = secretaryInDanger(B);
+    if(B.state!=='FLY' && B.state!=='LANDING' && danger && B.flyCd<=0){
+      const a=rand(0,Math.PI*2), r=rand(35,60);
+      B.flyDest={x:clamp(B.pos.x+Math.cos(a)*r,-MAPR,MAPR), z:clamp(B.pos.z+Math.sin(a)*r,-MAPR,MAPR)};
+      B.state='FLY'; B.stateT=0; B.flyT=SECR.FLY_T; B.snake=null;
+      if(Math.hypot(player.pos.x-B.pos.x, player.pos.z-B.pos.z) < 45) showKillfeed('🦩 The secretary bird takes to the air!');
+    }
+    if(B.state==='FLY' || B.state==='LANDING'){
+      const dest=B.flyDest||{x:B.pos.x,z:B.pos.z};
+      const climbing = B.state==='FLY';
+      const goal = terrainY(B.pos.x,B.pos.z) + (climbing ? SECR.FLY_ALT : 0);
+      const dx=dest.x-B.pos.x, dz=dest.z-B.pos.z, d=Math.hypot(dx,dz);
+      if(d>0.05){ const step=Math.min(SECR.FLY_SPD*dt,d); B.pos.x+=dx/d*step; B.pos.z+=dz/d*step; }
+      B.pos.y += clamp(goal-B.pos.y, -SECR.FLY_SPD*dt, SECR.FLY_SPD*dt);
+      B.mesh.position.copy(B.pos);
+      faceSecretary(B, dx, dz, dt);
+      animateSecretary(B, dt, 0.2, 0, 1);
+      if(climbing){ B.flyT-=dt; if(B.flyT<=0 || d<3) B.state='LANDING'; }
+      else if(B.pos.y <= terrainY(B.pos.x,B.pos.z)+0.05){ B.pos.y=terrainY(B.pos.x,B.pos.z); B.state='ROAM'; B.stateT=0; B.wanderTimer=0; B.flyCd=SECR.FLY_CD; }
+      return;
+    }
+    // Grounded and still in trouble (hurt, or something big alongside) but the wings
+    // are on cooldown → give ground on FOOT and forget the serpent for now.
+    if(danger){
+      let fx=0,fz=0,bd=Infinity,found=false;
+      const consider=p=>{ const d=Math.hypot(p.x-B.pos.x,p.z-B.pos.z); if(d<bd){bd=d;fx=p.x;fz=p.z;found=true;} };
+      lionMeshes.forEach(L=>{ if(L.health>0) consider(L.pos); });
+      gorillaMeshes.forEach(G=>{ if(G.health>0 && G.state!=='perched' && G.state!=='sleeping') consider(G.pos); });
+      rhinoMeshes.forEach(R=>{ if(R.health>0) consider(R.pos); });
+      snakeMeshes.forEach(S=>{ if(S.health>0 && !S.dying && S.state!=='AMBUSH_COIL') consider(S.pos); });
+      B.snake=null; B.state='ROAM';
+      if(found && bd<22){
+        const ax=B.pos.x-fx, az=B.pos.z-fz, al=Math.hypot(ax,az)||1;
+        secretaryStep(B, B.pos.x+ax/al*12, B.pos.z+az/al*12, SECR.SPEED_FLEE, dt);
+        animateSecretary(B, dt, 1.5, 0.2, 0.25); return;
+      }
+    } else if(B.health < B.maxHealth){
+      B.health = Math.min(B.maxHealth, B.health + SECR.REGEN*dt);   // recovers while it's clear of trouble
+    }
+
+    // ---- Anyone standing in the strike gets kicked (the player included). ----
+    if(!playerOffGround() && B.kickCd<=0){
+      const dp=Math.hypot(player.pos.x-B.pos.x, player.pos.z-B.pos.z);
+      if(dp < SECR.KICK_R && dp < SECR.DETECT*stealth.visMul){
+        faceSecretary(B, player.pos.x-B.pos.x, player.pos.z-B.pos.z, dt);
+        secretaryKick(B,'player'); B.kickCd=SECR.KICK_CD; B.bristle=1;
+        animateSecretary(B, dt, 0, 1, 0); return;
+      }
+    }
+
+    // ---- SNAKE HUNT (top priority — this is the whole animal) ----
+    if(!secretarySnakeValid(B)) B.snake=null;
+    if(!B.snake && (B.state==='ROAM' || B.state==='STALK')) B.snake=secretaryPickSnake(B);
+    if(!B.snake && B.state!=='ROAM'){ B.state='ROAM'; B.stateT=0; }
+
+    if(B.snake){
+      const S=B.snake;
+      const dx=S.pos.x-B.pos.x, dz=S.pos.z-B.pos.z, d=Math.hypot(dx,dz);
+
+      if(B.state==='ROAM' || B.state==='STALK'){
+        B.state='STALK';
+        if(d > SECR.CIRCLE_R+0.6){
+          secretaryStep(B, S.pos.x, S.pos.z, SECR.SPEED_STALK, dt);
+          animateSecretary(B, dt, 1.3, 0.25, 0); return;
+        }
+        // In range → HESITATE. Circle it, crest half up, before committing.
+        B.state='CIRCLE'; B.stateT=0; B.circleT=rand(SECR.CIRCLE_MIN,SECR.CIRCLE_MAX);
+        B.circleAng=Math.atan2(B.pos.z-S.pos.z, B.pos.x-S.pos.x);
+        B.circleDir=Math.random()<0.5?1:-1;
+      }
+
+      if(B.state==='CIRCLE'){
+        B.circleAng += B.circleDir*SECR.CIRCLE_SPD*dt;
+        const tx=S.pos.x+Math.cos(B.circleAng)*SECR.CIRCLE_R, tz=S.pos.z+Math.sin(B.circleAng)*SECR.CIRCLE_R;
+        secretaryStep(B, tx, tz, SECR.SPEED_STALK*0.65, dt);
+        faceSecretary(B, dx, dz, dt);                       // …but always watching the coil
+        animateSecretary(B, dt, 0.7, 0.45, 0);
+        if(B.stateT>=B.circleT && B.kickCd<=0){ B.state='STRIKE'; B.stateT=0; B.windup=SECR.STRIKE_WINDUP; }
+        return;
+      }
+
+      if(B.state==='STRIKE'){
+        faceSecretary(B, dx, dz, dt);
+        if(d > SECR.KICK_R){ secretaryStep(B, S.pos.x, S.pos.z, SECR.SPEED_STALK, dt); }
+        else { B.pos.y=terrainY(B.pos.x,B.pos.z); B.mesh.position.copy(B.pos); }
+        animateSecretary(B, dt, 0.3, 1, 0);                 // CREST BRISTLES on the strike
+        B.windup-=dt;
+        if(B.windup<=0){
+          if(d <= SECR.KICK_R) secretaryKick(B,'snake');
+          B.kickCd=SECR.KICK_CD;
+          if(B.state==='STRIKE'){                            // (a kill flips it to ROAM inside secretaryKick)
+            B.state='CIRCLE'; B.stateT=0; B.circleT=rand(SECR.CIRCLE_MIN,SECR.CIRCLE_MAX);
+            B.circleAng=Math.atan2(B.pos.z-S.pos.z, B.pos.x-S.pos.x);
+            B.circleDir=Math.random()<0.5?1:-1;
+          }
+        }
+        return;
+      }
+    }
+
+    // ---- ROAM — solo, striding, no pack cohesion (that's the wild dogs' behaviour) ----
+    B.state='ROAM';
+    B.wanderTimer-=dt;
+    if(B.wanderTimer<0){ B.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); B.wanderTimer=rand(3,7); }
+    let tx=B.pos.x+B.wanderDir.x*10, tz=B.pos.z+B.wanderDir.z*10;
+    if(Math.hypot(B.pos.x,B.pos.z) > HALF-6){ tx=-B.pos.x; tz=-B.pos.z; }
+    secretaryStep(B, tx, tz, SECR.SPEED_WALK, dt);
+    animateSecretary(B, dt, 0.45, 0, 0);
+  });
+
+  for(let i=secretaryMeshes.length-1;i>=0;i--){
+    if(secretaryMeshes[i].health<=0){
+      killObj(secretaryMeshes[i].mesh); secretaryMeshes.splice(i,1); kills++;
+      showKillfeed('🦩 The secretary bird is down!');
     }
   }
 }
@@ -5109,6 +5881,9 @@ function cureVenom(why){
   return true;
 }
 
+// Reading nouns for the serpent's creature-kill line ("killed a secretary" read badly).
+const SNAKE_VICTIM_NOUN = { lion:'a lion', dog:'a wild dog', rhino:'a rhino', gorilla:'a gorilla',
+                            secretary:'the secretary bird', eagle:'the martial eagle' };
 function snakeBite(S, kind){
   const dmg = snakeBiteDmg(S);
   if(kind==='player'){
@@ -5136,10 +5911,18 @@ function snakeBite(S, kind){
     T.stunTimer = Math.max(T.stunTimer||0, SNAKE.CREATURE_BITE_STUN);
     if(kind==='lion'){ T.lastHitBy=S; T.lastHitKind='snake'; }                       // → pride-retaliation watchdog mobs the serpent
     else if(kind==='dog'){ T.lastHitBy=S; T.lastHitKind='snake'; }                   // → the pack's grudge watchdog
+    else if(kind==='secretary'||kind==='eagle'){                                     // a bird that stood in the wrong place
+      // Staggered, NOT reset: the bird keeps whatever it was committed to. (A first
+      // cut knocked the secretary bird back into its hesitation circle on every bite,
+      // which let a serpent striking on a 1.6 s cooldown hold it off indefinitely —
+      // the bird could never land the kick it exists to land.)
+      T.lastHitBy=S; T.lastHitKind='snake';
+      if(kind==='secretary') T.snake=S;                                              // …and it now knows exactly what bit it
+    }
     else if(kind==='rhino'){ T.target=S; T.targetKind='snake'; T.aggroTimer=RHINO.AGGRO_TIME; }
     else if(kind==='gorilla'){ T.lastDamagedBy=S; T.lastDamageTime=elapsed; }        // → gorilla retaliation override
     snakeCredit(S, T);
-    if(T.health<=0) showKillfeed(S.v.icon+' The '+S.v.label+' killed a '+kind+'!');
+    if(T.health<=0) showKillfeed(S.v.icon+' The '+S.v.label+' killed '+(SNAKE_VICTIM_NOUN[kind]||('a '+kind))+'!');
   }
 }
 
@@ -5302,6 +6085,10 @@ function snakeNightTarget(S){
   scan(dogMeshes, 'dog');
   scan(gorillaMeshes, 'gorilla', G=>G.state==='perched');   // one up a tree is out of reach
   scan(rhinoMeshes, 'rhino');
+  // Its own predator, on the ground and in the dark — the cobra-vs-secretary-bird
+  // fight cuts both ways. A bird in the air is skipped (nothing to strike at).
+  scan(secretaryMeshes, 'secretary', B=>!secretaryGrounded(B));
+  scan(eagleMeshes, 'eagle', E=>E.dying || !eagleGrounded(E));
   scan(preyMeshes, 'prey');
   return best;
 }
@@ -5327,7 +6114,11 @@ function snakeFoeValid(S){
   const inList = k==='lion' ? lionMeshes.includes(t)
                : k==='dog' ? dogMeshes.includes(t)
                : k==='gorilla' ? gorillaMeshes.includes(t)
-               : k==='rhino' ? rhinoMeshes.includes(t) : false;
+               : k==='rhino' ? rhinoMeshes.includes(t)
+               // The secretary bird is the serpent's dedicated predator — biting it
+               // back is the other half of that fight. A bird that got airborne
+               // (escape flight / a soaring eagle) is out of reach and drops the grudge.
+               : (k==='secretary'||k==='eagle') ? groundBirdValid(t, k) : false;
   if(!inList) return false;
   return Math.hypot(t.pos.x-S.pos.x, t.pos.z-S.pos.z) < SNAKE.FOE_LEASH;
 }
@@ -6082,6 +6873,7 @@ function updateHealthBars(dt){
   lionMeshes.forEach(step); preyMeshes.forEach(step);
   gorillaMeshes.forEach(step); rhinoMeshes.forEach(step); dogMeshes.forEach(step);
   skyVultureMeshes.forEach(step); snakeMeshes.forEach(step);
+  eagleMeshes.forEach(step); secretaryMeshes.forEach(step);
 }
 
 function updateThrownRocks(dt){
@@ -6158,6 +6950,23 @@ function updateThrownRocks(dt){
         V.health -= r.crossbow ? 50 : r.spear ? 40 : 12*m;   // spear 40 (2 to force a retreat) / bolt 50 / rock chips
         V.flashTimer = 0.25;
         hit = true; showKillfeed(ic+' '+wname+' hits the vulture!');
+      }
+    });
+    // Martial eagle — unlike the vulture it CAN be killed in the air: ranged is the
+    // only way to reach a soaring one, and a hit also breaks off any hunt in progress.
+    if(!hit) eagleMeshes.forEach(E=>{
+      if(E.health>0 && !E.dying && projHit(r, E)){
+        E.health -= r.crossbow ? 50 : r.spear ? 55 : 14*m;   // spear: 2 to down it / bolt 50 / rock chips
+        E.flashTimer = 0.25;
+        hit = true; showKillfeed(E.health<=0 ? ic+' '+wname+' brings the eagle down!' : ic+' '+wname+' hits the martial eagle!');
+      }
+    });
+    // Secretary bird — lightly built; a spear or bolt drops it.
+    if(!hit) secretaryMeshes.forEach(B=>{
+      if(B.health>0 && projHit(r, B)){
+        B.health -= r.crossbow ? 50 : r.spear ? B.maxHealth : 14*m;   // spear one-shots / bolt 50 / rock chips
+        B.flashTimer = 0.25; B.stunTimer = Math.max(B.stunTimer||0, 0.9);
+        hit = true; showKillfeed(B.health<=0 ? ic+' '+wname+' drops the secretary bird!' : ic+' '+wname+' hits the secretary bird!');
       }
     });
     // Giant snake — 1000 hp, super tanky. Per-segment hit so any part of the body counts.
@@ -6443,6 +7252,8 @@ function updateBoomerang(r, dt, i){
   strike(rhinoMeshes,'rhino');
   strike(dogMeshes,'dog');
   strike(skyVultureMeshes,'skyvulture');   // ranged reaches the bird at any altitude (projHit tests its 3D pos)
+  strike(eagleMeshes,'eagle', E=>E.dying);
+  strike(secretaryMeshes,'secretary');
   snakeMeshes.forEach(S=>{ if(!r.hitSet.has(S) && !S.dying && projHitSnake(r,S)){ r.hitSet.add(S); boomerangStrike('snake', S); } });   // per-segment hit
   if(r.t >= r.life){ killObj(r.mesh); thrownRocks.splice(i,1); playSound('collect'); }   // caught
 }
@@ -6472,6 +7283,12 @@ function boomerangStrike(kind, o){
   } else if(kind==='skyvulture'){
     o.health -= D;   // an airborne vulture survives (retreats); the dead-loop announces a grounded kill
     showKillfeed((o.health<=0 && o.state==='LANDED') ? '🪃 Boomerang kill — vulture!' : '🪃 Boomerang cracks the vulture!');
+  } else if(kind==='eagle'){
+    o.health -= D;   // the eagle CAN die airborne — it falls (see updateMartialEagles' dying branch)
+    showKillfeed(o.health<=0 ? '🪃 Boomerang kill — martial eagle!' : '🪃 Boomerang cracks the eagle!');
+  } else if(kind==='secretary'){
+    o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, 0.9);
+    showKillfeed(o.health<=0 ? '🪃 Boomerang kill — secretary bird!' : '🪃 Boomerang cracks the secretary bird!');
   } else if(kind==='snake'){
     o.health -= D; o.stunTimer = Math.max(o.stunTimer||0, SNAKE.ROCK_STUN);
     o.target = player; o.targetKind = 'player'; o.aggroTimer = SNAKE.AGGRO_TIME;
@@ -6625,6 +7442,8 @@ function nearestAnimalInFront(range, minDot){
   scan(rhinoMeshes,'rhino');
   scan(dogMeshes,'dog');
   scan(skyVultureMeshes,'skyvulture', V=>(V.pos.y - terrainY(V.pos.x,V.pos.z)) > SKYV.MELEE_CEIL);   // melee only reaches it when low (landed / diving)
+  scan(eagleMeshes,'eagle', E=>E.dying || (E.pos.y - terrainY(E.pos.x,E.pos.z)) > EAGLE.MELEE_CEIL); // …same for the eagle: only while it mantles or stoops low
+  scan(secretaryMeshes,'secretary', B=>(B.pos.y - terrainY(B.pos.x,B.pos.z)) > SECR.GROUND_CEIL);    // it's a walker — only out of reach mid-escape-flight
   scan(snakeMeshes,'snake', S=>S.dying);
   return best;
 }
@@ -6671,6 +7490,14 @@ function dealKitMelee(hit, dmg, tool){
     t='vulture';
     o.health -= dmg;   // it only truly dies when LANDED (else updateSkyVultures keeps it alive to retreat)
     showKillfeed((o.health<=0 && o.state==='LANDED') ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the vulture!');
+  } else if(hit.kind==='eagle'){
+    t='martial eagle';
+    o.health -= dmg;
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the eagle!');
+  } else if(hit.kind==='secretary'){
+    t='secretary bird';
+    o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, 0.9);
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the secretary bird!');
   } else if(hit.kind==='snake'){
     t=o.v.label;
     o.health -= dmg; o.stunTimer = Math.max(o.stunTimer||0, SNAKE.ROCK_STUN);
@@ -7219,6 +8046,30 @@ function spawnDailyWave(){
   // three independent 30% rolls (one per variant), so a run can open with nothing,
   // with all three, or anything between. See rollSnakeSpawns.
   if(dn.day === 1 || dn.day === 5) rollSnakeSpawns('day '+dn.day);
+  rollBirdSpawns();
+}
+
+// The two named birds are RARE and scheduled, not part of the dawn wave. One of each
+// is guaranteed on day 1 (a run should never open without them — same reasoning as the
+// day-1 serpent seed); after that the martial eagle rolls on day 4 and day 8 and the
+// secretary bird on day 6, each up to its cap. No other day spawns either.
+const BIRD_SPAWN_CHANCE = 0.5;
+function rollBirdSpawns(){
+  const got=[];
+  if(dn.day === 1){
+    if(eagleMeshes.length     < EAGLE.MAX){ spawnMartialEagle();  got.push('martial eagle'); }
+    if(secretaryMeshes.length < SECR.MAX ){ spawnSecretaryBird(); got.push('secretary bird'); }
+  } else {
+    if((dn.day===4 || dn.day===8) && eagleMeshes.length < EAGLE.MAX && Math.random() < BIRD_SPAWN_CHANCE){
+      spawnMartialEagle(); got.push('martial eagle');
+    }
+    if(dn.day===6 && secretaryMeshes.length < SECR.MAX && Math.random() < BIRD_SPAWN_CHANCE){
+      spawnSecretaryBird(); got.push('secretary bird');
+    }
+  }
+  console.log('[birds] day '+dn.day+' roll → '+(got.length ? got.join(', ') : 'nothing'));
+  if(got.length && dn.day!==1) showKillfeed('🦅 New arrivals: '+got.join(', '));
+  return got.length;
 }
 
 // At each day↔night turn every animal recovers to full health (the herds and
@@ -7230,6 +8081,8 @@ function healAllAnimals(){
   rhinoMeshes.forEach(R=>{ R.health=R.maxHealth; });
   dogMeshes.forEach(D=>{ D.health=D.maxHealth; });
   skyVultureMeshes.forEach(V=>{ V.health=V.maxHealth; });
+  eagleMeshes.forEach(E=>{ if(!E.dying) E.health=E.maxHealth; });   // …nor an eagle already falling
+  secretaryMeshes.forEach(B=>{ B.health=B.maxHealth; });
   snakeMeshes.forEach(S=>{ if(!S.dying) S.health=S.maxHealth; });   // don't revive a collapsing snake
 }
 
@@ -7574,6 +8427,22 @@ function drawMinimap(){
     mmCtx.beginPath(); mmCtx.arc(px,py,3,0,Math.PI*2); mmCtx.fill();
   });
 
+  // Martial eagle — a gold dot high overhead; blazing white-hot the moment it commits
+  // (BANK/STOOP) so an incoming stoop is readable on the radar before it lands.
+  eagleMeshes.forEach(E=>{
+    if(E.dying) return;
+    mmCtx.fillStyle = (E.state==='STOOP'||E.state==='BANK') ? '#fff2a0' : '#e8b23a';
+    const [px,py]=toMM(E.pos.x-player.pos.x, E.pos.z-player.pos.z);
+    mmCtx.beginPath(); mmCtx.arc(px,py,3.5,0,Math.PI*2); mmCtx.fill();
+  });
+
+  // Secretary bird — a pale grey dot that strides; orange while it's working a serpent.
+  secretaryMeshes.forEach(B=>{
+    mmCtx.fillStyle = (B.state==='CIRCLE'||B.state==='STRIKE'||B.state==='STALK') ? '#ff9a2e' : '#dfe3e8';
+    const [px,py]=toMM(B.pos.x-player.pos.x, B.pos.z-player.pos.z);
+    mmCtx.beginPath(); mmCtx.arc(px,py,3.5,0,Math.PI*2); mmCtx.fill();
+  });
+
   // Giant serpents — python green / worm pink / cobra violet at the head; brighter
   // when locked onto you. A cobra lying up in an ambush tree shows as a hollow ring:
   // you can see WHERE it is, but the fact it's overhead is the thing you have to read.
@@ -7654,6 +8523,8 @@ function resetGame(){
   [...rhinoMeshes].forEach(R=>killObj(R.mesh));
   [...dogMeshes].forEach(D=>killObj(D.mesh));
   [...skyVultureMeshes].forEach(V=>killObj(V.mesh));
+  [...eagleMeshes].forEach(E=>killObj(E.mesh));
+  [...secretaryMeshes].forEach(B=>killObj(B.mesh));
   [...snakeMeshes].forEach(S=>killObj(S.mesh));
   [...carcasses].forEach(c=>{ removeVultures(c); killObj(c.mesh); });
   [..._dustPuffs].forEach(d=>killObj(d.mesh));
@@ -7674,6 +8545,8 @@ function resetGame(){
   rhinoMeshes.length = 0;
   dogMeshes.length = 0;
   skyVultureMeshes.length = 0;
+  eagleMeshes.length = 0;
+  secretaryMeshes.length = 0;
   snakeMeshes.length = 0;
   wildDogsVendetta = false;   // fresh run → the pack starts calm again
   dogPackThreat = { ent:null, kind:null, timer:0 };   // …and holds no grudge against any animal
@@ -7752,6 +8625,8 @@ function animate(){
   updateRhinos(dt);           // neutral rhinos — roam, charge when provoked
   updateWildDogs(dt);         // fast pack predator — hunt/roam, relentless vendetta if provoked
   updateSkyVultures(dt);      // high-cruising raptor — dives on smaller prey, never dies airborne
+  updateMartialEagles(dt);    // 🦅 sky hunter — soar high on level wings, bank → stoop → strike → mantle → rebound
+  updateSecretaryBirds(dt);   // 🦩 ground bird — strides solo, hunts serpents, hesitates then STOMPS
   updateSnakes(dt);           // 🐍 sand python / 🪱 pink worm — hunt, wrap, tree-grab, siesta, grow on kills
   updateHealthBars(dt);       // floating HP bars (after every animal has moved)
   updateCarcasses(dt);

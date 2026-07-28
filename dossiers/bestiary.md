@@ -178,6 +178,53 @@ bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks f
   cruises until it's healed back up — so the only way to kill one is to catch it **on the ground** and burst
   it down fast. **No body-part drop.**
 
+### 🦅 Martial eagle — the sky HUNTER (not a scavenger)
+- The **biggest bird in the game** — ~1.6× the vulture's wingspan (8.6 vs 5.3 units), 47 parts. **Dark
+  chocolate above, PALE spotted underside, a near-black head with a white throat**, big yellow eyes, heavy
+  hooked beak, four splayed primary "fingers" at each wingtip.
+- **Soars higher than anything else — ~21.6 up, nearly double the vulture's 12** — and flies in **long
+  straight lines on wings held DEAD LEVEL**. That's how you tell them apart in the air: the vulture wheels
+  and flaps, the eagle glides somewhere on purpose.
+- HP **110**. **Never touches carrion** — that's the vulture's niche, untouched. It hunts **small ground
+  creatures only**: **wild dogs, small buck (gazelle / impala / warthog), and you**. Never a lion, gorilla,
+  rhino, elephant, zebra, wildebeest, kudu, giraffe or serpent.
+- **The hunt is a set piece.** It spots quarry (60 m), **banks** onto its line for ~1.3 s, **tucks its wings
+  and STOOPS at 3.5× soaring speed (52)**, strikes for **25**, then **lands with its wings spread over the
+  spot** for ~1.5 s before **rebounding** back up to altitude.
+- **A landed strike costs it 90–120 s of cooldown**, so it's a rare, telegraphed event. A **miss** costs only
+  ~14 s — it pulls out of the stoop and lines up again.
+- **The mantle is its one vulnerable moment.** While it's on the deck over a kill, **lions will mob it**, a
+  **gorilla will swipe it**, a **night cobra will bite it**, and a **wild-dog pack it just raked will come for
+  it**. Wound it mid-hunt and it breaks off and climbs away for 30 s.
+- Unlike the vulture, **it CAN be killed in the air** — it falls out of the sky. Ranged only while it soars
+  (spear ×2, bolt, boomerang, rocks); melee reaches it only when it's low. **No body-part drop.**
+- **Spawn:** 1 guaranteed on Day 1, then a **50% roll on Day 4 and Day 8**. Cap 3. Gold dot on the minimap,
+  blazing white while it banks or stoops.
+
+### 🦩 Secretary bird — the serpents' natural enemy
+- A **tall grey-and-white bird on absurd legs** (the tallest bird here, 3.8 units), with a **black quill
+  crest**, a **bare orange face**, a grey hooked bill and **two long tail streamers**. It **walks** — almost
+  everywhere, almost always. 41 parts.
+- HP **90**. **Roams SOLO** (never a pack — that's the wild dogs' behaviour), striding across the savanna.
+- **Its entire purpose is SNAKES.** It hunts every serpent variant at top priority, **from up to 70 m** —
+  it will cross most of the map for one. A cobra coiled up an ambush tree is out of reach; a cobra down on
+  the ground at night is not.
+- **The kill is a dance.** It **stalks** in fast (8), then **HESITATES** — circling the coil at 4 m for
+  1.1–2.6 s with the crest half-raised — then drives a **STOMP KICK** down, **crest bristling wide** on the
+  strike. Then it **drops the dead serpent and walks on**. It does not eat.
+- **Stomp damage: 60 — plus a spine-break worth the serpent's whole health bar at zero growth, fading out
+  by 6 segments of growth.** So a **young serpent dies to a single kick** (python, worm or cobra alike), a
+  serpent that has fed a few times takes 2–3, and a well-grown one takes the flat 60 a kick (worm 9, cobra 5,
+  python 17). **A serpent that has been eating is the one that survives being stomped.**
+- **Get in the way and it kicks YOU for 15.** You are not its quarry — you're an obstacle.
+- **The serpent bites back**, hard, and that's the real fight: an ungrown cobra loses in ~3 s; a grown one
+  (bite 28 + venom) kills the bird instead. Lions, the gorilla and the wild dogs will all take a shot at it too.
+- **It flies only in serious danger** — below 45% HP, or with a lion / gorilla / rhino inside 7 m. It flaps up
+  to ~10, crosses 35–60 m and drops back in; it won't re-launch for 18 s, so a hurt bird gives ground **on
+  foot** and slowly recovers instead. **No body-part drop.**
+- **Spawn:** 1 guaranteed on Day 1, then a **50% roll on Day 6**. Cap 2. Pale grey dot on the minimap,
+  orange while it's working a serpent.
+
 ### 🐍🪱☠️ Giant serpents — three variants, all of which GROW
 Serpents arrive on **exactly two days: game start and Day 5.** Each time, all three variants get their
 **own independent 30% roll** — so a roll can bring nothing, one, two or all three. You might open a run with
@@ -305,7 +352,15 @@ to sneak up for a pounce. All die to **1 spear** (kudu takes 2).
   elephant. Nothing on the ground can hit it back while it's high (it flees the ground and can't be melee'd
   up there), and it retreats to heal rather than die in the air. A pack it rakes will mob it — but only once
   it lands.
-- **Giant serpents** hunt prey + you, and **fight back against every attacker**. The **sand python**
+- **Martial eagle** stoops on you, wild dogs and small buck only — **never** carrion, and never anything
+  big. It's untouchable while it soars, but the **wings-spread mantle after a strike puts it on the ground**,
+  and that's when lions mob it, the gorilla swipes it, a night cobra bites it and the pack it raked catches
+  up with it. Wound it and it breaks off the hunt.
+- **Secretary bird** hunts **serpents** and nothing else — it will cross the map for one, hesitate, then
+  stomp. It kicks you only if you're in the way. It fights back against whatever attacks it, and it takes
+  off only in serious danger.
+- **Giant serpents** hunt prey + you, and **fight back against every attacker** — **including the secretary
+  bird that just stomped them**. The **sand python**
   additionally **constricts elephants, gorillas and rhinos** (100 dmg/s) — the only animal that can kill a
   big three outright in seconds — and **tree-grabs** you like the gorilla. The **pink worm** just bites, but
   nothing outruns it. The **black cobra** runs on the clock — a drop-ambush from a canopy by day, an
