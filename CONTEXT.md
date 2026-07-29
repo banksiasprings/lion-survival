@@ -1024,4 +1024,90 @@ between two cobras in the **same** build. Strip `"uuid":"…"` before comparing 
   explicit math (floors at 1), since a 1-HP animal is functionally dead and a killing venom would have to
   route a new "died with no killer" path through eight separate dead-loops.
 
+
+## Cobra 700 HP, canopy venom SPIT + the low-HP TREE TURRET, and faster lions (2026-07-30)
+Steven's batch: *"the cobra… I have seven hundred health because I wanted to have seven hundred. I have
+decided."* · *"when it's hiding in a tree, I want it to shoot venom"* · *"if it's below, let's say, a hundred,
+it stays in the tree and just shoots venom… because right now it'll run out and I can just punch it, one-shot
+it"* · *"can you make the lions a little bit faster?"*
+
+- **☠️ Cobra HP 300 → 700** (`SNAKE_VARIANTS.cobra.HEALTH`). Now **9 spears** (`SNAKE.SPEAR_DMG` 80) instead
+  of 4, and second only to the python's 1000. It was dying before the day/night cycle it is built around ever
+  got to run. Bite damage, `BITE_CD` and growth-on-kill are untouched.
+- **🟢 Venom SPIT from the canopy — genuinely new; it did NOT exist before.** Grep confirmed: no `spit` code
+  or config anywhere in the build, so the "shoots venom from the tree" Steven half-remembered had never
+  shipped. A cobra in `AMBUSH_COIL` now rears and sprays: `SPIT_R 24`, `SPIT_CD 2.2`, `SPIT_DMG 8` flat,
+  `SPIT_SPEED 30`, `SPIT_HIT_R 1.5`, `SPIT_LEAD 0.35`. Impact calls the **existing** `applyVenom()` /
+  `applyCreatureVenom()` — no new poison rules, just a ranged delivery for the ones that were already there.
+  - **Target priority:** player (skipped when `playerOffGround()` or `segHitsWall` — the same rule
+    `snakeBite` uses, so *height stays the answer to a serpent*), else the nearest creature in range
+    (`pickSpitTarget` — lion / dog / grounded gorilla / rhino / grounded birds / prey / other-variant
+    serpents). Steven asked for "venom at everything" and creature venom already existed from 2026-07-29.
+  - **Dodgeable on purpose.** It leads the target's velocity rather than homing: measured **5/5 hits on a
+    stationary player at 3.8 m, 0/4 on one sprinting laterally at 18 m.** Standing still in the open is a
+    guaranteed hit; moving breaks the line. A homing spit would have made a turret an unavoidable damage tick.
+  - **The hood is the tell.** The AMBUSH_COIL branch of the hood controller used to force `want=0` (so the
+    drop stays a surprise); it now flares for `SPIT_FLARE 0.7 s` after each spray via `S._spitFlare`. Flash
+    out of a canopy = you are in range.
+  - **Its own FX array, not `thrownRocks[]`.** That list is the *player's* projectile system (it resolves
+    player damage, tool names, craft drops); a creature attack has no business in it. `venomSpits[]` mirrors
+    `_dustPuffs` instead — per-blob geometry+material, `killObj` on impact/expiry, `clearVenomSpits()` from
+    `resetGame`, `SPIT_MAX 24` cap. **Verified 0 objects / 0 geometries / 0 textures** over ~20 s of
+    continuous spitting, and `resetGame` freed 6 in-flight blobs to 0.
+  - **`updateVenomSpits(dt)` sits immediately after `updateSnakes(dt)`** in `animate` so a blob a
+    now-dead cobra had already launched still lands.
+- **🎯 The TREE TURRET — the actual fix for the exploit.** Below `RETREAT_HP 100` a cobra abandons whatever it
+  was doing, runs at `RETREAT_SPEED 14` (not the strolling `AMBUSH_SPEED 8`) to the **nearest** climbable tree
+  (`pickNearestClimbableTree` — unbounded search, 240 climbable trees on the map, so it always has an answer),
+  climbs, and `S.turret` makes that a **ONE-WAY DOOR**.
+  - **Deliberately NOT a new state.** It is `AMBUSH_TRAVEL`/`AMBUSH_COIL` with `turret` set, so all ~15
+    existing `state!=='AMBUSH_COIL'` unreachability guards (melee aim via `nearestAnimalInFront`, the lion /
+    gorilla / dog / rhino foe scans, the pride-vendetta `ptOk` gate, the minimap ring) apply to it for free.
+    A new state would have needed all fifteen edited.
+  - **Four exits gated off `!S.turret`:** the dusk `startNightDescent`, the `hurt` → struck-out-of-the-canopy
+    drop, the walk-under drop-attack, and `AMBUSH_TRAVEL`'s hurt-abort + bite-detour. Its tree being felled is
+    the only thing that moves it, and then it just climbs the next nearest one.
+  - **It does NOT reheal** (`healAllAnimals` skips a turret). A turret can never be reached in melee, so a
+    700-HP top-up every 120 s would have made it an immortal venom sprinkler. Staying wounded is what keeps
+    the counter-play honest.
+  - **Counter-play is ranged**, which already worked: `projHitSnake` has no `AMBUSH_COIL` guard, verified
+    live — spear 80 (kills a sub-80 turret outright), bolt 50, rock 15 + 0.6 s stun, boomerang 100.
+  - **Bonus fix found on the way:** the stun early-return called `layoutSnake(S)`, which lays the body along
+    `S.path` — the **stale ground trail from before it climbed** — so a rock-stunned coiled cobra snapped its
+    whole body out of the canopy for the length of the stun. It now holds `layoutSnakeCoil` at the perch
+    (verified head y 3.06 / seg y 3.12 over ground 0.48).
+  - **Retaliation attribution.** A spit sets `lastHitBy = the cobra` / `lastHitKind = 'snake'` on the victim,
+    or **clears both** if the firing cobra died mid-flight. This is load-bearing: without it a stale
+    `lastHitBy = player` on a spit-damaged lion made the **pride blame the player** for the cobra's venom via
+    the HP-drop watchdog. Verified — a lion carrying a stale player tag came out of a spit tagged to the
+    cobra. It does *not* set the rhino's `target`/`targetKind` or the gorilla's `lastDamagedBy`: those are
+    bite-level provocations, and a canopy sprayer they cannot reach shouldn't start that fight.
+- **🦁 Lion pursuit speeds +~30%.** `sprintMax` **13.5/16.5 → 17.5/19.5** (male/lioness), chase floor
+  **10.5 → 13.5**, hunt_prey floor **9.5 → 12.5**, converge **9/11 → 11.5/14**. Measured live: lioness chase
+  peaks **18.7–19.1**, male **17.0–17.2**, tired floor **13.5**, converge **14.00 / 11.50** exactly.
+  - **The rush now beats a sprinting player (16) outright**, but the burst still drains at 0.26/s to a 13.5
+    floor that is *under* sprint speed — so the dynamic changed from "outrun it" to "survive the rush, then
+    run". Much tighter, not unescapable.
+  - **Left below the wild dogs' `SPEED_CHASE 18`-forever vendetta on purpose**: the pack stays the one thing
+    you genuinely cannot outrun. A lioness now out-peaks it (19.5) but only for a few seconds.
+  - **`wander`/`rest` deliberately UNCHANGED** — those are the Phase 0 crepuscular ethology curve
+    (near-inert through midday). Verified still 4.41/3.67 at activity 0.91. `fight_*`, `scavenge` and
+    `flee_hurt` also untouched.
+- **Verified live** (headless: rAF doesn't fire and screenshots can't composite, so the sim was driven through
+  `animate()` with a patched `clock.getDelta`): **255 s / crossing a full day→night→dawn boundary, 84 spits,
+  0 errors, 0 NaN, 0 console errors.** A cobra wounded to 95 HP mid-`NIGHT_HUNT` was coiled in a tree within
+  2.5 s and held `AMBUSH_COIL`+turret across dusk, all night and through dawn without rehealing, while its two
+  healthy siblings ran the normal `NIGHT_HUNT → AMBUSH_TRAVEL` dawn retreat and were topped back to 700.
+- **⚠ Balance / interpretive calls (report, not silently tuned):**
+  (a) **A turret is permanent for the cobra's whole life**, not just until it heals — that is the literal
+  reading of "it stays in the tree" and the strongest anti-cheese guarantee, but it does mean a wounded cobra
+  is a fixture on that patch of map until you shoot it down.
+  (b) **Spit damage is flat 8, not `snakeBiteDmg`-scaled** — growth adds +1 to *bites*, and Steven's brief
+  said the growth mechanics are dialled, so the spray was left out of it.
+  (c) **A treed/walled player can't be spat at**, by the same `playerOffGround` rule as the bite. Slightly odd
+  (the cobra is *itself* in a tree), but it preserves the tree-safety contract the whole game leans on.
+  (d) **`RETREAT_HP` is an absolute 100, not a fraction of max HP** — Steven named the number.
+  (e) Nothing else was rebalanced: cobra bite/`BITE_CD`/growth, other predators' HP and behaviour, bird
+  species and the `killObj` disposal invariants were all left alone.
+
 Each phase is an independent commit so it can be iterated in isolation.

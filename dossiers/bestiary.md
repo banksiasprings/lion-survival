@@ -14,7 +14,8 @@
   you** (no stamina cost to stay up there — wait out anything). **Exceptions:** the **gorilla** and the
   **sand python** can both see a treed player and will climb over to **tree-grab** you back to the ground —
   and a **black cobra** may already be coiled in a canopy waiting to drop on whoever walks under it —
-  **though after dark that cobra is down on the ground hunting you instead.**
+  **though after dark that cobra is down on the ground hunting you instead.** A treed cobra also **spits
+  venom up to 24 m**, so a canopy you can't reach is no longer a canopy you can ignore.
 - **While grappling/climbing/standing on a wall** you're also out of a ground animal's reach.
 - How well you're seen scales with a stealth value (`stealth.visMul`): crouch ×0.55, crouch-in-grass an
   extra ×0.45, standing still ×0.85, sprinting ×1.2 (loud & obvious). Lions, the gorilla (grounded
@@ -127,7 +128,13 @@ bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks f
 ## The animals
 
 ### 🦁 Lions — the pride (they hunt YOU)
-- HP 30 (lioness) / 46 (male, hits harder). Fast (sprint ~16), hunt in a coordinated pride.
+- HP **58** (lioness) / **85** (male, hits harder — 32 vs 22). Hunt in a coordinated pride.
+- **⚡ FASTER THAN YOU IN THE RUSH (buffed).** A charging lioness opens at **19.5**, a male at **17.5** —
+  both beat your **sprint (16)**. You cannot simply run from the charge. But the burst **tires**: it drains
+  down to a **13.5** floor over ~4 s, and 13.5 is under your sprint. **Survive the rush, then run.** The
+  pride's closing-in speed (`converge`) is **14** lioness / **11.5** male.
+  *(Their lazy wander/rest speeds are unchanged — the crepuscular activity curve still makes them near-inert
+  through the heat of midday, which is when you cross open ground.)*
 - **They stay in a pack** and now **drift back together** so they don't scatter.
 - **Pride vendetta:** hurt **any one lion** and the **whole pride turns on the attacker** — you, a gorilla,
   a rhino, or an elephant. Attacking a lion is how you get the entire pack chasing you.
@@ -171,7 +178,9 @@ bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks f
 - **A pack of 10 spawns every dawn** (cap 15). They roam loosely, hunt prey, and hunt **you** cautiously
   when you're **visible standing/sprinting** — crouch-in-grass hides you from them like everything else.
 - **Super fast.** Their cautious hunt (~14) you can still outrun by **sprinting (16)**… but once provoked they
-  hit **~18 — faster than a sprint and faster than any lion. You cannot outrun a vendetta pack.**
+  hit **~18 — faster than a sprint, and they hold it forever. You cannot outrun a vendetta pack.** (A
+  charging lioness now *peaks* higher at 19.5, but hers drains to 13.5 in seconds; the pack's 18 never does.
+  The dogs are still the one thing you genuinely cannot escape on foot.)
 - **PACK VENDETTA — the key danger.** Wound **any one dog** (any hit) and the **ENTIRE pack** turns on you
   and **NEVER disengages** — unlike the lion pride, they don't calm down. It ends only when **the whole pack
   is dead or you die.** Your only escape is to **climb a tree** (grapple) or **put a wall between you and them**.
@@ -306,8 +315,8 @@ roughly halved.
   that FLARES** — a spade-shaped blue membrane, black-rimmed, with two ochre spectacle spots and a dark
   throat band, that snaps open the moment it commits to a strike. When it flares it also **rears up** off
   the ground, spreads its neck flat, gapes its jaw and drops its **fangs** into view — every one of those
-  is the same tell. If you see the hood, you're already in range. HP **300** (the squishiest serpent,
-  ~4 spears).
+  is the same tell. If you see the hood, you're already in range. HP **700** (raised from 300 — it now
+  outlasts the pink worm and takes **9 spears**; only the 1000-HP python is tankier).
 - **⚡ IT STRIKES TWICE A SECOND.** Bite cooldown is **0.5 s** — the fastest attack rate of anything in the
   game. **20 damage a bite = 40 damage per second** before growth and before the poison. Where the python
   and worm land one bite a second, the cobra lands two.
@@ -335,6 +344,23 @@ roughly halved.
   flat, and **waits**. Walk under that tree and it **DROPS on you** and bites on landing. On the minimap a
   treed cobra shows as a **hollow violet ring** rather than a solid dot — you can see where it is; noticing
   that it's *above* you is your problem. After a drop it won't re-tree for 22 s.
+- **🟢 A TREED COBRA SPITS.** Coiled in a canopy it is not a passive trap any more — it **rears and hoses
+  venom** at anything that comes within **24 m**, once every **2.2 s**. The blob itself only does **8**, but
+  it carries **the full venom** on exactly the bite's terms, so one hit puts you on the 60-second slide to
+  1 HP. It sprays **animals too** (nearest target if you're out of range) and it will not spray through a
+  wall, or at a player who is up a tree or on a wall. The **hood flares as it rears** — that flash out of
+  the canopy is your only warning. It leads a walker, so **sprinting or cutting across its line** breaks the
+  shot; standing still in the open is a guaranteed hit.
+- **🎯 BELOW 100 HP IT BECOMES A TURRET — and never comes down again.** Wound a cobra past **100 HP** and it
+  **breaks off mid-fight, runs (speed 14) to the nearest climbable tree, climbs, and stays there for the rest
+  of its life, spitting.** From then on: **dusk doesn't bring it down**, standing under it **won't make it
+  drop**, and **shooting it won't knock it out of the canopy**. It also **stops rehealing** at the day/night
+  turn, so the damage you've already done sticks.
+  - **This closes the old exploit** — a wounded cobra used to run out onto the ground where you could
+    one-shot it. It can't be reached in melee up there at all.
+  - **The counter-play is ranged:** a **spear (80)** takes down a turret that's under 80 HP outright, and
+    **bolts (50), rocks (~15 + stun) and the boomerang (100)** all still hit it in the canopy. Bring a
+    throwing weapon or walk away — but walking away means leaving a venom sprayer on that patch of map.
 - **🌙 AT NIGHT — IT COMES DOWN AND HUNTS YOU.** At dusk it **pours down the trunk** and works the ground
   in a **40 m patrol** around that tree until dawn: patrol → close → strike → move on. It will hunt
   **anything** — you, wild dogs, lions, a gorilla, a rhino, prey. It spots you at the usual **22 m
@@ -346,9 +372,11 @@ roughly halved.
     lions, rhinos, gorillas, a cornered dog — it runs down.
   - **At dawn it retreats** to the nearest good tree, climbs, and goes back to being an ambush. If it's
     **mid-strike when the sun comes up it finishes the strike first**.
-- **The counterplay is the clock.** A cobra you can see coiled in a canopy is a hazard you can walk around.
-  The same cobra after dark is coming to find you — and a poisoned player at 1 HP dies to its next bite.
-  A tree or a wall still stops it (it can't tree-grab), so height is the answer at night.
+- **The counterplay is the clock — until you wound it.** A cobra you can see coiled in a canopy is a hazard
+  you can walk around (though now it will spit at you as you go). The same cobra after dark is coming to find
+  you — and a poisoned player at 1 HP dies to its next bite. A tree or a wall still stops it (it can't
+  tree-grab), so height is the answer at night. Once it's under 100 HP the clock stops mattering: it is up a
+  tree permanently and only a thrown weapon finishes it.
 - **No wrap, no tree-grab.** It can't pull you out of a tree — but it can be waiting in one.
 
 ### 🦒 Giraffe — tall prey, too fast to chase

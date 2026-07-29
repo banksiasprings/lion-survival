@@ -2386,17 +2386,29 @@ function updateLions(dt){
     if(dir.lengthSq()>0) dir.normalize();
 
     // ---- speed by state (burst sprint that tires) ----
+    // PURSUIT SPEEDS BUFFED ~30% (2026-07-30, Steven: "can you make the lions a
+    // little bit faster"). Only the states where a lion is actively coming for
+    // something moved — chase / hunt_prey / converge and the sprint ceiling. The
+    // wander/rest speeds below are the crepuscular activity curve from the Phase 0
+    // ethology research (near-inert at midday) and are deliberately UNCHANGED, as
+    // are the fight_*, scavenge and flee speeds.
+    //   was: sprintMax 13.5/16.5 · chase floor 10.5 · hunt floor 9.5 · converge 9/11
+    // The lioness ceiling (19.5) now beats a sprinting player (16) outright during
+    // the burst, but the burst DRAINS (0.26/s) down to the 13.5 floor — under sprint
+    // speed — so the escape is still "survive the rush, then run", just much tighter.
+    // Deliberately left under the wild dogs' SPEED_CHASE 18-forever vendetta: the
+    // pack stays the thing you genuinely cannot outrun.
     let speed;
-    const sprintMax = L.isMale ? 13.5 : 16.5;   // lioness faster
+    const sprintMax = L.isMale ? 17.5 : 19.5;   // lioness faster
     if(L.state==='chase'){
       L.burst = clamp(L.burst - dt*0.26, 0, 1);          // tire during the rush
-      speed = lerp(10.5, sprintMax, L.burst);
+      speed = lerp(13.5, sprintMax, L.burst);
     } else if(L.state==='hunt_prey'){
       L.burst = clamp(L.burst - dt*0.2, 0, 1);           // committed sprint after prey
-      speed = lerp(9.5, sprintMax, L.burst);
+      speed = lerp(12.5, sprintMax, L.burst);
     } else if(L.state==='converge'){
       L.burst = clamp(L.burst + dt*0.12, 0, 1);
-      speed = L.isMale ? 9 : 11;
+      speed = L.isMale ? 11.5 : 14;
     } else if(L.state==='fight_gorilla' || L.state==='fight_rhino' || L.state==='fight_snake' || L.state==='fight_bird' || L.state==='mob'){
       speed = L.isMale ? 10 : 12;
     } else if(L.state==='scavenge'){
@@ -5410,6 +5422,28 @@ const SNAKE = {
   NIGHT_REANCHOR: 1.6,             // a chase this many roam-radii out moves its hunting ground
   NIGHT_GIVEUP: 4,                 // drop a target it hasn't CLOSED on in this long
   NIGHT_SKIP: 10,                  // ...and don't re-pick that one for this long
+  // ---- venom SPIT (black cobra) ----------------------------------------
+  // A cobra coiled in a canopy used to be a trap that only sprang if you walked
+  // under it. Now it is ARMED at range: it rears out of the coil and hoses venom at
+  // whatever comes into SPIT_R. The blob barely hurts — the POISON it carries is the
+  // weapon (the same applyVenom / applyCreatureVenom the bite injects).
+  SPIT_R: 24,                      // furthest it will spit
+  SPIT_CD: 2.2,                    // seconds between spits
+  SPIT_DMG: 8,                     // impact only — deliberately small, the venom is the payload
+  SPIT_SPEED: 30,                  // travel speed; slow enough that a sprint can break the line
+  SPIT_HIT_R: 1.5,                 // proximity radius counted as a hit on the player
+  SPIT_LEAD: 0.35,                 // seconds of target velocity led — a walker is hittable, a dodger is not
+  SPIT_FLARE: 0.7,                 // hood stays flared this long after a spit (the only tell you get)
+  SPIT_MAX: 24,                    // hard cap on live venom blobs (FX guard)
+  // ---- last stand: the TREE TURRET (black cobra) ------------------------
+  // Steven, 2026-07-30: a wounded cobra used to run out of its tree and get
+  // one-shotted on the ground. Below RETREAT_HP it now breaks off, climbs the
+  // NEAREST tree, and never comes down again — no dusk descent, no drop-attack, no
+  // being struck out of the canopy. It just spits. Melee cannot reach an
+  // AMBUSH_COIL serpent (nearestAnimalInFront skips it), so the counter-play is
+  // ranged: spear / bolt / rock / boomerang all still hit it up there.
+  RETREAT_HP: 100,                 // below this it goes turret — one-way door, for the rest of its life
+  RETREAT_SPEED: 14,               // running for its life, not strolling to an ambush (AMBUSH_SPEED is 8)
 };
 // Per-variant stats + look. Everything else is shared above.
 const SNAKE_VARIANTS = {
@@ -5422,11 +5456,15 @@ const SNAKE_VARIANTS = {
   // A solid bite (20) AND the venom on top — ONE of these kills from full health
   // in ~2.5 s, because BITE_CD is 0.5: the fast-strike specialist, 2 bites/second,
   // 40 dmg/s before growth and before the venom. By DAY it lies up in a tree and
-  // DROPS on whoever walks under it; by NIGHT it comes down and hunts
-  // (see VENOM / applyVenom / applyCreatureVenom, NIGHT_HUNT).
+  // DROPS on whoever walks under it (and SPITS at anything in range); by NIGHT it
+  // comes down and hunts; and below SNAKE.RETREAT_HP it climbs back up for good and
+  // fights the rest of its life as a venom turret
+  // (see VENOM / applyVenom / applyCreatureVenom, NIGHT_HUNT, cobraSpitTick).
+  // HEALTH 300 → 700 (2026-07-30, Steven's call): a 300-HP cobra died to a couple of
+  // spears before the day/night cycle it is built around ever got a chance to run.
   cobra:  { key:'cobra',  icon:'☠️', label:'black cobra',
-            HEALTH:300,  BITE_DMG:20, BITE_CD:0.5, SPEED_ROAM:6.0, SPEED_HUNT:14,   // outrunnable by a sprint — the strike rate + poison are the threat
-            wrap:false, tree:false, venom:true, ambush:true, night:true, mm:'#5b2f8a', mmHot:'#b07bff' },
+            HEALTH:700,  BITE_DMG:20, BITE_CD:0.5, SPEED_ROAM:6.0, SPEED_HUNT:14,   // outrunnable by a sprint — the strike rate + poison are the threat
+            wrap:false, tree:false, venom:true, spit:true, ambush:true, night:true, mm:'#5b2f8a', mmHot:'#b07bff' },
 };
 
 // Body gauge at segment i. Tapers head→tail across the STARTING length; segments
@@ -5549,6 +5587,10 @@ function makeSnake(x, z, variantKey){
     // --- new state ---
     // CRUISE | WRAP | TREEGRAB | SIESTA_TRAVEL | SIESTA_SLEEP | AMBUSH_TRAVEL | AMBUSH_COIL
     //        | NIGHT_DESCEND | NIGHT_HUNT      (the last two are cobra-only)
+    // The low-HP TREE TURRET is NOT a new state — it is AMBUSH_TRAVEL/AMBUSH_COIL
+    // with `turret` set, deliberately, so that every one of the ~15 existing
+    // `state!=='AMBUSH_COIL'` unreachability guards (melee aim, lion/gorilla/dog foe
+    // scans, the pride vendetta gate, the minimap ring) applies to it for free.
     state:'CRUISE',
     wrap:null, wrapT:0, wrapCd:0, coilPhase:rand(0,6.28),
     grabCd:0, actionTimer:0, _climb:0,
@@ -5568,6 +5610,11 @@ function makeSnake(x, z, variantKey){
     // cobras can be in different states on the same night without touching.
     nightTree:null, nightAnchor:null, patrolSpot:null, patrolT:0,
     descendT:0, _commitT:0, _dawnT:0,
+    // cobra: venom SPIT + the low-HP TREE TURRET. `turret` is a ONE-WAY DOOR — once
+    // set (below SNAKE.RETREAT_HP) this cobra lives and dies in a canopy: the dusk
+    // descent, the drop-attack and the struck-out-of-the-canopy exit are all gated
+    // off it. spitCd paces the spray; _spitFlare is the hood tell after one.
+    turret:false, spitCd:rand(0,SNAKE.SPIT_CD), _spitFlare:0,
     _chaseEnt:null, _chaseD:0, _chaseT:0, _skipEnt:null, _skipT:0,   // give-up-on-what-it-can't-catch
   };
 
@@ -5904,6 +5951,134 @@ function updateCreatureVenom(dt){
   eagleMeshes.forEach(E=>{ if(!E.dying) tick(E); });
   snakeMeshes.forEach(S=>{ if(!S.dying) tick(S); });                 // …don't drain something already collapsing
 }
+// ---- VENOM SPIT (black cobra, 2026-07-30) ----------------------------
+// Steven: "when it's hiding in a tree, I want it to shoot venom." A coiled cobra
+// rears out of the coil and SPRAYS. Ranged delivery for the venom that already
+// exists — no new poison rules, it just calls applyVenom / applyCreatureVenom on
+// impact, exactly as the bite does.
+//
+// Built as its own transient-FX array rather than riding thrownRocks[]: that one is
+// the PLAYER's projectile list (its update loop resolves player damage, tool names,
+// craft drops), and a creature attack has no business in it. This mirrors _dustPuffs
+// instead — per-blob geometry + material, freed by killObj on impact/expiry, plus
+// clearVenomSpits() on reset. Nothing shared, so nothing to leak.
+let venomSpits = [];
+
+// Who a coiled cobra sprays. The player outranks everything (and a treed/walled
+// player is skipped — the same playerOffGround/segHitsWall rule snakeBite uses, so
+// height stays the answer to a serpent). Otherwise the nearest creature in range:
+// everyone-fights-everyone, and the cobra is the one thing that poisons animals.
+function pickSpitTarget(S){
+  const clear = (x,z)=> !segHitsWall(S.pos.x, S.pos.z, x, z);
+  if(player.health>0 && !playerOffGround()){
+    const d = Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z);
+    if(d < SNAKE.SPIT_R && d > 0.5 && clear(player.pos.x, player.pos.z))
+      return {pos:player.pos, kind:'player'};
+  }
+  let best=null, bd=SNAKE.SPIT_R;
+  const scan=(list, kind, skip)=>{
+    list.forEach(e=>{
+      if(e===S || !(e.health>0) || e.dying || (skip && skip(e))) return;
+      const d = Math.hypot(e.pos.x-S.pos.x, e.pos.z-S.pos.z);
+      if(d<bd && clear(e.pos.x, e.pos.z)){ bd=d; best={pos:e.pos, kind, ent:e}; }
+    });
+  };
+  scan(lionMeshes, 'lion');
+  scan(dogMeshes, 'dog');
+  scan(gorillaMeshes, 'gorilla', G=>G.state==='perched');            // one up a tree is out of the line
+  scan(rhinoMeshes, 'rhino');
+  scan(secretaryMeshes, 'secretary', B=>!secretaryGrounded(B));       // its own predator — the fight cuts both ways
+  scan(eagleMeshes, 'eagle', E=>!eagleGrounded(E));
+  scan(preyMeshes, 'prey');
+  scan(snakeMeshes, 'snake', O=>O.v.key===S.v.key || O.state==='AMBUSH_COIL');   // not its own kind, not one up a tree
+  return best;
+}
+
+// Called every frame a cobra is coiled in a canopy. Cooldown-gated, so the same
+// call is safe from both the ordinary day ambush and the low-HP turret.
+function cobraSpitTick(S, dt){
+  S.spitCd = Math.max(0, (S.spitCd||0) - dt);
+  if(S.spitCd > 0 || !S.v.spit) return;
+  const tgt = pickSpitTarget(S);
+  if(!tgt) return;
+  S.spitCd = SNAKE.SPIT_CD;
+  spawnVenomSpit(S, tgt);
+}
+
+function spawnVenomSpit(S, tgt){
+  if(venomSpits.length >= SNAKE.SPIT_MAX) return;
+  const from = new THREE.Vector3(S.pos.x, S.pos.y, S.pos.z);
+  // LEAD the target a little. Firing at where it stands makes a turret an
+  // unavoidable damage tick; leading a walker's velocity keeps it honest while a
+  // sprint or a change of direction still breaks the line.
+  const aim = new THREE.Vector3(tgt.pos.x, terrainY(tgt.pos.x,tgt.pos.z)+1.0, tgt.pos.z);
+  if(tgt.kind==='player'){ aim.x += player.vel.x*SNAKE.SPIT_LEAD; aim.z += player.vel.z*SNAKE.SPIT_LEAD; }
+  const dir = aim.sub(from);
+  if(dir.lengthSq() < 1e-6) return;
+  dir.normalize();
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.17,7,6),
+    new THREE.MeshBasicMaterial({color:0x9be34a, transparent:true, opacity:0.92, depthWrite:false}));
+  m.position.copy(from); m.name='venomSpit'; scene.add(m);
+  venomSpits.push({ mesh:m, mat:m.material, pos:from.clone(),
+                    vel:dir.multiplyScalar(SNAKE.SPIT_SPEED),
+                    dmg:SNAKE.SPIT_DMG,          // flat — growth scales BITES (snakeBiteDmg), not the spray
+                    src:S, icon:S.v.icon, dist:0 });
+  S._spitFlare = SNAKE.SPIT_FLARE;               // the hood is already up; hold it there so the spit reads
+}
+
+// Flight + impact. Ticked from animate() right after updateSnakes so a blob a
+// dead cobra had already launched still lands.
+function updateVenomSpits(dt){
+  for(let i=venomSpits.length-1;i>=0;i--){
+    const p = venomSpits[i];
+    const stepLen = SNAKE.SPIT_SPEED*dt;
+    p.pos.addScaledVector(p.vel, dt); p.dist += stepLen;
+    p.mesh.position.copy(p.pos);
+    // The cobra that fired it may have died mid-flight. Only tag a victim's
+    // retaliation hook with a serpent that is still alive and in the list —
+    // otherwise clear the tag, so no stale attacker (the player, most dangerously)
+    // gets blamed by that creature's HP-drop watchdog for the cobra's venom.
+    const src = (p.src && snakeMeshes.indexOf(p.src)>=0 && !p.src.dying) ? p.src : null;
+    let done = false;
+
+    if(!playerOffGround() && player.health>0){
+      const d = Math.hypot(player.pos.x-p.pos.x, player.pos.z-p.pos.z);
+      if(d < SNAKE.SPIT_HIT_R && Math.abs(p.pos.y - (player.pos.y+1.0)) < 2.2){
+        player.health -= p.dmg;
+        applyVenom();                                       // the whole point of the delivery
+        shakeTime=Math.max(shakeTime,0.16); shakeAmt=0.005; playSound('spotted');
+        showKillfeed(p.icon+' Venom spray from the canopy — it burns!');
+        done = true;
+      }
+    }
+    if(!done){
+      const tryHit = (list, skip) => list.some(e=>{
+        if(e===src || !(e.health>0) || e.dying || (skip && skip(e))) return false;
+        if(Math.hypot(e.pos.x-p.pos.x, e.pos.z-p.pos.z) > (e.hitR||1.2) + SNAKE.SPIT_HIT_R*0.6) return false;
+        e.health -= p.dmg; e.flashTimer = 0.2;
+        applyCreatureVenom(e);                              // Steven, 2026-07-29: the venom hits animals too
+        // Truthful attribution (or none). Tagging the cobra is exactly what a bite
+        // does; a coiled serpent is already excluded from the pride/serpent grudge
+        // target scans, so the grudge simply fizzles instead of jamming an FSM.
+        e.lastHitBy = src; e.lastHitKind = src ? 'snake' : null;
+        return true;
+      });
+      done = tryHit(lionMeshes) || tryHit(dogMeshes) || tryHit(preyMeshes) || tryHit(rhinoMeshes)
+          || tryHit(gorillaMeshes, G=>G.state==='perched')
+          || tryHit(secretaryMeshes, B=>!secretaryGrounded(B))
+          || tryHit(snakeMeshes, O=>O.state==='AMBUSH_COIL');
+    }
+    // Splashed on the dirt, or out of range.
+    if(!done && (p.pos.y <= terrainY(p.pos.x,p.pos.z)+0.06 || p.dist > SNAKE.SPIT_R*1.6)) done = true;
+    if(done){ killObj(p.mesh); venomSpits.splice(i,1); }
+  }
+}
+// Reset teardown — mirrors the _dustPuffs / thrownRocks pattern.
+function clearVenomSpits(){
+  venomSpits.forEach(p=>killObj(p.mesh));
+  venomSpits.length = 0;
+}
+
 // Water flushes it: wading into the watering hole is the cure (the Healing Herb
 // also purges it — see useActiveAbility). Both are deliberate risks: the hole is
 // where the pride drinks and where serpents bed down at midday.
@@ -6056,6 +6231,48 @@ function pickAmbushTree(S){
     if(sc>bs){ bs=sc; best=t; }
   });
   return best;
+}
+
+// ---- LAST STAND: THE TREE TURRET (black cobra, 2026-07-30) -----------
+// Steven: "if it's below, let's say, a hundred, it stays in the tree and just
+// shoots venom. Because right now it'll run out and I can just punch it — one-shot
+// it." Below SNAKE.RETREAT_HP the cobra abandons whatever it was doing and climbs
+// the NEAREST tree it can find, and `turret` makes that a ONE-WAY DOOR: from then
+// on the dusk descent, the drop-attack and the struck-out-of-the-canopy exit are
+// all gated off, so it never returns to the ground to be finished off in melee.
+// It fights out the rest of its life as a venom sprayer from cover.
+//
+// NEAREST, not pickAmbushTree's best-scored tree: this is a retreat under fire, not
+// a hunting decision — and the search is deliberately UNBOUNDED (no AMBUSH_SEARCH
+// cap) so a wounded cobra anywhere on the map always has an answer.
+function pickNearestClimbableTree(S){
+  let best=null, bd=Infinity;
+  const shelter = playerShelterTree();
+  treeObjects.forEach(t=>{
+    if(!t.climbable || t===shelter) return;            // never share a canopy with the player
+    const d = Math.hypot(t.pos.x-S.pos.x, t.pos.z-S.pos.z);
+    if(d<bd){ bd=d; best=t; }
+  });
+  return best;
+}
+// Break off and run for it. Returns false (and changes nothing) if there is no
+// climbable tree at all, in which case it simply fights on where it stands and the
+// caller retries next frame.
+function startCobraRetreat(S){
+  const t = pickNearestClimbableTree(S);
+  if(!t) return false;
+  snakeUncoil(S);                          // puts a coiled/sleeping body back on its trail (sets CRUISE)…
+  S.turret = true;
+  S.ambushTree = t; S.nightTree = null;
+  S.state = 'AMBUSH_TRAVEL';               // …then straight into the climb
+  S.target = null; S.targetKind = null; S._preyTarget = null; S.aggroTimer = 0;
+  S.nightAnchor = null; S.patrolSpot = null; S.patrolT = 0;
+  S._commitT = 0; S._dawnT = 0; S.descendT = 0;
+  S._chaseEnt = null; S._chaseT = 0;
+  setSnakeHood(S, 0);
+  if(Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z) < 45)
+    showKillfeed('☠️ The black cobra breaks for a tree — it will SPIT from cover now');
+  return true;
 }
 
 // ---- NIGHT HUNT (black cobra) ----------------------------------------
@@ -6230,6 +6447,7 @@ function updateSnakes(dt){
     S.biteCd=Math.max(0,S.biteCd-dt); S.aggroTimer=Math.max(0,S.aggroTimer-dt);
     S.wrapCd=Math.max(0,S.wrapCd-dt); S.grabCd=Math.max(0,S.grabCd-dt);
     S.ambushCd=Math.max(0,S.ambushCd-dt);
+    S._spitFlare=Math.max(0,(S._spitFlare||0)-dt);   // hood tell after a canopy spit
     S.slither+=dt*SNAKE.SLITHER_SPD;
 
     // ---- Lions pressed against the serpent wear it down -----------------
@@ -6247,13 +6465,27 @@ function updateSnakes(dt){
       if(biter){ S.lastHitBy=biter; S.lastHitKind='lion'; }
     }
 
+    // ---- LAST STAND: go TURRET below RETREAT_HP (black cobra) -----------
+    // Runs BEFORE the day/night switch and before every state handler, so a cobra
+    // that crosses the threshold breaks off in the same frame it is wounded rather
+    // than getting one more chance to be caught on the ground.
+    //   • already coiled in a canopy → it simply stops coming down (flip the flag).
+    //   • already climbing as a turret → leave it alone, it is on its way.
+    //   • anything else (night hunt, cruise, siesta, mid-descent) → run for a tree.
+    if(S.v.spit && !S.dying && S.health < SNAKE.RETREAT_HP){
+      if(S.state==='AMBUSH_COIL')                            S.turret = true;
+      else if(!(S.turret && S.state==='AMBUSH_TRAVEL'))       startCobraRetreat(S);
+    }
+
     // ---- DAY ↔ NIGHT SWITCH (black cobra) -------------------------------
     // Driven per-serpent from here rather than from updateDayNight, so each cobra
     // flips on its own terms — one that is mid-strike at dawn finishes the strike
     // first — and no other creature's clock has to know serpents exist.
     // NIGHT: come down out of the canopy (or off whatever it was doing) and hunt.
     // DAY:   find a tree, climb it, and go back to being an ambush.
-    if(S.v.night){
+    // A TURRET is exempt from the whole clock: it has already made its last
+    // decision and stays in the canopy day and night (see startCobraRetreat).
+    if(S.v.night && !S.turret){
       if(!dn.isDay){
         if(S.state==='AMBUSH_COIL'){
           const t = S.ambushTree;
@@ -6289,7 +6521,12 @@ function updateSnakes(dt){
       let want = 0;
       if(S.state==='NIGHT_HUNT'){
         want = S._commitT>0 ? 1 : 0;
-      } else if(S.state!=='AMBUSH_COIL' && S.state!=='SIESTA_SLEEP' && S.state!=='NIGHT_DESCEND'){
+      } else if(S.state==='AMBUSH_COIL'){
+        // Folded flat in the canopy so the drop stays a surprise — EXCEPT in the
+        // moment it rears to SPIT, which is the one warning you get that a coiled
+        // cobra has you in range (see cobraSpitTick / SPIT_FLARE).
+        want = (S._spitFlare||0) > 0 ? 1 : 0;
+      } else if(S.state!=='SIESTA_SLEEP' && S.state!=='NIGHT_DESCEND'){
         let tp=null;
         if(S.targetKind==='player') tp = player.pos;
         else if(S.target && S.target.health>0) tp = S.target.pos;
@@ -6303,6 +6540,16 @@ function updateSnakes(dt){
     if((S.stunTimer||0)>0){
       S.stunTimer-=dt;
       if(S.state==='WRAP'){ S.wrap=null; S.wrapT=0; S.wrapCd=SNAKE.WRAP_CD; snakeUncoil(S); }
+      // A stunned serpent up a tree stays coiled up the tree. layoutSnake() would
+      // lay the body along S.path — which, while coiled, is the STALE ground trail
+      // from before it climbed — and snap the whole snake out of the canopy for the
+      // length of the stun. Hold the coil instead; it just can't spit this frame.
+      if(S.state==='AMBUSH_COIL' && S.ambushTree){
+        const at=S.ambushTree, py=terrainY(at.pos.x,at.pos.z)+(at.perchY||3);
+        S.pos.set(at.pos.x, py, at.pos.z);
+        layoutSnakeCoil(S, at.pos.x, py, at.pos.z, 0.62, 0.06, dt, 0.35);
+        return;
+      }
       layoutSnake(S); return;
     }
 
@@ -6397,15 +6644,29 @@ function updateSnakes(dt){
     // whatever walks underneath, biting on landing (which is what injects the venom).
     if(S.state==='AMBUSH_COIL'){
       const t = S.ambushTree;
-      if(hurt || !t || treeObjects.indexOf(t)<0){          // struck out of the canopy / tree gone
+      const treeGone = !t || treeObjects.indexOf(t)<0;
+      // A TURRET whose tree got felled out from under it climbs the next one rather
+      // than reverting to a ground snake — the one-way door holds.
+      if(S.turret && treeGone){
+        const nt = pickNearestClimbableTree(S);
+        if(nt){ S.pos.set(S.pos.x, terrainY(S.pos.x,S.pos.z)+0.5, S.pos.z);
+                snakeUncoil(S); S.ambushTree=nt; S.state='AMBUSH_TRAVEL';
+                pushSnakePath(S); layoutSnake(S); return; }
+      }
+      // Struck out of the canopy / tree gone. A TURRET is immune to the first half:
+      // shooting or punching it no longer knocks it down to be finished off.
+      if((hurt && !S.turret) || treeGone){
         S.ambushTree=null; S.ambushCd=SNAKE.AMBUSH_CD;
         S.pos.set(S.pos.x, terrainY(S.pos.x,S.pos.z)+0.5, S.pos.z);
         snakeUncoil(S); layoutSnake(S); return;
       }
       const perch = terrainY(t.pos.x,t.pos.z) + (t.perchY||3);
       S.pos.set(t.pos.x, perch, t.pos.z);                  // head = the canopy (drives aim / minimap / hitbox)
+      // SPIT. Before the drop check on purpose: a target it cannot drop on — out
+      // past the canopy edge, or another animal entirely — still gets sprayed.
+      cobraSpitTick(S, dt);
       const under = Math.hypot(player.pos.x-t.pos.x, player.pos.z-t.pos.z) < (t.canopyR||2.5)+SNAKE.AMBUSH_DROP_R;
-      if(under && !playerOffGround()){
+      if(under && !playerOffGround() && !S.turret){        // a turret never drops — it holds cover and sprays
         S.pos.set(player.pos.x, terrainY(player.pos.x,player.pos.z)+0.5, player.pos.z);
         S.target=player; S.targetKind='player'; S.aggroTimer=SNAKE.AGGRO_TIME;
         setSnakeHood(S, 1);                                           // hood snaps wide, jaw gapes, fangs out
@@ -6422,17 +6683,30 @@ function updateSnakes(dt){
     if(S.state==='AMBUSH_TRAVEL'){
       const t = S.ambushTree;
       const pd = Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z);
-      if(hurt || !t || treeObjects.indexOf(t)<0){ S.ambushTree=null; S.state='CRUISE'; }
+      // A TURRET is running for the tree and will not be talked out of it: neither
+      // taking another hit nor the player standing in its way diverts it. If its
+      // target tree vanished mid-run it re-picks the nearest instead of giving up.
+      if(S.turret && (!t || treeObjects.indexOf(t)<0)){
+        const nt = pickNearestClimbableTree(S);
+        if(nt) S.ambushTree = nt; else { S.turret=false; S.ambushTree=null; S.state='CRUISE'; }
+      }
+      else if(S.turret){ /* keep going — no hurt-abort, no bite-detour */ }
+      else if(hurt || !t || treeObjects.indexOf(t)<0){ S.ambushTree=null; S.state='CRUISE'; }
       else if(pd < SNAKE.MELEE_R*1.7 && !playerOffGround()){       // walked into it en route → just bite
         S.ambushTree=null; S.state='CRUISE';
         S.target=player; S.targetKind='player'; S.aggroTimer=SNAKE.AGGRO_TIME;
-      } else if(Math.hypot(t.pos.x-S.pos.x, t.pos.z-S.pos.z) < 1.6){
+      }
+      // Re-read the tree: the turret branches above may have re-picked it.
+      const at = (S.state==='AMBUSH_TRAVEL') ? S.ambushTree : null;
+      if(at && Math.hypot(at.pos.x-S.pos.x, at.pos.z-S.pos.z) < 1.6){
         S.state='AMBUSH_COIL';
-        const perch = terrainY(t.pos.x,t.pos.z) + (t.perchY||3);
-        S.pos.set(t.pos.x, perch, t.pos.z);
-        layoutSnakeCoil(S, t.pos.x, perch, t.pos.z, 0.62, 0.06, dt, 0.35);
+        const perch = terrainY(at.pos.x,at.pos.z) + (at.perchY||3);
+        S.pos.set(at.pos.x, perch, at.pos.z);
+        layoutSnakeCoil(S, at.pos.x, perch, at.pos.z, 0.62, 0.06, dt, 0.35);
         return;
-      } else snakeStep(S, t.pos.x, t.pos.z, SNAKE.AMBUSH_SPEED, dt);
+      }
+      // A retreating turret MOVES — RETREAT_SPEED, not the unhurried AMBUSH_SPEED.
+      if(at) snakeStep(S, at.pos.x, at.pos.z, S.turret ? SNAKE.RETREAT_SPEED : SNAKE.AMBUSH_SPEED, dt);
       if(S.state==='AMBUSH_TRAVEL'){ pushSnakePath(S); layoutSnake(S); return; }
     }
 
@@ -8207,7 +8481,12 @@ function healAllAnimals(){
   skyVultureMeshes.forEach(V=>{ if(ok(V)) V.health=V.maxHealth; });
   eagleMeshes.forEach(E=>{ if(!E.dying && ok(E)) E.health=E.maxHealth; });   // …nor an eagle already falling
   secretaryMeshes.forEach(B=>{ if(ok(B)) B.health=B.maxHealth; });
-  snakeMeshes.forEach(S=>{ if(!S.dying && ok(S)) S.health=S.maxHealth; });   // don't revive a collapsing snake
+  // …and a cobra that has gone TREE TURRET does not reheal either (2026-07-30).
+  // A turret can never be reached in melee, so a full 700-HP top-up every 120 s
+  // would make it effectively immortal — a permanent venom sprinkler. Leaving it
+  // wounded is what keeps the counter-play honest: it stays out of your reach, you
+  // stay able to finish it with a spear, bolt, rock or boomerang.
+  snakeMeshes.forEach(S=>{ if(!S.dying && !S.turret && ok(S)) S.health=S.maxHealth; });
 }
 
 function updateDayNight(dt){
@@ -8653,6 +8932,7 @@ function resetGame(){
   [...carcasses].forEach(c=>{ removeVultures(c); killObj(c.mesh); });
   [..._dustPuffs].forEach(d=>killObj(d.mesh));
   if(grapple.line){ killObj(grapple.line); }
+  clearVenomSpits();                                         // dispose any venom blobs still in flight from a canopy cobra
   clearFireTorch();                                          // dispose any lit Fire Torch ability FX (light + flame mesh)
   clearKitFX();                                              // dispose transient axe swings + drop kit-wall refs (wall meshes freed below)
 
@@ -8752,6 +9032,7 @@ function animate(){
   updateMartialEagles(dt);    // 🦅 sky hunter — soar high on level wings, bank → stoop → strike → mantle → rebound
   updateSecretaryBirds(dt);   // 🦩 ground bird — strides solo, hunts serpents, hesitates then STOMPS
   updateSnakes(dt);           // 🐍 sand python / 🪱 pink worm — hunt, wrap, tree-grab, siesta, grow on kills
+  updateVenomSpits(dt);       // ☠️ venom blobs a canopy cobra sprayed — flight + impact (right after the cobras that fire them)
   updateCreatureVenom(dt);    // ☠️ cobra venom draining every bitten ANIMAL (the player's ticks in updateHealth)
   updateHealthBars(dt);       // floating HP bars (after every animal has moved)
   updateCarcasses(dt);
