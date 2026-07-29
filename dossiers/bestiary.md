@@ -269,11 +269,20 @@ has eaten five things bites for 45 instead of 40; at the 50-segment cap it bites
 cap bites for **86**. This applies to bites on you *and* on other animals — a serpent that has been feeding
 all run is a genuinely different animal from the one that spawned. *Kill them early, or don't let them feed.*
 
-**All take a MIDDAY SIESTA.** At ~11:00 in-game (45–55% through the day) an unengaged serpent drops
-everything, travels to a **grass patch on the bank of the watering hole**, winds into a **tight breathing
-coil** and **sleeps for 60 seconds**. It **wakes instantly** if you come within **8 m** or if anything
-damages it — and it wakes **hostile**, locked onto you. A sleeping serpent is the best window you'll get to
-line up a burst of damage; blundering into one is the worst.
+**All take a MIDDAY SIESTA — but not in the same place.** At ~11:00 in-game (45–55% through the day) an
+unengaged serpent drops everything, winds into a **tight breathing coil** and **sleeps for 60 seconds**.
+Where it beds down depends on the species:
+- 🐍 **python** and 🪱 **worm** sleep on a **grass patch on the bank of the watering hole** — on the ground,
+  in reach, and the best window you'll get to line up a burst of melee damage.
+- ☠️ **black cobra** sleeps **UP A TREE** — it travels to the **nearest climbable tree**, coils in the
+  branches, and sleeps there. Grass is off the cobra's habitat entirely: it ambushes from trees, hunts from
+  trees, retreats to a tree when wounded, and sleeps in one. **You can't melee it up there** — a sleeping
+  cobra is a *ranged* opportunity, not a free hammer hit.
+
+Any of them **wakes instantly** if you come within **8 m** or if anything damages it — and it wakes
+**hostile**, locked onto you. A woken cobra **comes straight down out of the tree** at you (and if its tree
+is chopped out from under it while it sleeps, it wakes and drops too). Blundering into a sleeping serpent is
+the worst thing you can do at midday.
 
 **All fight back against ANY attacker** — you, a lion, a wild dog, the gorilla, a rhino, the elephant. There
 is no such thing as a free hit on a serpent.
@@ -351,6 +360,8 @@ roughly halved.
   wall, or at a player who is up a tree or on a wall. The **hood flares as it rears** — that flash out of
   the canopy is your only warning. It leads a walker, so **sprinting or cutting across its line** breaks the
   shot; standing still in the open is a guaranteed hit.
+- **☀️ AT MIDDAY IT SLEEPS IN A TREE** (not in grass — see the siesta note above). Same 60-second sleep, same
+  8 m wake radius, but 3 m up in the branches and out of melee reach.
 - **🎯 BELOW 100 HP IT BECOMES A TURRET — and never comes down again.** Wound a cobra past **100 HP** and it
   **breaks off mid-fight, runs (speed 14) to the nearest climbable tree, climbs, and stays there for the rest
   of its life, spitting.** From then on: **dusk doesn't bring it down**, standing under it **won't make it

@@ -5372,6 +5372,16 @@ function updateSecretaryBirds(dt){
 const SNAKE = {
   MAX: 6, SPAWN_CHANCE: 0.30,      // 3 independent per-variant rolls at day 1 and day 5 (≈0.9 serpents/roll)
   MELEE_R: 3.0,                    // strikes ~2 units in front of the head (+ head reach)
+  // How high above the ground the PLAYER's melee can still reach a serpent's head.
+  // Mirrors SKYV.MELEE_CEIL / EAGLE.MELEE_CEIL / SECR.GROUND_CEIL. Added 2026-07-30:
+  // nearestAnimalInFront measures 2-D distance only, so before this a player standing
+  // at a trunk could hammer a cobra coiled 3.5 m up in the canopy — which quietly
+  // defeated the whole point of the low-HP TREE TURRET, and made the new tree siesta
+  // nonsense. A grounded serpent's head sits at terrainY+0.5 and a canopy perch at
+  // terrainY+3 or more, so 2.0 separates them cleanly with room to spare.
+  // (Creature-vs-serpent reach needed no change: those checks use a 3-D distanceTo
+  // against FIGHT_R 3.4, so a lion on the deck already can't quite touch a perch.)
+  MELEE_CEIL: 2.0,
   DETECT: 22,                      // spots an EXPOSED player within this (× stealth.visMul)
   HUNT_PREY_R: 30,
   AGGRO_TIME: 6,                   // stays locked on an attacker this long
@@ -6163,8 +6173,15 @@ function snakeGrowCheck(S){
 }
 
 // ---- MIDDAY SIESTA ---------------------------------------------------
-// Head for the water, then bed down on a nearby grass patch: grassy, low slope,
-// no wall between, nothing else standing on it.
+// Two habitats, picked off the variant:
+//   🐍 python / 🪱 worm — GROUND sleepers. Head for the water, then bed down on a
+//     nearby grass patch: grassy, low slope, no wall between, nothing standing on it.
+//   ☠️ black cobra — a TREE sleeper (2026-07-30, Steven: "the cobra still sleeps in
+//     grass? I want it to sleep in trees"). Grass is off the cobra's habitat
+//     entirely now: it ambushes from trees, hunts from trees, retreats to a tree at
+//     low HP — and it sleeps out the midday heat in one too. Reuses the retreat
+//     state's own tree finder (pickNearestClimbableTree) so there is exactly one
+//     piece of "find me a tree" logic in the serpent module.
 function snakeSlope(x,z){
   const h=terrainY(x,z);
   return Math.max(Math.abs(terrainY(x+1.5,z)-h), Math.abs(terrainY(x,z+1.5)-h))/1.5;
@@ -6174,6 +6191,14 @@ function snakeSpotOccupied(x,z,r){
   return near(lionMeshes)||near(preyMeshes)||near(gorillaMeshes)||near(rhinoMeshes)||near(dogMeshes);
 }
 function pickSiestaSpot(S){
+  // A tree-dwelling serpent sleeps up a tree. `tree` on the returned spot is what
+  // switches both siesta handlers over to the canopy — no grass clump is ever
+  // considered for it. If the map somehow has no climbable tree in reach it falls
+  // through to the ground search below, so the siesta can never dead-end.
+  if(S.v.ambush){
+    const t = pickNearestClimbableTree(S);
+    if(t) return {x:t.pos.x, z:t.pos.z, tree:t};
+  }
   // Anchor = the watering hole if the world has one, else the nearest grass clump.
   // `skin` is how far past the anchor the search ring reaches — for the pond that's
   // its own radius plus the search band, so we hunt the BANK, never the water.
@@ -6609,8 +6634,15 @@ function updateSnakes(dt){
 
     // ============ SIESTA ============
     if(S.state==='SIESTA_SLEEP'){
+      // A tree sleeper's bed is the canopy of siestaSpot.tree; a ground sleeper's is
+      // the patch of grass it walked to. Losing the tree under it just wakes it up.
+      const sTree = S.siestaSpot && S.siestaSpot.tree;
+      const inCanopy = !!sTree && treeObjects.indexOf(sTree)>=0;
       const pd = Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z);
-      if(hurt || pd < SNAKE.SIESTA_WAKE_R){                            // startled awake → hostile
+      // Woken by damage, by the player coming inside SIESTA_WAKE_R, or by its tree
+      // being felled. snakeUncoil() drops it back to the ground at the trunk, so a
+      // disturbed tree sleeper comes down angry rather than fighting from the branches.
+      if(hurt || pd < SNAKE.SIESTA_WAKE_R || (sTree && !inCanopy)){
         S.target=player; S.targetKind='player'; S.aggroTimer=SNAKE.AGGRO_TIME;
         showKillfeed(S.v.icon+' You woke the '+S.v.label+'!');
         snakeUncoil(S); layoutSnake(S); return;
@@ -6618,16 +6650,38 @@ function updateSnakes(dt){
       S.sleepT += dt;
       if(S.sleepT >= SNAKE.SIESTA_SLEEP){ snakeUncoil(S); layoutSnake(S); return; }
       const breathe = 1 + Math.sin(S.sleepT*1.6)*0.045;               // subtle breathing swell
-      layoutSnakeCoil(S, S.pos.x, terrainY(S.pos.x,S.pos.z)+0.3, S.pos.z, 1.15*breathe, 0.012, dt, 0.16);
+      if(inCanopy){
+        const py = terrainY(sTree.pos.x, sTree.pos.z) + (sTree.perchY||3);
+        S.pos.set(sTree.pos.x, py, sTree.pos.z);                      // head = the branch (drives aim/minimap/hitbox)
+        // Tighter coil than the ground one (1.15 → 0.7): it's wound round a branch,
+        // not sprawled on flat dirt — the same gauge the canopy ambush uses.
+        layoutSnakeCoil(S, sTree.pos.x, py, sTree.pos.z, 0.7*breathe, 0.012, dt, 0.16);
+      } else {
+        layoutSnakeCoil(S, S.pos.x, terrainY(S.pos.x,S.pos.z)+0.3, S.pos.z, 1.15*breathe, 0.012, dt, 0.16);
+      }
       return;
     }
     if(S.state==='SIESTA_TRAVEL'){
       const sp = S.siestaSpot;
       const pd = Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z);
-      if(hurt || !sp){ S.state='CRUISE'; }                            // attacked en route → back to hostile
+      // Its bed tree got felled en route → pick the next nearest rather than bedding
+      // down in mid-air. No tree left at all falls back to a normal hostile CRUISE.
+      if(sp && sp.tree && treeObjects.indexOf(sp.tree)<0){
+        const nt = pickNearestClimbableTree(S);
+        if(nt){ sp.tree=nt; sp.x=nt.pos.x; sp.z=nt.pos.z; } else { S.siestaSpot=null; }
+      }
+      if(hurt || !S.siestaSpot){ S.state='CRUISE'; }                  // attacked en route → back to hostile
       else {
         const d = Math.hypot(sp.x-S.pos.x, sp.z-S.pos.z);
-        if(d < 1.4){ S.state='SIESTA_SLEEP'; S.sleepT=0; }
+        // A tree needs the same 1.6 arrival radius the ambush climb uses (a trunk is
+        // wider than a patch of grass); the ground siesta keeps its tighter 1.4.
+        if(d < (sp.tree ? 1.6 : 1.4)){
+          S.state='SIESTA_SLEEP'; S.sleepT=0;
+          if(sp.tree){                                                // climb: head straight to the branch
+            const py = terrainY(sp.tree.pos.x, sp.tree.pos.z) + (sp.tree.perchY||3);
+            S.pos.set(sp.tree.pos.x, py, sp.tree.pos.z);
+          }
+        }
         else snakeStep(S, sp.x, sp.z, SNAKE.SIESTA_SPEED, dt);
       }
       if(S.state==='SIESTA_TRAVEL'){
@@ -7833,7 +7887,8 @@ function nearestAnimalInFront(range, minDot){
   scan(skyVultureMeshes,'skyvulture', V=>(V.pos.y - terrainY(V.pos.x,V.pos.z)) > SKYV.MELEE_CEIL);   // melee only reaches it when low (landed / diving)
   scan(eagleMeshes,'eagle', E=>E.dying || (E.pos.y - terrainY(E.pos.x,E.pos.z)) > EAGLE.MELEE_CEIL); // …same for the eagle: only while it mantles or stoops low
   scan(secretaryMeshes,'secretary', B=>(B.pos.y - terrainY(B.pos.x,B.pos.z)) > SECR.GROUND_CEIL);    // it's a walker — only out of reach mid-escape-flight
-  scan(snakeMeshes,'snake', S=>S.dying);
+  scan(snakeMeshes,'snake', S=>S.dying
+       || (S.pos.y - terrainY(S.pos.x,S.pos.z)) > SNAKE.MELEE_CEIL);   // …and a serpent up in a canopy (ambush / turret / tree siesta) is out of arm's reach
   return best;
 }
 // Melee tool identity for kill/hit messages — the equipped tool names ITSELF and its

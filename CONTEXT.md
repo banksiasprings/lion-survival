@@ -1110,4 +1110,72 @@ it"* · *"can you make the lions a little bit faster?"*
   (e) Nothing else was rebalanced: cobra bite/`BITE_CD`/growth, other predators' HP and behaviour, bird
   species and the `killObj` disposal invariants were all left alone.
 
+
+## Cobra sleeps in TREES, and the canopy melee ceiling (2026-07-30b)
+Steven: *"Is that the cobra still sleeps in grass? What is this? Grass. Grass. I want it to sleep in trees."*
+
+- **The midday siesta is now habitat-split by variant.** `pickSiestaSpot(S)` gained an early branch: a
+  tree-dwelling serpent (`S.v.ambush` — the cobra, and only the cobra) returns
+  `{x, z, tree: pickNearestClimbableTree(S)}` and **never looks at a grass clump**; python and worm fall
+  through to the unchanged watering-hole grass search. **Reuses the retreat state's own tree finder**, so
+  there is exactly one piece of "find me a tree" logic in the serpent module. Grass is off the cobra's
+  habitat entirely now — it ambushes from trees, hunts from trees, retreats to a tree at low HP, sleeps in one.
+- **Both siesta handlers became tree-aware**, keyed off `siestaSpot.tree` (no new state — `SIESTA_TRAVEL` /
+  `SIESTA_SLEEP` still do the work):
+  - `SIESTA_TRAVEL` uses a **1.6** arrival radius for a tree (a trunk is wider than a grass patch; matches
+    the ambush climb) vs the ground siesta's unchanged 1.4, and on arrival snaps the head to
+    `terrainY + perchY`. A bed tree felled en route → re-pick the nearest; none left → plain hostile CRUISE.
+  - `SIESTA_SLEEP` coils at the perch instead of `terrainY+0.3`, with a **tighter gauge (1.15 → 0.7)** because
+    it's wound round a branch rather than sprawled on flat dirt — same gauge the canopy ambush uses.
+  - **Third wake condition added:** its tree being felled (`treeObjects.indexOf(sTree)<0`) joins damage and
+    the player inside `SIESTA_WAKE_R` 8. All three route through the existing `snakeUncoil(S)`, which puts it
+    on the ground at the trunk — so a disturbed tree sleeper **comes down angry** rather than fighting from
+    the branches.
+- **⚠ `SNAKE.MELEE_CEIL = 2.0` — a fix beyond the literal ask, and a CORRECTION to the 2026-07-30 report
+  above.** That section claimed a turret "cannot be reached in melee". **That was wrong.** Unlike the ~15
+  creature-AI scans, `nearestAnimalInFront` has **no `AMBUSH_COIL` guard** for snakes and measures **2-D
+  distance only** — so a player at the trunk could hammer a cobra 3.68 m up in the canopy (verified live:
+  `MELEE_REACHES_TREED_COBRA: true`). The earlier test that "passed" was invalid — it called `camera.lookAt`
+  without moving `camera.position`, so the aim vector was garbage. This was **pre-existing** (it applied to
+  the ordinary day ambush long before any of these changes) but it defeated the turret's whole purpose and
+  made the new tree siesta nonsense, so it is fixed now with the codebase's own idiom: one altitude skip in
+  the snake scan, mirroring `SKYV.MELEE_CEIL` / `EAGLE.MELEE_CEIL` / `SECR.GROUND_CEIL`. A grounded serpent's
+  head is at `terrainY+0.5` and a perch at `terrainY+3`+, so 2.0 separates them with room to spare.
+  - **Creature-vs-serpent reach needed no change:** those checks use a **3-D** `distanceTo` against
+    `FIGHT_R 3.4`, so a lion standing on the deck already can't quite touch a canopy perch. Only the
+    player's melee used flat 2-D distance.
+  - **Regression checked:** a grounded cobra (height 0.50) is still melee-able; only the canopy is exempt.
+    `NIGHT_DESCEND` passes through the ceiling on its way down, which is correct — it becomes reachable as it
+    nears the ground.
+- **Verified live** (fresh load, service worker + caches cleared, `?v=` bumped):
+  - `pickSiestaSpot` → cobra gets the **nearest** climbable tree (`isNearestTree: true`, 23.2 m);
+    python + worm still get grass clumps.
+  - It travels 23 m and is asleep in the canopy in **3.15 s** (`SIESTA_SPEED 7` ✓), head at **exactly** the
+    computed perch (3.76 = `expectedPerch`), and the **whole body is up there** (seg[0] 3.77, tail 3.93) —
+    the coil renders in the branches, nothing trailing on the ground.
+  - **The natural midday gate fires unaided:** at the centre of the window, cobra ran
+    `SIESTA_TRAVEL → SIESTA_SLEEP` at height **2.92 in a tree** while the python ran the same states at
+    height **0.50 on grass**, side by side in the same run.
+  - Wake paths: player within 5 m → wakes hostile (aggro 6) and drops to ground level; damage → same;
+    tree felled mid-sleep → wakes and comes down, **doesn't float**.
+  - Interactions: **dusk while tree-sleeping → `NIGHT_HUNT`** (comes down); **dropping below `RETREAT_HP`
+    while tree-sleeping → turret in the SAME tree it was sleeping in** (`sameTreeItSleptIn: true`), which is
+    the "converts in place" behaviour, since `pickNearestClimbableTree` returns the tree it's already at.
+  - Melee: tree sleeper **not** reachable; turret **not** reachable (2.92 m); ground cobra **still** reachable.
+  - **Soak 180 s / full day→night→dawn into day 2** with 2 cobras + python + worm: **0 errors, 0 NaN, 0
+    console errors**, and a dedicated `GEOMETRY_BUG_FRAMES` counter (tree sleeper on the deck, or grass
+    sleeper in the air) held at **0** across **2 583 sleep-frames**. The full cobra lifecycle appeared
+    unprompted in one run: `SIESTA_TRAVEL → SIESTA_SLEEP(tree) → CRUISE → AMBUSH_TRAVEL → AMBUSH_COIL →
+    NIGHT_DESCEND → NIGHT_HUNT`, plus a second cobra ending as a 1-HP turret that held. `python:WRAP` also
+    fired, so the rest of the ecosystem is unaffected.
+  - Disposal: **0 scene / 0 geometries / 0 textures** across 3 full tree-sleep→wake cycles; the 1-HP turret
+    still refuses to reheal.
+- **⚠ Interpretive calls (report, not silently tuned):** (a) gated on the existing **`S.v.ambush`** flag
+  rather than a new `treeSleep` one — for now it is exactly "the serpent that lives in trees", and a 4th
+  variant that wants one but not the other can split them then. (b) A woken tree sleeper **comes down to the
+  ground** instead of striking from the branches — reuses `snakeUncoil` and keeps the sleeping cobra a real
+  opportunity rather than an untouchable one. (c) `SIESTA_SLEEP` is **not** added to the ~15
+  `state!=='AMBUSH_COIL'` creature-AI unreachability guards: the 3-D `FIGHT_R` distance already protects it,
+  and a **secretary bird** — the cobra's dedicated predator — finding it asleep is a fight worth having.
+
 Each phase is an independent commit so it can be iterated in isolation.
