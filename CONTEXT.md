@@ -1569,4 +1569,77 @@ did not match what was placed. Cause: **the player STARVED mid-benchmark** (`gam
 re-assert `gameState==='playing'`) every frame, and assert `ok: gameState==='playing'` in the result so a dead
 run is obvious instead of silently reporting a fast one.
 
+
+## Walls are WALKABLE ON TOP — clip-inside + bump-cascade fixed (2026-07-30j)
+Steven: *"They have this glitch where I can jump inside of them… last time you fixed it you made me bump off
+the edge, but if I place two walls near each other it'd bump me off one wall into the other wall. So just make
+it a solid surface on top, so I can walk on it if I want."*
+
+### Root cause of BOTH bugs — one block of code in `updatePlayer`
+The old player wall handling was a radial sphere-AABB push (`dx/dist` toward the nearest point on the box),
+run AFTER the ground snap:
+- **"Jump inside a wall":** the jump apex is **3.27** units and a wall top needs only **2.10** of rise, so the
+  player can already jump above a wall. Once the feet cleared `max.y - 0.15` the push was skipped, the player
+  descended INTO the footprint — and for a point *inside* an AABB `clamp()` returns the point itself, so
+  `dist === 0` and the `dist > 0.001` guard made the push a **no-op**. (The animal version, `collideWalls`, has
+  an `else { pos.x += radius; }` dead-centre ejection; the player copy never did.) You were stuck inside.
+- **The bump cascade:** the nearest-point vector near a wall's END-CAP points **diagonally**, so it shoved the
+  player into the neighbouring wall, which shoved back. Pinball.
+
+### The fix
+- **`wallSupportY(x,z,feetY,prevFeetY,vy)`** — the highest wall top that can hold the player at (x,z). The
+  ground snap now uses `max(terrainY, wallTop)`, and that single change gives landing, standing, walking a
+  chain, walking off the end, and a wall being smashed out from under you **all for free** from the existing
+  gravity path. No special cases.
+  - A top only counts as a floor if it is at/below the feet (+ step) — otherwise standing *beside* a 2.2-high
+    wall would teleport you on top of it.
+  - **Swept guard:** gravity moves the feet up to ~1.1 units per clamped frame, so a fast fall could cross a
+    wall top entirely between frames. If the feet were above a top last frame and are below it now while
+    descending, that top still catches them. (Same idea as the wild-dog / snake anti-tunnel checks.)
+- **`pushPlayerOutOfWalls()`** — replaces the radial push with an **axis-aligned minimum-translation** push,
+  and runs **before** the ground snap. Resolves the inside-the-box case (both overlaps positive → eject the
+  shallow way), and never pushes diagonally, so there is nothing to cascade. Skipped entirely for a wall whose
+  top is within the step-up of the feet — up there it is a floor, which is what makes walking across adjacent
+  walls produce **exactly zero** horizontal pushes.
+- **Old code removed cleanly** — the `wallAABBs.forEach` radial block is gone; grep for
+  `above the wall — vault over` / `0.5-dist` returns nothing. A comment marks where it was and why it died.
+- Knockback can still slide the player sideways after the snap, so `pushPlayerOutOfWalls()` is called once more
+  after it. Deliberately **not** re-running the ground snap there — doing so let a shove lift the player onto a
+  wall top they never jumped to.
+
+### ⚠ Two further problems found while testing, both real, both fixed
+1. **`WALL_STEP_UP = 0.7`, not a tight tolerance — because THE GROUND IS SLOPED.** Walls sit on terrain, so a
+   chain placed 2.5 apart can have wildly different tops: measured **1.61 / 1.68 / 1.79 / 2.01 / 2.05 / 2.55 /
+   2.59 / 2.81 / 2.92 / 2.99** across ten adjacent walls — a **1.38 spread**. With the first cut's 0.12
+   tolerance the player walked one wall and **jammed against the next wall's face forever**. 0.7 crosses those
+   steps while staying far below a wall's own 2.2 height, so **a wall is still an impassable barrier from flat
+   ground** — that invariant is what keeps walls worth building.
+2. **`onGround` was flip-flopping every single frame at rest.** At rest the feet sit *exactly* at
+   `floorY + 0.1`, and the test was a strict `<`, so it alternated true/false. Gravity **and the jump** both
+   gate on `onGround`, so roughly half of all jump presses were being swallowed — pre-existing, on terrain as
+   well as walls. Now `<=` plus 1e-4. Standing still measures **60/60 grounded frames** (was ~30/60).
+
+### Pinned tests — all pass
+| pin | result |
+|---|---|
+| `test_player_lands_on_wall_top_and_stays` | lands at exactly `top+0.1`, **60/60 grounded frames** over 3 s, never inside |
+| `test_player_walks_along_adjacent_walls_without_bump_cascade` | crossed 5 walls with tops **1.6→3.0**; **max lateral jerk 0.0000**, 0 stalled frames, 0 clips |
+| `test_player_falls_normally_off_wall_edge` | left top frame 1, landed frame 10, feet match terrain, **knockback impulse 0** |
+| `test_wall_destruction_while_player_standing_drops_player_with_gravity` | velY 0 → −1.1 → −2.2 → −3.3 (clean g), lands exactly on terrain |
+
+### Verifications
+- **Player cannot clip inside a wall from any angle** — 24 approach angles × 7 heights (below / mid / at-top /
+  above) sprinting straight in = **168 cases, 0 frames inside a wall**.
+- **Predators still cannot climb** — lioness in permanent `chase` against a 5-wall barrier for 20 s: pressed to
+  z = −2.12, **never crossed**, and **max height above terrain 0.000**. Animal wall code untouched.
+- **60 s soak, 10-wall chain, 24 patrol turns:** 0 frames inside, 0 fall-throughs, 0 frames off-chain, **max
+  lateral jerk 0.0000**, 0 geometry / texture / scene delta. Final feet sat exactly `top + 0.1`.
+- **Gap jump:** 1.5-wide gap between walls — cleared it, landed on the far (taller, 2.95) wall, no clipping.
+- **Diagonal (45°) chain:** walkable, 0 frames inside, 0 sinking. Note collision uses the AABB of the rotated
+  box, so a diagonal wall's walkable top is slightly generous — same approximation every existing animal
+  collision already uses.
+- 0 console errors.
+- **Standing on a wall still counts as `playerOffGround()`** (unchanged, pre-existing), so a fortification
+  genuinely protects you from ground predators — the feature and the safety model agree.
+
 Each phase is an independent commit so it can be iterated in isolation.

@@ -661,6 +661,79 @@ function collideStoneWalls(pos, radius){
   }
 }
 
+// ---- WALLS ARE WALKABLE ON TOP (2026-07-30j) -------------------------
+// Steven: "they have this glitch where I can jump inside of them… last time you
+// fixed it you made me bump off the edge, but if I place two walls near each other
+// it'd bump me off one wall into the other wall. So just make it a solid surface on
+// top, so I can walk on it if I want."
+//
+// PLAYER-ONLY. Animals keep their old `collideWalls`/`collideStoneWalls` treatment
+// (a wall is a flat barrier they cannot mount), which is what preserves a wall's
+// defensive value — see the regression note in CONTEXT.
+//
+// WALL_STAND_MARGIN widens a wall's walkable top beyond its literal footprint. A
+// wall is only 0.3 thick, so without this you'd be balancing on a 0.3-wide beam and
+// "walk along it" would be unusable; 0.35 makes the effective top ~1.0 wide. It is
+// deliberately smaller than the 0.5 body radius so you can't stand on thin air well
+// clear of the wall face.
+const WALL_STAND_MARGIN = 0.35;
+const PLAYER_WALL_R     = 0.5;    // body radius for horizontal wall blocking (unchanged)
+// STEP-UP allowance: a wall top this far above the feet is a STEP you walk up, not an
+// obstacle that blocks you. It has to be this generous because THE GROUND IS SLOPED —
+// walls sit on terrain, so a chain of them placed 2.5 apart can have tops 0.5 apart
+// (measured: three adjacent walls came out at 1.83 / 2.30 / 2.77, a 0.94 spread). At a
+// tight tolerance the player walked to the second wall and jammed against its face
+// forever, which is not "walk along a chain of walls".
+// ⚠ It must stay FAR below a wall's own 2.2 height, or walls stop being barriers and
+// the player could step over one from flat ground — that invariant is what keeps a wall
+// worth building. 0.7 vs 2.2 leaves a wide margin.
+const WALL_STEP_UP      = 0.7;
+
+// Highest wall top that can hold the player up at (x,z), or -Infinity for none.
+// A wall only counts as a FLOOR if its top is already at/below the feet (+ a step
+// tolerance) — otherwise standing beside a 2.2-high wall would teleport you on top
+// of it. The second clause is a SWEPT test: gravity moves the feet up to ~1.1 units
+// per clamped frame, so a fast fall could cross a wall top entirely between frames
+// and land you inside the wall. If the feet were above the top last frame and are
+// below it now while descending, that top still catches them. (Same swept-guard
+// idea as the wild-dog / snake anti-tunnel checks.)
+function wallSupportY(x, z, feetY, prevFeetY, vy){
+  let top = -Infinity;
+  for(let i=0;i<wallAABBs.length;i++){
+    const a = wallAABBs[i];
+    if(x < a.min.x-WALL_STAND_MARGIN || x > a.max.x+WALL_STAND_MARGIN) continue;
+    if(z < a.min.z-WALL_STAND_MARGIN || z > a.max.z+WALL_STAND_MARGIN) continue;
+    const standing = a.max.y <= feetY + WALL_STEP_UP;
+    const crossed  = vy <= 0 && prevFeetY >= a.max.y - 0.02 && feetY < a.max.y;
+    if(!standing && !crossed) continue;
+    if(a.max.y > top) top = a.max.y;
+  }
+  return top;
+}
+// Push the player out of any wall they are inside or clipping, along the SHALLOWEST
+// axis (minimum-translation). Skipped entirely for a wall whose top is at/below the
+// feet — up there it is a floor, not an obstacle, and skipping it is what kills the
+// bump cascade: two walls side by side push you exactly zero times while you walk
+// across them.
+// ⚠ This REPLACED a radial push (`dx/dist` toward the nearest point on the box).
+// That old version had two defects: (1) for a player inside the box, `dist` is 0, so
+// it did NOTHING and you stayed clipped inside — the actual "jump inside a wall" bug;
+// (2) near a wall's end-cap the nearest-point vector points DIAGONALLY, so it shoved
+// you into the neighbouring wall, which shoved back — the pinball Steven hit.
+function pushPlayerOutOfWalls(){
+  for(let i=0;i<wallAABBs.length;i++){
+    const a = wallAABBs[i];
+    if(player.pos.y >= a.max.y - WALL_STEP_UP) continue;       // on top, or a step up → it's a floor
+    const ox = Math.min(a.max.x + PLAYER_WALL_R - player.pos.x,
+                        player.pos.x - (a.min.x - PLAYER_WALL_R));
+    const oz = Math.min(a.max.z + PLAYER_WALL_R - player.pos.z,
+                        player.pos.z - (a.min.z - PLAYER_WALL_R));
+    if(ox <= 0 || oz <= 0) continue;                            // no overlap on some axis
+    if(ox < oz) player.pos.x += (player.pos.x > (a.min.x+a.max.x)*0.5) ?  ox : -ox;
+    else        player.pos.z += (player.pos.z > (a.min.z+a.max.z)*0.5) ?  oz : -oz;
+  }
+}
+
 // Procedural dry-savanna ground texture — mottled gold/brown with scattered
 // darker patches and faded green tufts. One CanvasTexture, tiled across the map.
 function makeGroundTexture(){
@@ -1742,13 +1815,31 @@ function updatePlayer(dt){
     if(keys['Space'] && player.onGround && !stunned){ player.vel.y = PLAYER.jumpForce; player.onGround = false; }
   }
 
+  // Feet height BEFORE integrating — the swept wall-top test needs it (see wallSupportY).
+  const prevFeetY = player.pos.y;
+
   // Integrate position
   player.pos.addScaledVector(player.vel, dt);
 
-  // Terrain collision
+  // Horizontal wall blocking FIRST, so the support height below is chosen for the
+  // XZ we actually end up at (and so we are never inside a wall when we pick a floor).
+  pushPlayerOutOfWalls();
+
+  // Ground collision — the floor is the TERRAIN or a WALL TOP, whichever is higher.
+  // This one line is what makes a wall walkable: landing on it, standing on it and
+  // walking a chain of them all fall out of the normal ground snap, and walking off
+  // the end simply stops finding support so ordinary gravity takes over. A wall
+  // smashed out from under the player likewise just stops being found next frame.
   const ty = terrainY(player.pos.x, player.pos.z);
-  if(player.pos.y < ty + 0.1){
-    player.pos.y = ty + 0.1;
+  const wallTop = wallSupportY(player.pos.x, player.pos.z, player.pos.y, prevFeetY, player.vel.y);
+  const floorY = wallTop > ty ? wallTop : ty;
+  // `<=` plus a hair of tolerance, not `<`. At rest the feet sit EXACTLY at
+  // floorY + 0.1, so a strict `<` reported onGround=false on alternating frames
+  // (measured: it flip-flopped every frame while standing still). That matters
+  // because gravity and the jump both gate on onGround, so half your jump presses
+  // were being swallowed. Resting contact now stays grounded.
+  if(player.pos.y <= floorY + 0.1 + 1e-4){
+    player.pos.y = floorY + 0.1;
     player.vel.y = 0;
     player.onGround = true;
   } else {
@@ -1776,21 +1867,15 @@ function updatePlayer(dt){
     player.knockback.set(0,0,0);
   }
 
-  // Wall collision (sphere-AABB in XZ). Skip it once the player's feet have
-  // cleared the top of the wall — otherwise the wall behaves like an invisible
-  // barrier extending infinitely into the sky and you can never jump over it.
-  wallAABBs.forEach(aabb=>{
-    if(player.pos.y > aabb.max.y - 0.15) return;   // above the wall — vault over
-    const px = clamp(player.pos.x, aabb.min.x, aabb.max.x);
-    const pz = clamp(player.pos.z, aabb.min.z, aabb.max.z);
-    const dx = player.pos.x - px;
-    const dz = player.pos.z - pz;
-    const dist = Math.sqrt(dx*dx+dz*dz);
-    if(dist < 0.5 && dist > 0.001){
-      player.pos.x += (dx/dist)*(0.5-dist);
-      player.pos.z += (dz/dist)*(0.5-dist);
-    }
-  });
+  // (Wall collision moved ABOVE the ground snap and rewritten — see
+  // pushPlayerOutOfWalls / wallSupportY. The old radial sphere-AABB push that lived
+  // here is gone: it no-op'd when the player was inside a wall and shoved diagonally
+  // into neighbouring walls, which were the clip-inside and pinball bugs.)
+  // The knockback above can slide the player sideways after the snap, so re-resolve
+  // horizontally once here — cheap, and it keeps a knockback from parking you inside
+  // a wall. Deliberately NOT re-running the ground snap: doing that after knockback
+  // let a shove lift the player onto a wall top they never jumped to.
+  pushPlayerOutOfWalls();
 
   // Camera
   camera.position.copy(player.pos);
