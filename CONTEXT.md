@@ -1502,4 +1502,71 @@ Unchanged at full saturation on every row: `belly`, `spot`, `mm`/`mmHot`, `venom
   announcement, the gold minimap dot and the 1500 HP — not from being shiny at distance. Flagged in case
   Steven wants the boss to stay visually loud from afar.
 
+
+## Wall fixes: unequip no longer demolishes paid-for walls; cap 10 → 50 (2026-07-30i)
+Steven: *"When I placed down a stone or wood wall, then when I unequipped the ability, it deletes it, which is
+really annoying because then I wasted like a hundred wood. Also, the wall limit is like ten. I want it to be fifty."*
+
+### Bug 1 — the handler, and why the suspected cause was not the cause
+- **Which handler:** `reconcileKitWalls()`, called from **`equipToSlot()`** and **`unequipItem()`**. It called
+  `clearKitWalls(ability)`, which ran every matching `kitWalls` entry through `removeWallAt` — disposing the
+  mesh and dropping it from `wallMeshes`/`wallAABBs`.
+- **⚠ There was NO preview/placed split to fix, and no stray blanket `forEach`.** The brief suspected the
+  unequip path was disposing placed walls when it meant to dispose a preview/ghost wall. **There is no preview
+  or ghost wall anywhere in this game** (grepped: zero `preview`/`ghost` wall code) — `placeKitWall` builds the
+  real mesh and deducts materials in the same call, instantly. So nothing needed separating.
+- **The actual cause was a deliberate design decision from 2026-07-16c**, documented in this very file: placed
+  walls were torn down on unequip "mirroring the Fire Torch". That was the wrong analogy. The Fire Torch FX is
+  an **active effect of holding the tool**, so extinguishing it on unequip is correct; a placed wall is a
+  **product the player already paid wood or rock for**. Unequipping refunded nothing and silently demolished
+  the lot.
+- **Fix: `clearKitWalls()` and `reconcileKitWalls()` are DELETED** (both call sites removed; a ⚠ tombstone
+  comment sits where they were, explaining the Fire-Torch mis-analogy so nobody reintroduces it). No new
+  lifecycle metadata was needed — placed walls were already tracked correctly.
+- **The three legitimate removal paths were verified still working, all still routing through
+  `removeWallAt`:** player fells it (`damageWall` → 999 dmg on a 120-HP wood wall → gone), enemy smash
+  (`removeWallAt` direct, as `wallBlockingPath` does), and `resetGame`'s world teardown (walls 50 → 0,
+  geometry back to baseline). `kitWalls` stayed in lockstep with `wallMeshes` in every case via
+  `updateAbilities`' prune loop, **which runs whether or not the tool is equipped** — that is what keeps the
+  cap honest now that unequip doesn't clear anything.
+- `clearKitFX()` (resetGame / triggerGameOver) is now the ONLY place placed walls are dropped wholesale, and
+  both callers are run boundaries. Incidentally observed: walls survive a game-over intact and are freed by
+  the following `resetGame`.
+
+### Bug 2 — `KIT_WALL_MAX` 10 → 50, with the perf curve measured
+| walls | logic frame time (median of 3×500) | Δ vs 0 | % of the 16.67 ms 60fps budget |
+|---|---|---|---|
+| 0 | 2.524 ms | — | 15.1% |
+| 25 | 3.250 ms | +0.726 ms | 19.5% |
+| 50 | **3.974 ms** | **+1.450 ms** | **23.8%** |
+
+- **Exactly linear — 29 µs per wall at both 25 and 50** (Δ50/Δ25 = 2.00), which is the expected
+  O(animals × walls) shape of `collideWalls` / `collideStoneWalls` / `segHitsWall` running plain AABBs.
+- **Verdict: ship 50.** In relative terms 50 walls add **+57%** to logic time, which sounds alarming, but the
+  absolute is 1.45 ms and the total is under a quarter of the frame budget. At 29 µs/wall you would need
+  **~440 walls** to exhaust the remaining headroom. A wall is one `BoxGeometry` + one Lambert material, so
+  VRAM and draw calls are negligible.
+- Measurement is **logic-only** (render stubbed to fit the tool's 30 s ceiling). The animal population
+  actually *fell* across the three runs (80 → 76 → 66), so the wall cost is if anything slightly understated.
+
+### Pinned tests — all pass
+- `test_placed_wall_survives_unequip_and_re_equip` — 3 walls → unequip → **still 3** (`kitWalls`,
+  `wallMeshes`, `wallAABBs` all 3, ability now false) → re-equip → still 3 → **three full cycles** → still 3,
+  wood unchanged.
+- `test_preview_wall_disappears_on_unequip` — **cannot exist as written**: there is no preview wall. Pinned the
+  meaningful equivalent instead: unequip disposes **nothing** (0 geometries, 0 textures, 0 scene children).
+- `test_wall_limit_is_50_and_51st_placement_rejected` — cap 50, all 50 placed, 51st returns `false`, killfeed
+  reads `🪵 Wall limit (50) reached — hammer some down to free space`, **wood NOT charged** for the rejected
+  placement, still exactly 50.
+- **Leak:** 0 geometries / 0 textures / 0 scene children across 3 × (place 50 → wipe 50) cycles.
+- **0 console errors.**
+
+### ⚠ Benchmark methodology trap, recorded for next time
+The first two attempts at the perf curve produced garbage — frame times of **0.001 ms** and wall counts that
+did not match what was placed. Cause: **the player STARVED mid-benchmark** (`gameState` went to `'over'`,
+`player.hunger` 0), after which `animate()` early-returns and every subsequent sample measures nothing. Pinning
+`player.health` alone is **not enough** to keep a long synthetic soak alive — pin `player.hunger` too (and
+re-assert `gameState==='playing'`) every frame, and assert `ok: gameState==='playing'` in the result so a dead
+run is obvious instead of silently reporting a fast one.
+
 Each phase is an independent commit so it can be iterated in isolation.

@@ -8057,7 +8057,11 @@ function updateScope(dt){
   const sc = document.getElementById('scope');
   if(sc){ const on = scopeActive(); if(sc._on!==on){ sc.style.display = on?'block':'none'; sc._on = on; } }
 }
-const KIT_WALL_MAX = 10;   // active-wall cap (permanent walls — bounds VRAM; enemies smashing them frees space)
+// Active-wall cap. 10 → 50 (2026-07-30i, Steven): 10 was not a fortress, it was a
+// fence. A wall is one BoxGeometry + one Lambert material, so 50 costs ~50 draw calls
+// and the per-frame collision work is O(animals × walls) on plain AABBs — measured
+// flat at 50 (see the soak note in CONTEXT).
+const KIT_WALL_MAX = 50;
 const WALL_HP = { wood:120, stone:200 };   // player structure HP: axe(42) fells wood in 3, hammer(67) in 2; hammer smashes stone in 3
 const WALL_COST = { wood:2, rock:5 };      // per-placement material cost (no cooldown — materials ARE the limiter)
 // Place a player barrier. stone=false → wood palisade (elephants/gorillas smash it,
@@ -8086,7 +8090,12 @@ function placeKitWall(stone){
   scene.add(mesh);
   wallMeshes.push(mesh);
   wallAABBs.push(new THREE.Box3().setFromObject(mesh));
-  kitWalls.push({ mesh, ability: stone?'kit_stonewall':'kit_wall' });   // PERMANENT — until smashed / run reset / ability unequipped
+  // PERMANENT — it comes down only when something SMASHES it, the player fells it, or
+  // the run resets. Unequipping the wall tool no longer touches it (2026-07-30i):
+  // the player has already paid the materials, so the wall is a PRODUCT, not an
+  // active effect of holding the tool. `ability` is informational now (which material
+  // built it) — nothing filters on it.
+  kitWalls.push({ mesh, ability: stone?'kit_stonewall':'kit_wall' });
   if(stone){ rockCount -= WALL_COST.rock; updateRockHUD(); }             // deduct materials (HUD reads counters in updateHUD)
   else     { woodCount -= WALL_COST.wood; updateWoodHUD(); }
   playSound('place');
@@ -8432,7 +8441,8 @@ function updateAbilities(dt){
 }
 // Dispose every transient kit object (axe swings) + drop wall refs. On resetGame
 // the wall meshes and campfires are freed by the world teardown, so here we only
-// clear the tracking list. clearKitWalls() below is for the unequip path.
+// clear the tracking list — this is the ONLY place placed walls are dropped wholesale,
+// and it is a run boundary (resetGame / triggerGameOver), never an unequip.
 function clearKitFX(){
   [...kitSwings].forEach(s=>killObj(s.mesh));
   kitSwings.length = 0;
@@ -8442,23 +8452,18 @@ function clearKitFX(){
   _impactFlashes.length = 0;
   kitWalls.length  = 0;   // meshes disposed with wallMeshes in resetGame
 }
-// Dispose every placed Palisade Wall right now (used when the Wall ability is
-// unequipped mid-run — permanent walls shouldn't outlive their tool).
-// Dispose placed walls. Pass an ability id to clear only that material's walls
-// (used when one wall tool is unequipped while the other stays); omit to clear all.
-function clearKitWalls(ability){
-  for(let i=kitWalls.length-1;i>=0;i--){
-    const w = kitWalls[i];
-    if(ability && w.ability !== ability) continue;
-    const idx = wallMeshes.indexOf(w.mesh);
-    if(idx >= 0) removeWallAt(idx);   // disposes + keeps wallMeshes/wallAABBs lockstep
-    kitWalls.splice(i,1);
-  }
-}
-function reconcileKitWalls(){
-  if(!progress.abilities.includes('kit_wall'))      clearKitWalls('kit_wall');
-  if(!progress.abilities.includes('kit_stonewall')) clearKitWalls('kit_stonewall');
-}
+// ⚠ clearKitWalls() / reconcileKitWalls() USED TO LIVE HERE AND ARE GONE (2026-07-30i).
+// They disposed every placed wall the moment the matching wall ability was unequipped,
+// copying the Fire Torch's reconcile pattern. That was the wrong analogy and it was a
+// real bug: the Fire Torch FX is an ACTIVE EFFECT of holding the tool, so extinguishing
+// it on unequip is right — but a placed wall is a PRODUCT the player already spent wood
+// or rock on. Unequipping refunded nothing and silently demolished the lot (Steven lost
+// ~100 wood to it). Placed walls now persist across any number of equip/unequip cycles.
+// Do NOT reintroduce a reconcile here. The three things that legitimately remove a wall
+// all still work and all route through removeWallAt: an enemy smash
+// (wallBlockingPath → removeWallAt), the player felling it (damageWall → removeWallAt),
+// and resetGame's world teardown. updateAbilities' prune loop keeps kitWalls in lockstep
+// with wallMeshes for the cap, and it runs whether or not the tool is equipped.
 
 // ---- In-game ability bar rendering ----
 let _abSlots = [];   // cached slot elements for the lightweight per-frame tick
@@ -8621,8 +8626,7 @@ function equipToSlot(kind, index, id){
       progress.activeAbility = first>=0?first:0;
     }
   }
-  reconcileFireTorch();
-  reconcileKitWalls();
+  reconcileFireTorch();   // (no wall reconcile — placed walls survive equip/unequip, see above)
   saveProgress(); renderShop(); renderAbilityBar();
 }
 // Craft-cost helpers. `craft` items cost gathered materials (teeth/tusks) instead of
@@ -8682,8 +8686,7 @@ function unequipItem(id){
   if(!progress.abilities[progress.activeAbility]){
     const first=progress.abilities.findIndex(x=>x); progress.activeAbility=first>=0?first:0;
   }
-  reconcileFireTorch();
-  reconcileKitWalls();
+  reconcileFireTorch();   // (no wall reconcile — unequipping a wall tool must NOT demolish paid-for walls)
   saveProgress(); renderShop(); renderAbilityBar();
 }
 // Transient feedback line inside the shop (visible while the shop is open).
