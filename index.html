@@ -493,6 +493,8 @@ const SHOP_ITEMS = [
     desc:'Hurl a flint spear — heavy damage at range, no crafting needed. 3s cooldown.', cd:3 },
   { id:'kit_wall',    type:'ability', icon:'🪵', name:'Palisade Wall',
     desc:'Drop a permanent wooden barrier in front of you for cover (up to 10 up at once). Costs 2 wood. No cooldown.', cd:0 },
+  { id:'kit_gate',    type:'ability', icon:'🚪', name:'Palisade Gate',
+    desc:'Drop a hinged gate (up to 20). Face it and press [E] to swing it open, walk through, then turn round and press [E] to shut it behind you. Shut, it is a wall — collision and a walkable top. Left open, anything can follow you in. Costs 2 wood. No cooldown.', cd:0 },
   { id:'kit_grapple', type:'ability', icon:'🪝', name:'Grappling Hook',
     desc:'Launch a hook — reel up into a climbable tree, or yank yourself to any surface in range.', cd:0 },
   { id:'kit_axe',     type:'ability', icon:'🪓', name:'Hand Axe',
@@ -531,6 +533,7 @@ let abilityCd = {};                 // id -> seconds of cooldown remaining
 let buffs = { adrenaline:0, smoke:0, eagleEye:0 };   // seconds remaining on timed ability effects
 let abilityFX = { fireTorch:null }; // { group, light, flame, on } — a disposable Three object
 let kitWalls  = [];                 // { mesh } permanent Palisade Wall chunks (mesh also lives in wallMeshes)
+let kitGates  = [];                 // { mesh, swing, open } hinged Palisade Gates — see the gate module
 let kitSwings = [];                 // { mesh, t } transient Hand Axe swing arcs — self-dispose
 let skyHammers = [];                // { grp,... } Hammer "from the sky" VFX — fall, impact, fade
 let _impactFlashes = [];            // { mesh,mat,life } bright ground bursts under a landing sky hammer
@@ -1546,7 +1549,7 @@ function registerControls(){
     if(e.code==='KeyC' && !e.repeat) _crouchDownT = performance.now();   // start timing — a brief C press = a tap (see keyup)
     if(e.code==='Space' && player.inTree) dropFromTree();   // drop off the branch
     if(e.code==='KeyF') throwRock();
-    if(e.code==='KeyE'){ if(!eatNearbyCarcass()) doCollect(); }   // eat carcass, else collect
+    if(e.code==='KeyE'){ if(!toggleNearestGate() && !eatNearbyCarcass()) doCollect(); }   // work a gate, else eat carcass, else collect
     if(e.code==='KeyQ') pouncePrey();                            // hunt: pounce on prey
   });
   document.addEventListener('keyup', e=>{
@@ -5562,7 +5565,15 @@ const SNAKE_VARIANTS = {
   // HEALTH 300 → 700 (2026-07-30, Steven's call): a 300-HP cobra died to a couple of
   // spears before the day/night cycle it is built around ever got a chance to run.
   cobra:  { key:'cobra',  icon:'☠️', label:'black cobra',
-            HEALTH:700,  BITE_DMG:20, BITE_CD:0.5, SPEED_ROAM:6.0, SPEED_HUNT:14,   // outrunnable by a sprint — the strike rate + poison are the threat
+            // CHASE SPEED = the wild dog's vendetta speed (2026-07-30k, Steven: "the
+            // cobra is so slow it can't catch anything — make it as fast as a wild dog").
+            // 14 → 18. Referenced off DOG.SPEED_CHASE rather than copied, because the
+            // instruction was literally "as fast as a wild dog" — retune the pack and the
+            // cobra follows. SPEED_HUNT drives ONLY the chase paths (NIGHT_HUNT close +
+            // CRUISE pursuit); patrol (SPEED_ROAM), the ambush walk (AMBUSH_SPEED 8), the
+            // siesta stroll (SIESTA_SPEED 7) and the low-HP retreat (RETREAT_SPEED 14)
+            // are all untouched, so only its hunting got faster.
+            HEALTH:700,  BITE_DMG:20, BITE_CD:0.5, SPEED_ROAM:6.0, SPEED_HUNT:DOG.SPEED_CHASE,
             wrap:false, tree:false, venom:true, spit:true, ambush:true, night:true, mm:'#5b2f8a', mmHot:'#b07bff' },
 };
 
@@ -7910,6 +7921,7 @@ function useActiveAbility(){
   else if(id==='kit_crossbow'){  did = kitFireCrossbow();  quiet = true; }
   else if(id==='kit_wall'){      did = kitPlaceWall();      quiet = true; }
   else if(id==='kit_stonewall'){ did = kitPlaceStoneWall();quiet = true; }
+  else if(id==='kit_gate'){      did = placeKitGate();     quiet = true; }
   else if(id==='kit_fire'){      did = kitPlaceCampfire();  quiet = true; }
   else if(id==='kit_axe'){       did = kitAxe();            quiet = true; }
   else if(id==='kit_hammer'){    did = kitHammer();         quiet = true; }
@@ -8003,6 +8015,7 @@ function abilityCost(id){
   if(id==='kit_spear')     return SPEAR_COST;
   if(id==='kit_wall')      return { wood:WALL_COST.wood };
   if(id==='kit_stonewall') return { rock:WALL_COST.rock };
+  if(id==='kit_gate')      return { wood:GATE_COST.wood };
   if(id==='kit_crossbow')  return CROSSBOW_COST;   // 1 rhino horn per bolt
   return null;
 }
@@ -8188,6 +8201,152 @@ function placeKitWall(stone){
 }
 function kitPlaceWall(){      return placeKitWall(false); }
 function kitPlaceStoneWall(){ return placeKitWall(true);  }
+
+// =====================================================================
+//  PALISADE GATE (2026-07-30k) — a wall you can walk through on purpose
+// =====================================================================
+// Steven: "Can you build a wall with, like, a gate in it or a door? And if I go up
+// to it and hit E, it opens, and I need to turn around and hit E to close it… make
+// it a separate ability. And make it two wood just like a normal one."
+//
+// ⚠ THE WHOLE TRICK: a CLOSED gate registers its mesh in wallMeshes/wallAABBs, and an
+// OPEN one unregisters. That is the entire implementation of "closed acts like a wall,
+// open lets things through" — every existing wall system then works on gates for FREE
+// and with zero new code: player collision + the walkable top (pushPlayerOutOfWalls /
+// wallSupportY), animal blocking (collideWalls / collideStoneWalls), bite/line-of-sight
+// checks (segHitsWall), and smashing (wallBlockingPath / damageWall / removeWallAt).
+// An open gate is simply invisible to all of them, which is exactly the behaviour asked
+// for — including predators pouring through one you left open.
+//
+// Gates are tracked in their OWN array with their OWN cap, deliberately NOT in kitWalls:
+// an open gate is not in wallMeshes, and updateAbilities' kitWalls prune drops any entry
+// that has left wallMeshes — so a gate in kitWalls would be forgotten the moment it
+// opened (breaking the cap and leaking the mesh at reset).
+const KIT_GATE_MAX = 20;                        // separate from KIT_WALL_MAX (50) — see CONTEXT
+const GATE_COST    = { wood: WALL_COST.wood };  // paired with the wood wall by definition: 2 wood
+const GATE_REACH   = 3.6;                       // how close you must be to work it with [E]
+const GATE_SWING   = 4.5;                       // rad/s — a ~0.35 s swing
+const GATE_OPEN_A  = -Math.PI/2;                // fully-open hinge angle
+
+// Build the gate. `grp` sits where a wall's centre would and carries the placement yaw;
+// `swing` is the HINGE pivot, offset to one end so rotating it swings the panel clear.
+// With swing.rotation.y = 0 the panel spans exactly the same local x [-1.25,+1.25] and
+// the same height as a wall, so a closed gate's AABB — and therefore its walkable top —
+// matches a wall's. The fixed hinge post lives on `grp` so it does NOT swing, and every
+// swinging part is inset so nothing pokes past the wall footprint and inflates the AABB.
+function makeGateMesh(x, z, rotY){
+  const gy = terrainY(x,z);
+  const grp = new THREE.Group();
+  grp.position.set(x, gy+1.1, z);
+  grp.rotation.y = rotY;
+  grp.name = 'gate';
+  const woodM  = new THREE.MeshLambertMaterial({color:0x9a6b45});
+  const braceM = new THREE.MeshLambertMaterial({color:0x6f4a2c});
+  const ironM  = new THREE.MeshLambertMaterial({color:0x4a4a50});
+  // fixed hinge post — inset so its outer face lands exactly on x = -1.25
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.22,2.3,0.30), woodM);
+  post.position.set(-1.14, 0, 0); post.castShadow = true; grp.add(post);
+  const swing = new THREE.Group();
+  swing.position.set(-1.25, 0, 0);               // the hinge line
+  grp.add(swing);
+  // panel: 2.5 wide from the hinge, so closed it covers local x -1.25..+1.25
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(2.5,2.2,0.30), woodM);
+  panel.position.set(1.25, 0, 0); panel.castShadow = true; swing.add(panel);
+  for(const yy of [0.62,-0.62]){                 // two proud cross-braces so it reads as a gate
+    const b = new THREE.Mesh(new THREE.BoxGeometry(2.30,0.16,0.34), braceM);
+    b.position.set(1.25, yy, 0); swing.add(b);
+  }
+  const handle = new THREE.Mesh(new THREE.BoxGeometry(0.12,0.36,0.12), ironM);
+  handle.position.set(2.24, 0.05, 0.20); swing.add(handle);   // inset from the free edge
+  grp.userData.stone = false;                    // a WOOD gate: gorilla/elephant can smash it
+  grp.userData.maxHp = WALL_HP.wood;
+  grp.userData.hp    = WALL_HP.wood;
+  grp.userData.gate  = true;
+  scene.add(grp);
+  return { grp, swing };
+}
+// Register / unregister a gate's collision. ⚠ unregister must NOT use removeWallAt —
+// that DISPOSES the mesh, and an opened gate has to survive to be shut again.
+function registerGateCollision(g){
+  if(wallMeshes.indexOf(g.mesh) >= 0) return;
+  wallMeshes.push(g.mesh);
+  wallAABBs.push(new THREE.Box3().setFromObject(g.mesh));
+}
+function unregisterGateCollision(g){
+  const i = wallMeshes.indexOf(g.mesh);
+  if(i >= 0){ wallMeshes.splice(i,1); wallAABBs.splice(i,1); }
+}
+function placeKitGate(){
+  if(kitGates.length >= KIT_GATE_MAX){
+    showKillfeed('🚪 Gate limit ('+KIT_GATE_MAX+') reached — hammer one down to free space'); return false;
+  }
+  if(woodCount < GATE_COST.wood){
+    showKillfeed('🚪 Need '+GATE_COST.wood+' wood (have '+woodCount+')'); return false;
+  }
+  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  const pos = player.pos.clone().addScaledVector(fwd, 2.5);
+  const { grp, swing } = makeGateMesh(pos.x, pos.z, yaw);
+  const g = { mesh:grp, swing, open:false };
+  kitGates.push(g);
+  registerGateCollision(g);                      // placed CLOSED — it is a wall on arrival
+  woodCount -= GATE_COST.wood; updateWoodHUD();
+  playSound('place');
+  return true;
+}
+// [E] on a gate. PLAYER ONLY — nothing in any animal module calls this, which is what
+// keeps a shut gate genuinely defensive. Deliberately does NOT require the Gate ability
+// to still be equipped: a placed gate is a world object you paid for (same principle as
+// the placed-wall fix), so you can always work it.
+// The facing test is generous (dot > 0.15) and works from EITHER side — you walk
+// through, turn round, and the same key shuts it behind you.
+function toggleNearestGate(){
+  const fwd = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation); fwd.y = 0;
+  if(fwd.lengthSq() < 1e-4) return false;
+  fwd.normalize();
+  let best = null, bd = GATE_REACH;
+  for(const g of kitGates){
+    if(!g.mesh.parent) continue;
+    const dx = g.mesh.position.x - player.pos.x, dz = g.mesh.position.z - player.pos.z;
+    const d = Math.hypot(dx,dz);
+    if(d > bd) continue;
+    if(d > 0.001 && ((dx/d)*fwd.x + (dz/d)*fwd.z) < 0.15) continue;   // must be roughly in front
+    bd = d; best = g;
+  }
+  if(!best) return false;
+  best.open = !best.open;
+  if(best.open){
+    unregisterGateCollision(best);               // opens instantly — walk straight through
+    showKillfeed('🚪 Gate open — anything can follow you through');
+  } else {
+    // Collision is re-armed by updateGates when the swing finishes, NOT here: snapping a
+    // wall back on instantly would trap whoever is standing in the doorway.
+    showKillfeed('🚪 Gate shut');
+  }
+  playSound('place');
+  return true;
+}
+// Swing animation + upkeep. Called from updateAbilities.
+function updateGates(dt){
+  for(let i=kitGates.length-1;i>=0;i--){
+    const g = kitGates[i];
+    if(!g.mesh.parent){ kitGates.splice(i,1); continue; }   // smashed while shut → removeWallAt disposed it
+    const target = g.open ? GATE_OPEN_A : 0;
+    const cur = g.swing.rotation.y;
+    if(Math.abs(cur - target) > 0.0005){
+      g.swing.rotation.y = cur + clamp(target - cur, -GATE_SWING*dt, GATE_SWING*dt);
+      if(!g.open && Math.abs(g.swing.rotation.y - target) <= 0.0005){
+        g.swing.rotation.y = 0;
+        registerGateCollision(g);                // fully shut → it is a wall again
+      }
+    }
+  }
+}
+// Reset teardown. A CLOSED gate is in wallMeshes and is freed by resetGame's world
+// teardown; an OPEN one is not, so it must be disposed here or it leaks.
+function clearKitGates(){
+  kitGates.forEach(g=>{ if(wallMeshes.indexOf(g.mesh) < 0) killObj(g.mesh); });
+  kitGates.length = 0;
+}
 // Damage a wall (axe/hammer). Returns true if the swing connected. Wall HP lives on
 // the mesh (userData.hp/maxHp); at ≤0 it comes down via the shared removeWallAt path,
 // so wallMeshes/wallAABBs (and, next frame, kitWalls) stay in lockstep.
@@ -8508,6 +8667,7 @@ function updateAbilities(dt){
   for(let i=kitWalls.length-1;i>=0;i--){
     if(wallMeshes.indexOf(kitWalls[i].mesh) < 0) kitWalls.splice(i,1);
   }
+  updateGates(dt);   // 🚪 swing animation, re-arm collision on shut, prune smashed gates
   // Transient axe swing arcs — a brief pale flash in front of the eye, then freed.
   for(let i=kitSwings.length-1;i>=0;i--){
     const s = kitSwings[i]; s.t -= dt;
@@ -9345,6 +9505,7 @@ function resetGame(){
   // Remove old Three.js objects AND free their VRAM (scene.remove alone
   // leaks — that accumulation is what eventually blacks out the screen).
   [...lionMeshes].forEach(L=>killObj(L.mesh));
+  clearKitGates();                     // open gates aren't in wallMeshes — free them before the sweep
   [...wallMeshes].forEach(w=>killObj(w));
   [...campfires].forEach(f=>killObj(f.mesh));
   [...corpses].forEach(c=>killObj(c.mesh));

@@ -1642,4 +1642,92 @@ run AFTER the ground snap:
 - **Standing on a wall still counts as `playerOffGround()`** (unchanged, pre-existing), so a fortification
   genuinely protects you from ground predators — the feature and the safety model agree.
 
+
+## Palisade Gate ability + cobra chase speed = wild dog (2026-07-30k)
+Steven: *"Can you build a wall with, like, a gate in it or a door? And if I go up to it and hit E, it opens,
+and I need to turn around and hit E to close it… make it a separate ability. And make it two wood just like a
+normal one."* · *"The cobra is so slow it can't catch anything. Can you make it faster than prey? …as fast as
+like a wild dog."*
+
+### Gate — the whole trick is registration, not new physics
+**A CLOSED gate puts its mesh in `wallMeshes`/`wallAABBs`; an OPEN one takes it out.** That single idea is the
+entire implementation of "shut acts like a wall, open lets things through", and it means every wall system
+works on gates for free, with no new collision code: player push-out + the walkable top
+(`pushPlayerOutOfWalls`/`wallSupportY`), animal blocking (`collideWalls`/`collideStoneWalls`), bite and
+line-of-sight checks (`segHitsWall`), and smashing (`wallBlockingPath`/`damageWall`/`removeWallAt`). An open
+gate is simply invisible to all of them — which is precisely the "predators pour through one you left open"
+behaviour that was asked for.
+- **Mesh:** a `Group` at the wall-equivalent centre carrying the placement yaw, with a **`swing` child at the
+  hinge line** so `swing.rotation.y` swings the panel clear. At angle 0 the panel spans the same local
+  x [−1.25, +1.25] and the same height as a wall, so **a closed gate's AABB is 2.5 wide — measured identical to
+  a wall** — and therefore its walkable top matches. The fixed hinge post lives on the parent so it does not
+  swing, and every swinging part is inset so nothing pokes past the footprint and inflates the AABB.
+  5 meshes: post, panel, two proud cross-braces, iron handle.
+- **`[E]`** → `toggleNearestGate()`, wired ahead of the existing carcass/collect handler (you walked up to it
+  deliberately). Reach 3.6, facing dot > 0.15 — generous, and works **from either side**, so you walk through,
+  turn round, and the same key shuts it behind you. **PLAYER ONLY**: nothing in any animal module calls it.
+- **Opening unregisters instantly** (walk straight through). **Closing re-arms collision only when the swing
+  finishes** (~0.35 s) — snapping a wall back on instantly would trap whoever is in the doorway.
+- **⚠ `unregisterGateCollision` must NOT use `removeWallAt`** — that DISPOSES the mesh, and an opened gate has
+  to survive to be shut again. It splices `wallMeshes`/`wallAABBs` and leaves the object alive in the scene.
+- **Separate array + separate cap, deliberately.** `kitGates[]`, `KIT_GATE_MAX = 20`, alongside the untouched
+  `KIT_WALL_MAX = 50`. Gates are **not** in `kitWalls` because `updateAbilities`' kitWalls prune drops any entry
+  that has left `wallMeshes` — a gate in that list would be forgotten the instant it opened, breaking the cap
+  and leaking the mesh at reset. Verified: 50 walls + 20 gates = **70 wall meshes**, caps enforced
+  independently, no gate present in `kitWalls`.
+- **Teardown:** `clearKitGates()` runs in `resetGame` *before* the `wallMeshes` sweep — a closed gate rides that
+  sweep, an **open one is not in `wallMeshes` and would otherwise leak**, so it is disposed explicitly. A closed
+  gate smashed by a predator is disposed by `removeWallAt`, and `updateGates` prunes the entry via
+  `!g.mesh.parent`.
+- **Cost: 2 wood — Steven's assumption was correct.** `WALL_COST.wood` is 2, and `GATE_COST` is defined **as**
+  `{ wood: WALL_COST.wood }` so the pairing is structural rather than a copied literal.
+
+### Cobra chase speed 14 → 18
+- **`SNAKE_VARIANTS.cobra.SPEED_HUNT` now references `DOG.SPEED_CHASE`** (18) rather than copying the number,
+  because the instruction was literally "as fast as a wild dog" — retune the pack and the cobra follows.
+  (`DOG` is declared at line ~4136, well before `SNAKE_VARIANTS` at ~5548, so the reference is safe.)
+- `SPEED_HUNT` drives **only** the chase paths (`NIGHT_HUNT` close + `CRUISE` pursuit). Unchanged: patrol
+  (`SPEED_ROAM` 6), the ambush walk (`AMBUSH_SPEED` 8), the siesta stroll (`SIESTA_SPEED` 7) and the low-HP
+  retreat (`RETREAT_SPEED` 14). Only its hunting got faster, as specified.
+- **⚠ "as fast as a wild dog" and "faster than prey" are not the same thing** — reporting rather than
+  reinterpreting. At 18 the cobra outruns the flee speed of **warthog 11 · kudu 14 · wildebeest 15 · zebra 16**
+  but NOT **elephant 18 · impala 19 · gazelle 21 · giraffe 22**. Measured from a 14-unit start it **caught and
+  killed** zebra in 3.7 s, wildebeest in 3.3 s and warthog in 3.7 s; the gazelle escaped (closest 11.3, never
+  bitten) and the existing `NIGHT_GIVEUP` rule dropped it cleanly with no lock-up over 35 s. Going literally
+  faster than all prey would need ~23, which would also put it well past the player's sprint of 16 — not done,
+  since 18 is the number Steven named.
+
+### Pinned tests — all pass
+| pin | result |
+|---|---|
+| `test_gate_costs_2_wood_or_matches_wall_cost` | 10 → 8 wood, `GATE_COST.wood === WALL_COST.wood`; refuses at 1 wood and charges nothing |
+| `test_gate_open_close_on_e_press_toggles_collision` | placed shut & registered → E opens (unregistered, 0 AABBs, swing −π/2) → E **from the other side** shuts (registered, swing exactly 0) |
+| `test_predator_cannot_open_gate` | 25 s of a chasing lioness: gate **never toggled**, never crossed, max height above terrain **0.000** |
+| `test_open_gate_walkable_through_for_player_and_predators` | shut = **0** crossings through the aperture; open = a dog crossed at **x = 0.62**, straight through. Player walks through (endZ 36) |
+| `test_cobra_chase_speed_matches_wild_dog_and_catches_prey` | 18 === `DOG.SPEED_CHASE`; killed 3/3 slower species; gazelle still escapes |
+- **Closed gate's walkable top verified:** landed at exactly `top + 0.1`, **40/40 grounded frames**, footprint
+  width **2.5** = a wall's.
+- **Leaks:** isolated gate lifecycle (place 6 → open → teardown) × 3 cycles, mixing open and closed →
+  **0 geometries / 0 textures / 0 scene children**. A closed gate smashed mid-life prunes to 0 entries with no
+  dangling ref.
+- **120 s integration soak** (8 walls + 4 gates + 2 fast cobras, toggling gates every 12 s): **0 errors, 0
+  console errors**, 10 toggles, every gate correctly either registered-and-shut or unregistered-and-open. One
+  gate was smashed by the ecosystem during the run and pruned cleanly — 4 → 3.
+
+### ⚠ Emergent limitation worth knowing: LIONS avoid wall gaps
+A lion pressed to z ≈ −4 and refused a 2.5-wide open gate flanked by walls, while **wild dogs went straight
+through**. Cause is **pre-existing lion behaviour**, not the gate: `updateLions` has a wall-**avoidance steering**
+term (the file's only `wallAABBs.forEach`) that repels a lion from any wall centre within 3 units, so it will
+not thread a narrow gap in a wall line. Dogs, snakes, rhinos and the gorilla have no such steering and exploit
+an open gate normally. So "leave it open and they pour in" holds for the pack — for lions specifically, a
+wide-open approach or a lone gate is needed. Left alone deliberately: changing lion steering is a separate
+balance decision, not part of this ask.
+
+### ⚠ Test-methodology note (third time this class of thing has bitten)
+The first two attempts at the predator-through-gate pin **falsely reported both PASS and FAIL** because the
+assertion was `z > 0.35` — which counts an animal that simply **walked around the end** of a 7.5-wide barrier.
+Both the shut and open cases "crossed". The fix was to build a barrier out to x = ±24 and assert on the
+**x-coordinate at the moment of crossing** (through the aperture, |x| ≤ 1.4, vs around the ends). Assert on the
+mechanism, not on a proxy that a detour satisfies.
+
 Each phase is an independent commit so it can be iterated in isolation.

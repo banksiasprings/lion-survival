@@ -269,6 +269,11 @@ has eaten five things bites for 45 instead of 40; at the 50-segment cap it bites
 cap bites for **86**. This applies to bites on you *and* on other animals — a serpent that has been feeding
 all run is a genuinely different animal from the one that spawned. *Kill them early, or don't let them feed.*
 
+**⚠ THE COBRA IS AS FAST AS A WILD DOG NOW (2026-07-30).** Its chase speed went **14 → 18**, the same as a
+wild dog's vendetta sprint and **faster than your sprint (16)**. It runs down **warthog, kudu, wildebeest and
+zebra**; **gazelle (21), impala (19) and giraffe (22) still escape** it. Only its *hunting* got faster — its
+patrol, its walk to an ambush tree, its midday stroll and its wounded retreat are all unchanged.
+
 **All take a MIDDAY SIESTA — but not in the same place.** At ~11:00 in-game (45–55% through the day) an
 unengaged serpent drops everything, winds into a **tight breathing coil** and **sleeps for 60 seconds**.
 Where it beds down depends on the species:
