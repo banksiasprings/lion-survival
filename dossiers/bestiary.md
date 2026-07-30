@@ -420,6 +420,12 @@ bite** as any other kill, so a serpent that wins a civil war comes out of it big
   flat, and **waits**. Walk under that tree and it **DROPS on you** and bites on landing. On the minimap a
   treed cobra shows as a **hollow violet ring** rather than a solid dot — you can see where it is; noticing
   that it's *above* you is your problem. After a drop it won't re-tree for 22 s.
+- **⚠ A TREE IS NO LONGER SAFE FROM A COBRA (2026-07-30).** It attacks **trees** now, and it has two ways to
+  get you out of one: it can **spit venom straight up at you while you're perched**, and it can **chew the tree
+  itself down** — **6 bites or 15 spits** fells a normal tree (double for a big one), and when it falls **you
+  fall with it**. A cobra rates the tree you're hiding in above every other creature. Its **bite** still can't
+  reach you up there, and a **wall or a grapple is still safe** — this is trees, and cobras, specifically.
+  Trees **do not grow back**.
 - **🟢 A TREED COBRA SPITS.** Coiled in a canopy it is not a passive trap any more — it **rears and hoses
   venom** at anything that comes within **24 m**, once every **2.2 s**. The blob itself only does **8**, but
   it carries **the full venom** on exactly the bite's terms, so one hit puts you on the 60-second slide to

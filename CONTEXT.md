@@ -1796,4 +1796,84 @@ roaming, its distance from the gate exceeds the 4.5 threshold, so it keeps count
 the SHUT case's `framesAnyoneInside = 0`. Left in the report rather than quietly reworded, because the metric
 is easy to misread as a leak.
 
+
+## Cobra attacks TREES (and a treed player is no longer safe) — 2026-07-30m
+Steven: *"Make the cobra able to attack people and trees and shoot venom at people and trees."*
+
+### Player targeting was NOT broken — this was a spec extension, with one real bug found
+Bite and spit already targeted the player correctly (grounded player takes 100 → 92 + venom from a spit,
+verified). What was new is the **tree** work, and chasing it surfaced a genuine defect in the spit itself:
+**`spawnVenomSpit` always aimed at `terrainY(target)+1.0`**, i.e. ground level, whatever the target's real
+height. Harmless while every target stood on the ground; the moment a treed player became legal the blob sailed
+along the dirt underneath them and the whole rule silently did nothing. Now aims at
+`max(terrainY+1.0, tgt.pos.y)` — grounded targets sit at terrain+0.1 so the old arc is untouched.
+
+### ⚠ There was no tree damage model to reuse — all of it is new
+The brief assumed the axe already fells trees. **It does not.** `kitAxe` treats a tree as a **renewable harvest
+node**: 8 s `cooldown`, +1 wood, tree stays forever. **Nothing in the game had ever removed a tree.** So HP,
+felling and teardown are all new and the numbers are **invented**, anchored to `WALL_HP.wood`:
+- `TREE_HP = { normal:120, big:240 }` — "a tree is about as tough as a wood palisade", big trees double.
+- Measured: **6 cobra bites** (120/20) or **15 venom spits** (120/8) to fell a normal tree. Exactly as designed.
+- **`kitAxe` is deliberately untouched.** Making the player's wood harvesting destroy their own climbing trees
+  is a change Steven did not ask for and would quietly delete his escape spots. **So only the cobra fells
+  trees** — flagged as an interpretive call, and it does read slightly odd that a snake can bring a tree down
+  and an axe cannot.
+- **Felling drops nothing.** There is no wood-pickup entity in the game (wood is granted directly by
+  `doCollect`/`kitAxe`), so "match existing player-fell behaviour" had nothing to match. A felled tree bursts
+  into 5 dust puffs, shakes the screen and is gone.
+
+### Teardown was nearly free — earlier work paid for it
+`fellTree` removes the tree from `treeObjects` **first**, then disposes. Every holder already polls that array:
+the cobra's `AMBUSH_COIL`/`AMBUSH_TRAVEL`/`SIESTA_SLEEP` states re-check `treeObjects.indexOf(tree)` every
+frame (written for the turret and tree-siesta work) and the gorilla already guarded its perch with
+`treeObjects.includes(G.perchTree)`. The only explicit release needed was the **player**: `fellTree` calls
+`dropFromTree()` while the reference is still valid. Verified — perched player at 3.54 → `inTree:false`,
+`grapple.tree:null`, velY −2, lands exactly on terrain, `onGround:true`.
+
+### Targeting priority
+`player` → **the tree the player is hiding in** → creatures → any tree within `TREE_ATTACK_R` 20 (< the 26 it
+will travel for a creature, so living things win on range too). Verified: with a tree 4 away and a lion 12
+away it picks the **lion**; remove the lion and it picks the tree.
+- **A cobra never targets the tree it is currently occupying** (`snakeOwnTree`) — it cannot bite the trunk it
+  is coiled around and spitting at its own perch would loop. ⚠ This does **not** block Steven's
+  nap-and-destroy-your-own-habitat case: verified live, a cobra that slept in a tree, woke, came down and
+  **felled that same tree in 6.3 s**, with no errors and no physics weirdness.
+- **Growth-on-kill deliberately does NOT fire for trees** — no `snakeCredit` in the tree branch. Verified:
+  growth 0 → 0, segments 14 → 14 after felling.
+
+### ⚠ A TREE IS NO LONGER SAFE FROM A COBRA — the biggest behavioural change here
+This reverses an invariant defended across several commits and written into the bestiary ("height is the answer
+to a serpent"). Steven asked for it explicitly and twice. Two routes:
+1. **Spit reaches a player up a tree.** Scoped with **`player.inTree`, not `playerShelterTree()`** — the latter
+   is a proximity test (near a canopy AND above `SHELTER_MINH`), so a player standing on a **wall** that happens
+   to sit near a tree would have become spittable. `inTree` is the explicit perched flag, so the nerf lands
+   exactly where it was aimed. **On a wall or mid-grapple you are still safe**, verified.
+2. **It chops your perch down.** The tree you are hiding in is ranked directly below you and above every other
+   creature.
+The **bite** still refuses a treed player (`playerOffGround`), so the melee tree-safety rule is intact — only
+the ranged spit and the tree itself changed.
+
+### ⚠ Bug found and fixed mid-build: the spit killed itself on its own launch tree
+First cut had the blob collide with trees from frame 0. With 768 trees on the map a cobra standing beside a
+trunk **destroyed its own blob instantly** — measured, the spit died on frame 0 and the cobra could never hit
+anything while near a tree. Added `SNAKE.SPIT_TREE_GRACE = 2.0`: no tree collision for the first 2 units of
+flight. Standard don't-collide-with-your-own-muzzle rule.
+
+### ⚠ EMERGENT RISK WORTH A DECISION: trees never grow back
+Soak with **4 cobras** (above the usual population — they roll only on Day 1 and Day 5) over **one full
+in-game day**: **20 of 767 trees felled = 2.61 %**, and the marks show it is **night-only** (0 through the
+entire day phase, then 1 → 7 → 13 → 20 across the night, because trees are only targeted in `NIGHT_HUNT`).
+**There is no regrowth anywhere in the game**, so the loss is monotonic — at that rate ~26 % of the map's trees
+by day 10. Not tuned down, because the feature is what was asked for, but the knobs are `TREE_ATTACK_R` (20),
+`TREE_HP` and the night-only targeting. Trees are the player's escape from lions/dogs/rhinos, so thinning them
+is a slow, invisible difficulty ramp — worth Steven's call.
+
+### Verified
+- Pins: bite fells a tree (6 bites) · spit fells a tree (15 spits) · spit hits the player grounded **and**
+  treed (100 → 92 + venom both) · creatures beat trees when both in range · **no growth from felling**.
+- Player on a wall not targeted; cobra never targets its own tree; nap-then-fell-own-tree works with 0 errors.
+- **Disposal:** 12 trees felled → 12 out of the array, **19 geometries freed**, every mesh detached. (Scene
+  children rise transiently from the dust puffs, which self-dispose.)
+- 240 s full-day ecosystem soak with 4 cobras: **0 errors, 0 console errors**.
+
 Each phase is an independent commit so it can be iterated in isolation.

@@ -3397,6 +3397,55 @@ function nearestClimbableTree(pos, maxD){
 
 // The climbable tree the player is currently sheltered up (elevated, within a
 // canopy), or null. Reuses the height the grapple-to-perch lifts the player to.
+// =====================================================================
+//  TREES CAN BE DESTROYED (2026-07-30m)
+// =====================================================================
+// Steven: "make the cobra able to attack people and trees and shoot venom at people
+// and trees."
+//
+// ⚠ THERE WAS NO TREE DAMAGE MODEL TO REUSE. The brief assumed the axe already felled
+// trees — it does not: `kitAxe` treats a tree as a RENEWABLE HARVEST NODE (sets an 8 s
+// `cooldown`, +1 wood, tree stays forever). Nothing in the game had ever removed a
+// tree. So HP, felling and the teardown below are all new, and the numbers are
+// invented — anchored to `WALL_HP.wood` (120) so "a tree is about as tough as a wood
+// palisade", with big trees at double.
+//
+// ⚠ SCOPE: only the COBRA fells trees. `kitAxe` is deliberately untouched — making the
+// player's wood harvesting destroy their own climbing trees is a change Steven did not
+// ask for and would quietly remove his escape spots.
+const TREE_HP = { normal:120, big:240 };
+const TREE_ATTACK_R = 20;      // how far a cobra will go out of its way for a tree (< the 26 it will go for a creature)
+
+function treeMaxHp(t){ return t.big ? TREE_HP.big : TREE_HP.normal; }
+// Damage a tree. Returns true if this blow felled it.
+function damageTree(t, dmg, icon){
+  if(!t || treeObjects.indexOf(t) < 0) return false;
+  if(t.hp == null){ t.maxHp = treeMaxHp(t); t.hp = t.maxHp; }   // lazy init — trees are placed at world build
+  t.hp -= dmg;
+  if(t.hp > 0) return false;
+  fellTree(t, icon);
+  return true;
+}
+// Bring a tree down and free it. Everything that can be HOLDING this tree is released
+// here, while the reference is still valid:
+//   • the player perched in it → dropFromTree() (normal fall physics take over)
+//   • a cobra coiled/sleeping/turreted in it → those states already re-check
+//     `treeObjects.indexOf(tree)` every frame and re-pick or wake (written for the
+//     tree-siesta and turret work), so removing it from the array is enough
+//   • the gorilla's perch → `updateGorillas` already guards with
+//     `treeObjects.includes(G.perchTree)` and re-picks
+function fellTree(t, icon){
+  const i = treeObjects.indexOf(t);
+  if(i < 0) return;
+  if(player.inTree && (grapple.tree === t || playerShelterTree() === t)) dropFromTree();
+  treeObjects.splice(i, 1);                       // out of the array FIRST — every holder polls this
+  for(let k=0;k<5;k++)
+    spawnDustPuff(new THREE.Vector3(t.pos.x+rand(-1.6,1.6), t.pos.y, t.pos.z+rand(-1.6,1.6)));
+  killObj(t.mesh);
+  shakeTime = Math.max(shakeTime, 0.25); shakeAmt = 0.005;
+  showKillfeed((icon||'🌳')+' A tree comes crashing down!');
+}
+
 function playerShelterTree(){
   const agl = player.pos.y - terrainY(player.pos.x, player.pos.z);
   if(agl < GOR.SHELTER_MINH) return null;
@@ -5572,6 +5621,7 @@ const SNAKE = {
   SPIT_LEAD: 0.35,                 // seconds of target velocity led — a walker is hittable, a dodger is not
   SPIT_FLARE: 0.7,                 // hood stays flared this long after a spit (the only tell you get)
   SPIT_MAX: 24,                    // hard cap on live venom blobs (FX guard)
+  SPIT_TREE_GRACE: 2.0,            // no TREE collision this far into a spit's flight (see updateVenomSpits)
   // ---- last stand: the TREE TURRET (black cobra) ------------------------
   // Steven, 2026-07-30: a wounded cobra used to run out of its tree and get
   // one-shotted on the ground. Below RETREAT_HP it now breaks off, climbs the
@@ -6228,9 +6278,42 @@ let venomSpits = [];
 // player is skipped — the same playerOffGround/segHitsWall rule snakeBite uses, so
 // height stays the answer to a serpent). Otherwise the nearest creature in range:
 // everyone-fights-everyone, and the cobra is the one thing that poisons animals.
+// The tree this serpent is CURRENTLY occupying. Excluded from its own tree targeting:
+// it cannot bite the trunk it is coiled around, and spitting at its own perch is
+// nonsense that would loop. ⚠ This does NOT block Steven's documented
+// nap-and-destroy-your-own-habitat case — a cobra that has come DOWN can absolutely
+// fell the tree it was sleeping in, because it no longer occupies it.
+function snakeOwnTree(S){
+  if(S.state==='AMBUSH_COIL' || S.state==='AMBUSH_TRAVEL') return S.ambushTree || null;
+  if(S.state==='NIGHT_DESCEND') return S.nightTree || null;
+  if(S.state==='SIESTA_SLEEP' || S.state==='SIESTA_TRAVEL') return (S.siestaSpot && S.siestaSpot.tree) || null;
+  return null;
+}
+// Nearest tree worth attacking, or null. Living things are always preferred — callers
+// only reach this when no creature was found (or when the PLAYER is hiding in one).
+function nearestTreeTarget(S, range, clear){
+  const own = snakeOwnTree(S);
+  let bt=null, bd=range;
+  for(const t of treeObjects){
+    if(t===own) continue;
+    const d = Math.hypot(t.pos.x-S.pos.x, t.pos.z-S.pos.z);
+    if(d<bd && (!clear || clear(t.pos.x, t.pos.z))){ bd=d; bt=t; }
+  }
+  return bt ? {pos:bt.pos, kind:'tree', ent:bt} : null;
+}
+
 function pickSpitTarget(S){
   const clear = (x,z)=> !segHitsWall(S.pos.x, S.pos.z, x, z);
-  if(player.health>0 && !playerOffGround()){
+  // ⚠ A player UP A TREE is now a legal spit target (2026-07-30m, Steven: "shoot
+  // venom at people and trees… player climbing/hiding in a tree is now vulnerable").
+  // Scoped deliberately to a TREE — a player on a wall or mid-grapple stays safe, so
+  // the wall-top walkability that was just built keeps its value.
+  // ⚠ `player.inTree` and NOT playerShelterTree(): the latter is a proximity test
+  // (near a canopy AND above SHELTER_MINH), so a player standing on a WALL that
+  // happens to sit near a tree would register as sheltered and become spittable.
+  // inTree is the explicit perched-in-a-tree flag, so the nerf lands exactly where
+  // Steven aimed it and nowhere else.
+  if(player.health>0 && (!playerOffGround() || player.inTree)){
     const d = Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z);
     if(d < SNAKE.SPIT_R && d > 0.5 && clear(player.pos.x, player.pos.z))
       return {pos:player.pos, kind:'player'};
@@ -6251,7 +6334,9 @@ function pickSpitTarget(S){
   scan(eagleMeshes, 'eagle', E=>!eagleGrounded(E));
   scan(preyMeshes, 'prey');
   scan(snakeMeshes, 'snake', O=>snakeRivalSkip(S, O));   // a rival species it can actually reach (see snakeTreedOutOfReach)
-  return best;
+  // TREES last — only when nothing alive is in range. Living targets are urgent and
+  // move; a tree is scenery that will still be there.
+  return best || nearestTreeTarget(S, SNAKE.SPIT_R, clear);
 }
 
 // Called every frame a cobra is coiled in a canopy. Cooldown-gated, so the same
@@ -6271,7 +6356,12 @@ function spawnVenomSpit(S, tgt){
   // LEAD the target a little. Firing at where it stands makes a turret an
   // unavoidable damage tick; leading a walker's velocity keeps it honest while a
   // sprint or a change of direction still breaks the line.
-  const aim = new THREE.Vector3(tgt.pos.x, terrainY(tgt.pos.x,tgt.pos.z)+1.0, tgt.pos.z);
+  // Aim at the target's REAL height, not always ground+1. A grounded target sits at
+  // terrain+0.1 so the max() leaves the old ground-level arc untouched; a player up a
+  // TREE is at perch height, and without this the blob sailed along the ground under
+  // them and the whole "no longer safe up there" rule silently did nothing.
+  const aimY = Math.max(terrainY(tgt.pos.x,tgt.pos.z)+1.0, tgt.pos.y||0);
+  const aim = new THREE.Vector3(tgt.pos.x, aimY, tgt.pos.z);
   if(tgt.kind==='player'){ aim.x += player.vel.x*SNAKE.SPIT_LEAD; aim.z += player.vel.z*SNAKE.SPIT_LEAD; }
   const dir = aim.sub(from);
   if(dir.lengthSq() < 1e-6) return;
@@ -6306,7 +6396,10 @@ function updateVenomSpits(dt){
     const src = (p.src && snakeMeshes.indexOf(p.src)>=0 && !p.src.dying) ? p.src : null;
     let done = false;
 
-    if(!playerOffGround() && player.health>0){
+    // A player up a TREE is hittable now (2026-07-30m) — must mirror pickSpitTarget's
+    // rule exactly, or the cobra aims at someone the blob then passes straight through.
+    // Still scoped to trees: on a wall or mid-grapple you stay safe.
+    if((!playerOffGround() || player.inTree) && player.health>0){
       const d = Math.hypot(player.pos.x-p.pos.x, player.pos.z-p.pos.z);
       if(d < SNAKE.SPIT_HIT_R && Math.abs(p.pos.y - (player.pos.y+1.0)) < 2.2){
         player.health -= p.dmg;
@@ -6338,6 +6431,22 @@ function updateVenomSpits(dt){
           // reduced a 1500-HP GOLD cobra to a husk. Keyed off srcKey, not src, so it
           // still holds after the shooter dies mid-flight.
           || tryHit(snakeMeshes, O=>O.state==='AMBUSH_COIL' || O.v.key===p.srcKey);
+    }
+    // TREES take venom too (2026-07-30m). No creature-venom call — a tree has no HP
+    // bar, no poison timer and no growth credit; it just takes the damage and falls.
+    // ⚠ SPIT_TREE_GRACE: no tree collision for the first stretch of flight. Without it
+    // a cobra standing next to a trunk destroyed its own blob on frame 0 — measured, the
+    // spit died instantly and the cobra could never hit anything while near a tree.
+    // Standard "don't collide with your own muzzle" rule.
+    if(!done && p.dist > SNAKE.SPIT_TREE_GRACE){
+      for(let k=0;k<treeObjects.length;k++){
+        const t = treeObjects[k];
+        const rr = (t.trunkR||0.5) + SNAKE.SPIT_HIT_R*0.6;
+        if(Math.hypot(t.pos.x-p.pos.x, t.pos.z-p.pos.z) > rr) continue;
+        if(p.pos.y > t.pos.y + (t.perchY||3) + 1.0) continue;      // sailed over the canopy
+        damageTree(t, p.dmg, p.icon);
+        done = true; break;
+      }
     }
     // Splashed on the dirt, or out of range.
     if(!done && (p.pos.y <= terrainY(p.pos.x,p.pos.z)+0.06 || p.dist > SNAKE.SPIT_R*1.6)) done = true;
@@ -6382,6 +6491,13 @@ function snakeBite(S, kind){
     if(S.v.venom) applyCreatureVenom(P);
     snakeCredit(S, P);
     if(P.health<=0) showKillfeed(S.v.icon+' The '+S.v.label+' swallows a '+P.label+'!');
+  } else if(kind==='tree'){
+    // ⚠ NO snakeCredit / growth here, on purpose: felling a tree is destruction, not a
+    // kill. Only living things make a serpent longer (Steven's call).
+    const t = S.target;
+    if(t && treeObjects.indexOf(t)>=0){
+      if(damageTree(t, dmg, S.v.icon)){ S.target=null; S.targetKind=null; }
+    } else { S.target=null; S.targetKind=null; }
   } else if(S.target && S.target.health>0){
     // ---- BITING ANOTHER PREDATOR ----
     // One code path for lion / gorilla / rhino / wild dog: wound, stagger, and tag
@@ -6631,6 +6747,18 @@ function snakeNightTarget(S){
     const onItsGround = !!T && inTerritory(T, player.pos.x, player.pos.z);
     if(onItsGround || dp < SNAKE.DETECT*stealth.visMul) return {pos:player.pos, kind:'player', ent:player};
   }
+  // …and if they are HIDING UP A TREE, it goes for THE TREE. This is the other half of
+  // "a tree is no longer safe from a cobra": it cannot bite you up there, so it chops
+  // your perch out from under you instead. Ranked right below the player themselves
+  // and above every other creature — a hiding player is the most valuable target there is.
+  {
+    const shelter = playerShelterTree();
+    if(shelter && player.health>0 && treeObjects.indexOf(shelter)>=0 && shelter!==snakeOwnTree(S)){
+      const ds = Math.hypot(shelter.pos.x-S.pos.x, shelter.pos.z-S.pos.z);
+      const onItsGround = !!T && inTerritory(T, shelter.pos.x, shelter.pos.z);
+      if(onItsGround || ds < SNAKE.NIGHT_HUNT_R) return {pos:shelter.pos, kind:'tree', ent:shelter};
+    }
+  }
   // CREATURES get a generous but finite reach inside its quarter (×NIGHT_TERR_MUL)
   // rather than the whole quadrant. Full-quadrant creature awareness was tried on
   // paper and rejected: prey herds are everywhere, so the cobra would be in permanent
@@ -6666,7 +6794,8 @@ function snakeNightTarget(S){
   // are skipped; there is nothing to strike at.
   scan(skyVultureMeshes, 'skyvulture', V=>V.state!=='LANDED');
   scan(preyMeshes, 'prey');
-  return best;
+  // TREES last — an opportunity target only when nothing alive is in reach.
+  return best || nearestTreeTarget(S, TREE_ATTACK_R, null);
 }
 // ---- SERPENT vs SERPENT: who can reach whom (2026-07-30c) ------------
 // Steven: "if there's one of all of them — worm, python and cobra — I want them to
