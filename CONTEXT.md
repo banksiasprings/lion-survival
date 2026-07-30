@@ -1248,4 +1248,95 @@ other. If there's multiple in the game."*
   re-orders it; (c) the **python's canopy reach** uses the existing 2-D `MELEE_R` bite check with `_climb` as
   the visual justification, rather than a new climb state — cheapest honest way to let the one climber climb.
 
+
+## Cobra night territory — a quarter of the map each (2026-07-30e)
+Steven: *"At night I want it to come out of the tree and actually attack things. Also I wanted it to patrol
+its territory — it has one fourth of the map as a territory, and anything that comes into there at nighttime,
+it hunts down. Does it attack predators at night? Make sure it doesn't just hunt prey. Everything."*
+
+**Two of the four asks were already shipped — verified live before touching anything, not assumed:**
+- **"Comes out of the tree at night" — ALREADY WORKED.** Traced it: dusk → `NIGHT_DESCEND` (unwinds down the
+  trunk, 1.05 s) → `NIGHT_HUNT` on the ground at height 0.5. Built 2026-07-28. Nothing to do.
+- **"Attacks everything, not just prey" — ALREADY WORKED, one gap.** `snakeNightTarget` already scanned lion,
+  dog, gorilla, rhino, secretary, eagle, prey, rival serpents *and* the player. The only creature missing was
+  the **sky vulture**, now added (`state!=='LANDED'` skipped — an airborne one is nothing to strike at), with
+  its `snakeFoeValid` branch and a `SNAKE_VICTIM_NOUN` entry so a kill reads properly. Bite verified: 20 dmg
+  + venom on a landed vulture. Night-scan only — the python/worm cruise list was left alone as out of scope.
+
+**The real work: territory (new) and territorial patrol (rewritten).**
+- **Storage & assignment.** The world splits into four quadrants about the origin (`quadrantOf(x,z)` → `{id,
+  xMin, xMax, zMin, zMax}`, each `MAPR`×`MAPR` = 244×244). `claimNightTerritory(S)` runs **once, in
+  `makeSnake`, gated on `v.night`** (cobra only; python/worm get `null`) and never runs again.
+  - **⚠ Stored as `S.territory` — on the INSTANCE, deliberately NOT `S.v.territory` as the brief sketched.**
+    `S.v` is the shared `SNAKE_VARIANTS.cobra` object: a territory written there would be ONE territory shared
+    by every cobra, silently overwritten by each new spawn. Asserted in test —
+    `SNAKE_VARIANTS.cobra.territory === undefined` after spawning five cobras and after a `resetGame`.
+  - **Claims its spawn quadrant, else the nearest FREE one.** Steven offered "contest it" or "claim adjacent"
+    and left the call to me: **adjacent**, because they *cannot* contest it — `snakeRivalSkip` excludes
+    same-variant serpents, so two cobras sharing a quadrant would just double-patrol it while a quarter of the
+    map went unwatched. Verified: four cobras all spawned in **NE** claimed **NE, SE, NW, SW** — full coverage.
+    With `SNAKE.MAX 6` against four quadrants a 5th/6th has to share, and does (verified).
+- **Patrol.** `pickNightPatrolSpot` rewritten: a `NIGHT_ROAM_R` step in a random direction, **clamped back
+  inside the territory bounds**. The clamp does double duty — it keeps the patrol in the quadrant *and*, when a
+  chase has left the cobra outside, every waypoint points back in, so **walking home needed no go-home state**.
+  Roughly **one leg in four is a LONG one** drawn from anywhere in the quarter: pure local stepping made it
+  camp whichever corner it descended into (measured **77×70 m** of a 244×244 quadrant over a whole night);
+  with long legs it sweeps **165×186 m / 33 of 81 grid cells**, still **0 frames outside**.
+- **Detection, split deliberately between player and creatures:**
+  - **PLAYER — full-quadrant, stealth-proof.** Anywhere in its territory after dark you are targeted at **any**
+    range and **crouching does not hide you**. Verified targeted at 10 m standing, 10 m crouched, 61 m
+    crouched, and **186 m crouched in the far corner**; **not** targeted at 332 m outside it. This is the
+    headline of the rule and the strategic teeth — a quarter of the map is simply dangerous at night.
+    **`playerOffGround` is untouched, so a tree/wall/grapple still saves you** (verified) — the game's
+    "get above it" answer to serpents survives intact.
+  - **CREATURES — generous but finite (`NIGHT_TERR_MUL 3` → 26 m becomes 78 m).** Full-quadrant creature
+    awareness was considered and **rejected**: prey herds are everywhere, so the cobra would be in permanent
+    pursuit of the nearest one and never patrol — the territory would read as a heat-seeking missile rather
+    than an owner walking its ground.
+- **`NIGHT_REANCHOR` deleted.** That rule moved the cobra's hunting ground to wherever a long chase dragged it;
+  a territory that follows you around is not a territory. Replaced by a **territorial leash**: chase more than
+  `NIGHT_TERR_MARGIN` 30 m past its own border and it drops the target (+`NIGHT_SKIP`), then walks home.
+- **⚠ Bug caught in the soak and fixed — leash alone was not enough.** With only the leash, the cobra broke off
+  the current chase and then *immediately acquired whatever else was within 26 m out there*, broke off again,
+  acquired again — ratcheting itself across the map one target at a time. Measured **383 frames (19 s) beyond
+  its own border**, ending up in the wrong quadrant entirely. Fix: `snakeNightTarget` **returns null outright
+  while the cobra is off its own ground** — it suppresses ACQUISITION, not retaliation (a grudge is handled by
+  the `aggroTimer`/`snakeFoeValid` branch above the call and re-arms on every fresh hit, so it still bites
+  anything that jumps it on the way home). After the fix: **0 frames beyond the margin over 280 s**, max
+  excursion 10 m (well inside the 30 m chase allowance).
+
+**Full 24-hour cycle, one continuous trace (280 s, 2 cobras + python + worm):**
+| t | phase | state | head height |
+|---|---|---|---|
+| 0 s | day | `CRUISE` | 0.5 (ground) |
+| 8 s | day | `AMBUSH_TRAVEL` | 0.5 |
+| 13 s | day | `AMBUSH_COIL` | **3.2 (canopy)** |
+| 105 s | **dusk** | `NIGHT_DESCEND` | 3.1 → descending |
+| 106 s | night | `NIGHT_HUNT` | **0.5 (ground, patrolling)** |
+| 225 s | **dawn, day 2** | `AMBUSH_TRAVEL` | 0.5 |
+| 231 s | day 2 | `AMBUSH_COIL` | **2.9 (canopy)** |
+Plus **1201 frames of `SIESTA_SLEEP`** from the second cobra — the midday tree siesta, still routing to the
+nearest tree. **0 errors, 0 NaN, 0 console errors**; **0 scene / 0 geometries / 0 textures** leaked across
+3 spawn→claim→night-hunt→death-collapse cycles; `resetGame` leaves the shared variant object clean.
+
+**⚠ Emergent behaviour worth flagging:**
+- **Two cobras in different quarters never meet.** Minimum separation over 280 s was **202 m**; **0 frames**
+  within 20 m of each other. Exactly the outcome Steven guessed at. Combined with same-species non-aggression
+  this means multiple cobras now *partition* the map rather than clustering — the map has corners with owners.
+- **The border stand-off is the best thing here.** Instrumented a cobra chasing an (immortal) python west out
+  of its quadrant: it followed to the 30 m margin, **broke off at 4.5 s**, was back inside its own ground by
+  **5.6 s**, then **parked at x=2 — right on its own border — and watched the python flee to x=-191 without
+  following.** Textbook territorial behaviour, and it fell out of the leash + patrol-clamp rather than being
+  scripted.
+- **A cobra coiled in a day ambush skips the midday siesta** (the siesta gate requires `CRUISE`). Pre-existing,
+  and harmless — it is already up a tree, which is where the siesta would have put it. So "day → siesta → dusk"
+  is really "day in a tree (ambush *or* siesta) → dusk".
+- **Territory does not constrain the DAY tree.** Per the brief the ambush/siesta/turret tree pickers are
+  untouched, so a cobra can spend its day in a neighbour's quarter and walk home at dusk. Looks natural; noted
+  in case it should be bounded later.
+- **⚠ Balance (report, not silently tuned):** the player-side rule is a real difficulty increase — a quarter of
+  the map now hunts you on sight at night with no stealth counter. Mitigations already present and unchanged:
+  trees/walls, the 30 m break-off, the `NIGHT_GIVEUP` rule, and cobra speed 14 vs your sprint 16. Nothing else
+  was rebalanced.
+
 Each phase is an independent commit so it can be iterated in isolation.

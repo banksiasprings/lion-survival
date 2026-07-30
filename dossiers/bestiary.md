@@ -403,17 +403,33 @@ bite** as any other kill, so a serpent that wins a civil war comes out of it big
   - **The counter-play is ranged:** a **spear (80)** takes down a turret that's under 80 HP outright, and
     **bolts (50), rocks (~15 + stun) and the boomerang (100)** all still hit it in the canopy. Bring a
     throwing weapon or walk away — but walking away means leaving a venom sprayer on that patch of map.
-- **🌙 AT NIGHT — IT COMES DOWN AND HUNTS YOU.** At dusk it **pours down the trunk** and works the ground
-  in a **40 m patrol** around that tree until dawn: patrol → close → strike → move on. It will hunt
-  **anything** — you, wild dogs, lions, a gorilla, a rhino, prey. It spots you at the usual **22 m
-  (× your stealth)** and creatures at **26 m**, and **commits inside 6 m** — which is when the hood snaps
-  open. While it's travelling the hood stays **folded**, so at night the flare is your only warning and
-  it comes late.
+- **🗺️ IT OWNS A QUARTER OF THE MAP.** The world splits into four quadrants about the origin, and each cobra
+  **claims one at spawn, for life**. Successive cobras take **different** quadrants, so a full map of them
+  covers all four corners and two cobras in different quarters will simply never meet. It never gives the
+  claim up and it never moves it.
+- **🌙 AT NIGHT — IT COMES DOWN AND PATROLS ITS TERRITORY.** At dusk it **pours down the trunk** and works
+  its quarter until dawn: patrol → close → strike → move on.
+  - **⚠ IF YOU ARE IN ITS QUARTER AFTER DARK, IT KNOWS.** Inside its own territory the cobra hunts you
+    **from any distance, and crouching in grass does NOT hide you** — it owns that ground. A quarter of the
+    map is simply dangerous at night. **Height is still the answer:** a tree, a wall or a grapple puts you out
+    of its reach exactly as before. Step outside its quarter and it drops back to the ordinary
+    **22 m × stealth** detection.
+  - **It hunts EVERYTHING, not just prey** — you, wild dogs, lions, a gorilla, a rhino, grounded birds, a
+    **landed vulture**, and **rival serpents**. Creatures inside its territory are spotted at **78 m** (3× its
+    normal 26 m); outside, 26 m.
+  - **It won't leave its patch to chase you.** Run for the border. It will follow about **30 m** past its own
+    edge and then **break off, turn round, and go home** — and while it's off its ground it hunts nothing at
+    all, it just walks back. (It still bites anything that jumps it on the way.)
+  - It **commits inside 6 m** — which is when the hood snaps open. While it's travelling the hood stays
+    **folded**, so at night the flare is your only warning and it comes late.
   - **It gives up on what it can't catch.** At speed 14 it can't run down an impala, so a target it hasn't
     closed on in 4 s is dropped (and left alone for 10 s) and it goes back to patrolling. Slow things —
     lions, rhinos, gorillas, a cornered dog — it runs down.
   - **At dawn it retreats** to the nearest good tree, climbs, and goes back to being an ambush. If it's
     **mid-strike when the sun comes up it finishes the strike first**.
+  - **Its full day, measured end to end:** ground at dawn → climbs a tree (~13 s in) → **coiled in the canopy
+    all day** (or asleep in one through the midday siesta) → **pours down at dusk** → **patrols its quarter
+    all night** → **back up a tree at first light**. Round and round, every day.
 - **The counterplay is the clock — until you wound it.** A cobra you can see coiled in a canopy is a hazard
   you can walk around (though now it will spit at you as you go). The same cobra after dark is coming to find
   you — and a poisoned player at 1 HP dies to its next bite. A tree or a wall still stops it (it can't

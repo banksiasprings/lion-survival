@@ -5423,13 +5423,17 @@ const SNAKE = {
   // The cobra is a DAY ambusher and a NIGHT hunter. At dusk it pours down the
   // trunk and works the ground around that tree until dawn.
   NIGHT_DESCEND_T: 1.1,            // seconds to unwind down the trunk at nightfall
-  NIGHT_ROAM_R: 40,                // patrols this far from the tree base it came down
+  NIGHT_ROAM_R: 40,                // patrol waypoint step (and the no-territory fallback radius)
+  // ---- night TERRITORY (black cobra, 2026-07-30d) ----
+  // Steven: "it has one fourth of the map as a territory, and anything that comes
+  // into there at nighttime, it hunts down." See claimNightTerritory / inTerritory.
+  NIGHT_TERR_MARGIN: 30,           // how far past its OWN border it will chase before breaking off
+  NIGHT_TERR_MUL: 3,               // creature detection inside its own quarter (NIGHT_HUNT_R 26 → 78)
   NIGHT_HUNT_R: 26,                // spots a CREATURE to hunt within this (player uses DETECT)
   NIGHT_STRIKE_R: 6,               // inside this it has COMMITTED — hood flares, and dawn waits
   NIGHT_COMMIT_T: 4,               // a commitment lasts this long unless refreshed or spent
   NIGHT_DAWN_GRACE: 8,             // hard cap on 'finish the strike' — it always gets back to a tree
   NIGHT_PATROL_T: 9,               // repick a patrol spot at least this often
-  NIGHT_REANCHOR: 1.6,             // a chase this many roam-radii out moves its hunting ground
   NIGHT_GIVEUP: 4,                 // drop a target it hasn't CLOSED on in this long
   NIGHT_SKIP: 10,                  // ...and don't re-pick that one for this long
   // ---- venom SPIT (black cobra) ----------------------------------------
@@ -5620,6 +5624,10 @@ function makeSnake(x, z, variantKey){
     // cobras can be in different states on the same night without touching.
     nightTree:null, nightAnchor:null, patrolSpot:null, patrolT:0,
     descendT:0, _commitT:0, _dawnT:0,
+    // The quarter of the map this cobra owns after dark — set ONCE at spawn by
+    // claimNightTerritory below and never changed. On the INSTANCE, never on S.v
+    // (that object is shared by every cobra). null on python/worm.
+    territory:null,
     // cobra: venom SPIT + the low-HP TREE TURRET. `turret` is a ONE-WAY DOOR — once
     // set (below SNAKE.RETREAT_HP) this cobra lives and dies in a canopy: the dusk
     // descent, the drop-attack and the struck-out-of-the-canopy exit are all gated
@@ -5756,6 +5764,10 @@ function makeSnake(x, z, variantKey){
   S.hitR=1.7; S.hitTop=1.7;
   const container=S.mesh; S.mesh=head; attachHealthBar(S); S.mesh=container;   // HP bar rides the (world-positioned) head, freed with the container
   layoutSnake(S);
+  // A night hunter claims its quarter of the map here, ONCE, for life. Called before
+  // the push so claimNightTerritory's "which quadrants are taken" scan can't see this
+  // snake's own (still null) territory — the O!==S guard covers it either way.
+  if(v.night) S.territory = claimNightTerritory(S);
   snakeMeshes.push(S);
   return S;
 }
@@ -6101,7 +6113,8 @@ function cureVenom(why){
 
 // Reading nouns for the serpent's creature-kill line ("killed a secretary" read badly).
 const SNAKE_VICTIM_NOUN = { lion:'a lion', dog:'a wild dog', rhino:'a rhino', gorilla:'a gorilla',
-                            secretary:'the secretary bird', eagle:'the martial eagle' };
+                            secretary:'the secretary bird', eagle:'the martial eagle',
+                            skyvulture:'the vulture' };
 function snakeBite(S, kind){
   const dmg = snakeBiteDmg(S);
   if(kind==='player'){
@@ -6347,17 +6360,41 @@ function retreatToTreeAtDawn(S){
 // already a legal serpent target under the everyone-fights-everyone rule, and
 // biting any of them tags that creature's own retaliation hook (see snakeBite).
 function snakeNightTarget(S){
+  const T = S.territory;
+  // OFF ITS OWN GROUND → HUNT NOTHING, JUST GO HOME. Without this the leash below
+  // only breaks the CURRENT chase: the cobra would immediately acquire whatever else
+  // was within NIGHT_HUNT_R out there, break off again, acquire again, and ratchet
+  // itself across the map one target at a time (measured: 383 frames — 19 s — beyond
+  // its own border in a soak before this gate went in). Suppressing ACQUISITION, not
+  // retaliation: a grudge raised by the HP-drop watchdog is handled by the
+  // aggroTimer/snakeFoeValid branch above this call and re-arms on every fresh hit,
+  // so it still bites back at anything that jumps it on the way home.
+  if(T && !inTerritory(T, S.pos.x, S.pos.z, SNAKE.NIGHT_TERR_MARGIN)) return null;
   const skipped = (elapsed < (S._skipT||0)) ? S._skipEnt : null;   // recently given up on
+  // THE PLAYER. Standing anywhere in the cobra's own quarter after dark means you are
+  // hunted, at ANY range and regardless of crouching — that is what owning the ground
+  // means, and it is the headline of the territory rule. Height still saves you: the
+  // playerOffGround gate (tree / wall / grapple) is untouched, as is the wall check in
+  // snakeBite, so the game's "get above it" answer to a serpent still works.
+  // Outside its quarter it reverts to the ordinary stealth-scaled DETECT.
   if(!playerOffGround() && player.health>0 && skipped!==player){
     const dp = Math.hypot(player.pos.x-S.pos.x, player.pos.z-S.pos.z);
-    if(dp < SNAKE.DETECT*stealth.visMul) return {pos:player.pos, kind:'player', ent:player};
+    const onItsGround = !!T && inTerritory(T, player.pos.x, player.pos.z);
+    if(onItsGround || dp < SNAKE.DETECT*stealth.visMul) return {pos:player.pos, kind:'player', ent:player};
   }
-  let best=null, bd=SNAKE.NIGHT_HUNT_R;
+  // CREATURES get a generous but finite reach inside its quarter (×NIGHT_TERR_MUL)
+  // rather than the whole quadrant. Full-quadrant creature awareness was tried on
+  // paper and rejected: prey herds are everywhere, so the cobra would be in permanent
+  // pursuit of the nearest one and would never patrol at all — the territory would
+  // read as a heat-seeking missile instead of an owner walking its ground.
+  let best=null, bd=Infinity;
   const scan=(list, kind, skip)=>{
     list.forEach(e=>{
       if(e.health<=0 || e===skipped || (skip && skip(e))) return;
       const d = Math.hypot(e.pos.x-S.pos.x, e.pos.z-S.pos.z);
-      if(d<bd){ bd=d; best={pos:e.pos, kind, ent:e}; }
+      const reach = (T && inTerritory(T, e.pos.x, e.pos.z))
+                  ? SNAKE.NIGHT_HUNT_R*SNAKE.NIGHT_TERR_MUL : SNAKE.NIGHT_HUNT_R;
+      if(d < reach && d < bd){ bd=d; best={pos:e.pos, kind, ent:e}; }
     });
   };
   scan(lionMeshes, 'lion');
@@ -6375,6 +6412,10 @@ function snakeNightTarget(S){
   // other" read as true even though snakeCruiseTarget already had the python and
   // worm going for each other.
   scan(snakeMeshes, 'snake', O=>snakeRivalSkip(S, O));
+  // A LANDED sky vulture is fair game too (2026-07-30d) — the last thing on the map
+  // that was walking around at night with nothing willing to bite it. Airborne ones
+  // are skipped; there is nothing to strike at.
+  scan(skyVultureMeshes, 'skyvulture', V=>V.state!=='LANDED');
   scan(preyMeshes, 'prey');
   return best;
 }
@@ -6439,17 +6480,82 @@ function snakeCruiseTarget(S){
   scan(preyMeshes, 'prey', P=>P.species==='elephant');                     // the bull is not on the menu
   return best;
 }
-// A spot to work next, inside NIGHT_ROAM_R of the anchor and on legal ground.
+// ---- NIGHT TERRITORY (black cobra, 2026-07-30d) ----------------------
+// Steven: "it has one fourth of the map as a territory, and anything that comes into
+// there at nighttime, it hunts down."
+//
+// The world splits into four quadrants about the origin. A cobra CLAIMS one at spawn
+// and works it every night for the rest of its life. The claim NEVER MOVES — which is
+// why the old NIGHT_REANCHOR rule (a long chase dragged its hunting ground along
+// behind it) is gone: a territory that follows you around isn't a territory.
+//
+// ⚠ Stored as `S.territory`, on the INSTANCE — deliberately NOT `S.v.territory` as
+// the brief sketched. `S.v` is the SHARED `SNAKE_VARIANTS.cobra` config object, so a
+// territory written there would be ONE territory shared by every cobra on the map,
+// silently overwritten by each new spawn.
+function quadrantOf(x, z){
+  const east = x >= 0, north = z >= 0;
+  return { id: (north?'N':'S') + (east?'E':'W'),
+           xMin: east  ? 0 : -MAPR, xMax: east  ? MAPR : 0,
+           zMin: north ? 0 : -MAPR, zMax: north ? MAPR : 0 };
+}
+function territoryCentre(t){ return {x:(t.xMin+t.xMax)/2, z:(t.zMin+t.zMax)/2}; }
+function inTerritory(t, x, z, margin){
+  const m = margin || 0;
+  return x >= t.xMin-m && x <= t.xMax+m && z >= t.zMin-m && z <= t.zMax+m;
+}
+// Claim a quarter for life: the one it spawned in, or — if another cobra already
+// holds that one — the nearest FREE quarter instead.
+// Why spread them rather than let them contest it? Because they can't contest it:
+// snakeRivalSkip excludes same-variant serpents, so two cobras sharing a quadrant
+// would just double-patrol it while another quarter of the map went unwatched.
+// With SNAKE.MAX 6 against four quadrants a 5th/6th cobra has to share, and does.
+function claimNightTerritory(S){
+  const home = quadrantOf(S.pos.x, S.pos.z);
+  const taken = new Set();
+  snakeMeshes.forEach(O=>{ if(O!==S && O.territory) taken.add(O.territory.id); });
+  if(!taken.has(home.id)) return home;
+  let best=null, bd=Infinity;
+  [[1,1],[-1,1],[-1,-1],[1,-1]].forEach(s=>{
+    const q = quadrantOf(s[0]*MAPR*0.5, s[1]*MAPR*0.5);
+    if(taken.has(q.id)) return;
+    const c = territoryCentre(q), d = Math.hypot(c.x-S.pos.x, c.z-S.pos.z);
+    if(d < bd){ bd = d; best = q; }
+  });
+  return best || home;
+}
+
+// A spot to work next. A territorial cobra random-walks INSIDE its own quarter: a
+// NIGHT_ROAM_R step in a random direction, then clamped back within the bounds. The
+// clamp does double duty — it keeps the patrol inside the quadrant AND, when a chase
+// has left the cobra outside it, every waypoint points back in, so walking home needs
+// no separate go-home state. A cobra with no territory keeps the old anchor behaviour.
 function pickNightPatrolSpot(S){
+  const t = S.territory;
   const a = S.nightAnchor || {x:S.pos.x, z:S.pos.z};
-  for(let k=0;k<8;k++){
-    const ang = rand(0, Math.PI*2), r = rand(6, SNAKE.NIGHT_ROAM_R);
-    const x = clamp(a.x + Math.cos(ang)*r, -MAPR, MAPR);
-    const z = clamp(a.z + Math.sin(ang)*r, -MAPR, MAPR);
+  // Roughly one leg in four is a LONG one, drawn from anywhere in the quarter. Pure
+  // local stepping made it camp whichever corner it came down in (measured: 77×70 m
+  // of a 244×244 quadrant over a whole night); the occasional long leg relocates it,
+  // so across a few nights it actually works the whole patch.
+  const longLeg = t && Math.random() < 0.25;
+  for(let k=0;k<10;k++){
+    const ang = rand(0, Math.PI*2), r = rand(t ? 15 : 6, SNAKE.NIGHT_ROAM_R);
+    let x, z;
+    if(longLeg){
+      x = clamp(rand(t.xMin+8, t.xMax-8), -MAPR, MAPR);
+      z = clamp(rand(t.zMin+8, t.zMax-8), -MAPR, MAPR);
+    } else if(t){
+      x = clamp(clamp(S.pos.x + Math.cos(ang)*r, t.xMin+4, t.xMax-4), -MAPR, MAPR);
+      z = clamp(clamp(S.pos.z + Math.sin(ang)*r, t.zMin+4, t.zMax-4), -MAPR, MAPR);
+    } else {
+      x = clamp(a.x + Math.cos(ang)*r, -MAPR, MAPR);
+      z = clamp(a.z + Math.sin(ang)*r, -MAPR, MAPR);
+    }
     if(snakeSlope(x,z) > 0.5) continue;                      // don't try to climb a hillside
     if(segHitsWall(S.pos.x, S.pos.z, x, z)) continue;        // don't pick a spot behind a wall
     return {x, z};
   }
+  if(t){ const c = territoryCentre(t); return {x:clamp(c.x,-MAPR,MAPR), z:clamp(c.z,-MAPR,MAPR)}; }
   return {x:clamp(a.x,-MAPR,MAPR), z:clamp(a.z,-MAPR,MAPR)};  // fall back to the anchor itself
 }
 
@@ -6470,7 +6576,9 @@ function snakeFoeValid(S){
                // One collapsing, or a cobra up an ambush tree, is not a live foe.
                // Serpent vs serpent: hold the grudge as long as it is still something
                // we can physically get at (a canopy is python-only — snakeTreedOutOfReach).
-               : k==='snake' ? (snakeMeshes.includes(t) && !t.dying && !snakeTreedOutOfReach(S, t)) : false;
+               : k==='snake' ? (snakeMeshes.includes(t) && !t.dying && !snakeTreedOutOfReach(S, t))
+               // A sky vulture that got airborne again is gone — drop the grudge.
+               : k==='skyvulture' ? (skyVultureMeshes.includes(t) && t.state==='LANDED') : false;
   if(!inList) return false;
   return Math.hypot(t.pos.x-S.pos.x, t.pos.z-S.pos.z) < SNAKE.FOE_LEASH;
 }
@@ -6867,10 +6975,17 @@ function updateSnakes(dt){
           faceSnake(S, dx, dz, dt); S.pos.y = terrainY(S.pos.x,S.pos.z)+0.5;
           if(S.biteCd<=0){ snakeBite(S, biteKind); S.biteCd=S.v.BITE_CD; S._commitT=0; }   // strike spent → hood folds
         }
-        // A chase that drags it clean out of its patch MOVES the patch — it hunts
-        // where the game is instead of rubber-banding back to one tree all night.
-        const a=S.nightAnchor;
-        if(a && Math.hypot(S.pos.x-a.x, S.pos.z-a.z) > SNAKE.NIGHT_ROAM_R*SNAKE.NIGHT_REANCHOR){ a.x=S.pos.x; a.z=S.pos.z; }
+        // TERRITORIAL LEASH (replaces the old re-anchor). Its quarter of the map
+        // never moves, so a chase that carries it NIGHT_TERR_MARGIN past its own
+        // border is a chase it BREAKS OFF — the intruder has left its ground and is
+        // somebody else's problem. It then walks home for free: every waypoint
+        // pickNightPatrolSpot returns is clamped back inside the bounds.
+        if(S.territory && !inTerritory(S.territory, S.pos.x, S.pos.z, SNAKE.NIGHT_TERR_MARGIN)){
+          S._skipEnt = ent; S._skipT = elapsed + SNAKE.NIGHT_SKIP;
+          S.target=null; S.targetKind=null; S._preyTarget=null; S.aggroTimer=0;
+          S._chaseEnt=null; S._commitT=0; S.patrolSpot=null;
+          pushSnakePath(S); layoutSnake(S); return;
+        }
       } else {
         // Nothing in reach → patrol the anchor's radius. Slow, hood down, tasting
         // the air (tickSnakeHood keeps the tongue flicking).
