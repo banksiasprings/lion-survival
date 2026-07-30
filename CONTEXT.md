@@ -1730,4 +1730,70 @@ Both the shut and open cases "crossed". The fix was to build a barrier out to x 
 **x-coordinate at the moment of crossing** (through the aperture, |x| ≤ 1.4, vs around the ends). Assert on the
 mechanism, not on a proxy that a detour satisfies.
 
+
+## Predators can no longer tunnel walls — MTV ejection + exact swept test (2026-07-30l)
+Steven: *"The wild dog for some reason went straight through my walls… can you just make sure they can't get
+through unless there's a hole big enough for them? Like a gate."*
+
+### Which predator, and why — TWO defects, one of them the real culprit
+Reproduced three ways before touching anything. `dogStep` *already* had a swept guard (added 2026-07-19), so
+the 2026-07-19 note in this file was not the whole story.
+
+1. **⚠ THE CULPRIT — `collideWalls`' dead-centre fallback was `pos.x += radius`.** An arbitrary **+X** shove.
+   Walls are only 0.3 thick, so anything that ended up *inside* an AABB was never ejected: it was slid
+   **ALONG** the wall at radius-per-frame until it cleared the end. The easiest way in is the player **dropping
+   a wall on top of a chasing dog** (placement is 2.5 in front — right where the pack is).
+   **Measured repro:** a vendetta dog with a wall dropped on it sat at z=0 for three frames, then popped to
+   **z=4.37 — the player's side**. From the cockpit that is indistinguishable from walking through the wall.
+   Note this was **system-wide**, not a dog bug: every animal shares `collideWalls`.
+2. **`segHitsWall` samples only 7 interior points of the segment**, so a fast mover on a glancing approach can
+   slip between samples. **Measured: 2 of 32 full-speed vendetta charge angles tunnelled clean through.**
+
+Not a velocity/timestep problem and not a stale code path — the dog was using the same collision as everything
+else. The collision *primitive* was wrong.
+
+### Fix — system-wide, and it de-duplicates rather than adds
+- **`pushOutOfAABB(pos, a, r)`** — one shared minimum-translation ejector: always perpendicular to the nearest
+  face, along the shallowest axis. Nothing can be moved along a wall or through one. `collideWalls`,
+  `collideStoneWalls` **and** the player's `pushPlayerOutOfWalls` now all call it, so the MTV logic I wrote for
+  the player in `c57e684` is no longer duplicated — **one implementation, four call sites**.
+- **`segCrossesWall(ax,az,bx,bz,r)`** — exact segment-vs-AABB **slab test** on each box expanded by the body
+  radius. No sampling, so no step length or approach angle can defeat it. Swapped into the three movement
+  guards: `dogStep`, `snakeStep`, `secretaryStep`.
+- **`segHitsWall` left untouched** for line-of-sight / bite / spot-picking. Those run over long segments (a dog
+  20 m from the player) where the cheap 7-sample approximation is the point; making it exact there would cost
+  ~200 AABB tests per call per animal per frame.
+- **Lions, rhinos, prey and the gorilla needed no swept guard** — checked rather than assumed. Top speeds are
+  lion 19.5 / prey-flee 22 / worm 32 → ≤1.6 units per clamped frame, versus a 0.3-thick slab expanded by the
+  body radius (≥1.7 effective). The MTV resolver alone holds them, and the all-predator test below confirms it.
+
+### Pinned tests — all pass
+| pin | result |
+|---|---|
+| `test_wild_dog_cannot_tunnel_through_closed_wall` | 0 crossings through the aperture (long barrier, x ±24) |
+| `test_wild_dog_cannot_tunnel_through_closed_gate` | 0 crossings |
+| `test_wild_dog_walks_through_open_gate` | **3 crossings at x = 0.00 / −0.45 / +0.45** — through the mouth. Feature intact |
+| `test_all_predators_respect_wall_collision` | **0 crossings for all 8**: lion, vendetta dog, rhino, python, **worm (speed 32)**, cobra, grounded secretary bird, gorilla-vs-stone. All stayed at terrain height |
+| `test_two_adjacent_walls_have_no_pathable_gap` | walls abut **exactly** (seam gap 0.0000); 0 of 12 seam-aimed dogs got through |
+- **Repros re-run after the fix:** ejection is now perpendicular (dead-centre → z −0.65, x unchanged, never
+  left inside the slab); the wall-dropped-on-a-dog case ends at z −0.65 and **stays** there over 200 frames;
+  **0 of 32** charge angles tunnel, for **wood and stone**.
+- **Aerial no-regression:** sky vulture crossed at 12 above terrain, martial eagle reached z 243 at 21.6 above
+  terrain. Flying over is unaffected.
+
+### Siege soak — the headline result
+A closed ring of 19 **stone** walls (unsmashable) around the player with ONE gate, under 60 s of attack by
+**8 vendetta wild dogs + lions + a speed-18 cobra**:
+- **Gate SHUT: `framesAnyoneInside` = 0.** Nothing got in, once, at any point. The compound simply held.
+- **Gate OPEN: 1178 frames with attackers inside**, a dog reaching **r = 1.7** — arm's length from the player at
+  the centre. Overrun, exactly as designed.
+
+That pair is the whole design intent in one measurement: **the only hole is an open gate.**
+
+### ⚠ Note on the open-case metric
+`breachesAwayFromGate` reads 1174 in the OPEN siege, which is **not** a failure — once a dog is inside and
+roaming, its distance from the gate exceeds the 4.5 threshold, so it keeps counting. The load-bearing number is
+the SHUT case's `framesAnyoneInside = 0`. Left in the report rather than quietly reworded, because the metric
+is easy to misread as a leak.
+
 Each phase is an independent commit so it can be iterated in isolation.

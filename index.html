@@ -635,14 +635,58 @@ function tallGrassAt(x, z){
 
 // Push an XZ position out of any player-built wall (sphere vs AABB). Used by
 // lions and prey so animals can't walk through walls.
+// ---- ONE wall-ejection primitive, shared by the player and every animal --------
+// Push an XZ position out of `a` along the SHALLOWEST axis (minimum translation).
+// Returns true if it moved.
+//
+// ⚠ THIS REPLACED A RADIAL PUSH whose dead-centre fallback was `pos.x += radius` —
+// an arbitrary +X shove (2026-07-30l). Walls are only 0.3 thick, so an animal that
+// ended up INSIDE an AABB (most easily by the player dropping a wall on top of it)
+// was not ejected at all: it was slid ALONG the wall at radius-per-frame until it
+// cleared the end. Measured repro: a vendetta dog with a wall dropped on it sat at
+// z=0 for three frames, then popped to z=4.37 — the player's side. In play that
+// reads exactly as "the wild dog went straight through my wall".
+// MTV always ejects perpendicular to the nearest face, so nothing is ever moved
+// along a wall, and nothing can be pushed through one.
+function pushOutOfAABB(pos, a, r){
+  const ox = Math.min(a.max.x + r - pos.x, pos.x - (a.min.x - r));
+  const oz = Math.min(a.max.z + r - pos.z, pos.z - (a.min.z - r));
+  if(ox <= 0 || oz <= 0) return false;                   // no overlap on some axis
+  if(ox < oz) pos.x += (pos.x > (a.min.x+a.max.x)*0.5) ?  ox : -ox;
+  else        pos.z += (pos.z > (a.min.z+a.max.z)*0.5) ?  oz : -oz;
+  return true;
+}
+// EXACT segment-vs-wall test (slab method) on each box expanded by `r`. Used as the
+// swept anti-tunnel guard on MOVEMENT, where correctness matters most.
+// ⚠ Deliberately NOT segHitsWall: that samples only 7 interior points of the segment,
+// so a fast mover on a glancing approach can slip between samples — measured, 2 of 32
+// full-speed vendetta charge angles tunnelled straight through a wall. The slab method
+// has no sampling and therefore no step length or approach angle that can defeat it.
+// segHitsWall is left alone for line-of-sight / bite / spot-picking checks, where it is
+// called over long segments and its cheapness is the point.
+function segCrossesWall(ax, az, bx, bz, r){
+  const dx = bx-ax, dz = bz-az;
+  for(let i=0;i<wallAABBs.length;i++){
+    const a = wallAABBs[i];
+    const minx=a.min.x-r, maxx=a.max.x+r, minz=a.min.z-r, maxz=a.max.z+r;
+    let t0 = 0, t1 = 1;
+    if(Math.abs(dx) < 1e-9){ if(ax < minx || ax > maxx) continue; }
+    else { const inv=1/dx; let ta=(minx-ax)*inv, tb=(maxx-ax)*inv;
+           if(ta>tb){ const s=ta; ta=tb; tb=s; }
+           if(ta>t0) t0=ta; if(tb<t1) t1=tb; if(t0>t1) continue; }
+    if(Math.abs(dz) < 1e-9){ if(az < minz || az > maxz) continue; }
+    else { const inv=1/dz; let ta=(minz-az)*inv, tb=(maxz-az)*inv;
+           if(ta>tb){ const s=ta; ta=tb; tb=s; }
+           if(ta>t0) t0=ta; if(tb<t1) t1=tb; if(t0>t1) continue; }
+    return true;
+  }
+  return false;
+}
 function collideWalls(pos, radius){
   for(let i=0;i<wallAABBs.length;i++){
     const a = wallAABBs[i];
     if(pos.y > a.max.y - 0.1) continue;                 // cleared the top — let it pass over
-    const cx = clamp(pos.x, a.min.x, a.max.x), cz = clamp(pos.z, a.min.z, a.max.z);
-    const dx = pos.x-cx, dz = pos.z-cz, d = Math.sqrt(dx*dx+dz*dz);
-    if(d > 0.0001){ if(d < radius){ pos.x += (dx/d)*(radius-d); pos.z += (dz/d)*(radius-d); } }
-    else { pos.x += radius; }                            // dead-centre — shove out
+    pushOutOfAABB(pos, a, radius);
   }
 }
 
@@ -657,10 +701,7 @@ function collideStoneWalls(pos, radius){
     if(!w || !w.userData.stone) continue;
     const a = wallAABBs[i];
     if(pos.y > a.max.y - 0.1) continue;                 // cleared the top — let it pass over
-    const cx = clamp(pos.x, a.min.x, a.max.x), cz = clamp(pos.z, a.min.z, a.max.z);
-    const dx = pos.x-cx, dz = pos.z-cz, d = Math.sqrt(dx*dx+dz*dz);
-    if(d > 0.0001){ if(d < radius){ pos.x += (dx/d)*(radius-d); pos.z += (dz/d)*(radius-d); } }
-    else { pos.x += radius; }
+    pushOutOfAABB(pos, a, radius);                       // same MTV primitive — see the note above
   }
 }
 
@@ -727,13 +768,7 @@ function pushPlayerOutOfWalls(){
   for(let i=0;i<wallAABBs.length;i++){
     const a = wallAABBs[i];
     if(player.pos.y >= a.max.y - WALL_STEP_UP) continue;       // on top, or a step up → it's a floor
-    const ox = Math.min(a.max.x + PLAYER_WALL_R - player.pos.x,
-                        player.pos.x - (a.min.x - PLAYER_WALL_R));
-    const oz = Math.min(a.max.z + PLAYER_WALL_R - player.pos.z,
-                        player.pos.z - (a.min.z - PLAYER_WALL_R));
-    if(ox <= 0 || oz <= 0) continue;                            // no overlap on some axis
-    if(ox < oz) player.pos.x += (player.pos.x > (a.min.x+a.max.x)*0.5) ?  ox : -ox;
-    else        player.pos.z += (player.pos.z > (a.min.z+a.max.z)*0.5) ?  oz : -oz;
+    pushOutOfAABB(player.pos, a, PLAYER_WALL_R);                // the one shared MTV primitive
   }
 }
 
@@ -4298,7 +4333,7 @@ function dogStep(D, tx, tz, speed, dt){
   const bx=D.pos.x, bz=D.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
   if(d>0.001){ const step=Math.min(speed*dt,d); D.pos.x+=dx/d*step; D.pos.z+=dz/d*step; }
   D.pos.x=clamp(D.pos.x,-HALF+1,HALF-1); D.pos.z=clamp(D.pos.z,-HALF+1,HALF-1);
-  if(segHitsWall(bx,bz, D.pos.x,D.pos.z)){ D.pos.x=bx; D.pos.z=bz; }   // swept anti-tunnel — no crossing a wall
+  if(segCrossesWall(bx,bz, D.pos.x,D.pos.z, DOG.BODY_R)){ D.pos.x=bx; D.pos.z=bz; }   // swept anti-tunnel (exact) — no crossing a wall
   collideWalls(D.pos, DOG.BODY_R);
   collideStoneWalls(D.pos, DOG.BODY_R);
   D.pos.y=terrainY(D.pos.x,D.pos.z); D.mesh.position.copy(D.pos);
@@ -5228,7 +5263,7 @@ function secretaryStep(B, tx, tz, speed, dt){
   const bx=B.pos.x, bz=B.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
   if(d>0.001){ const step=Math.min(speed*dt,d); B.pos.x+=dx/d*step; B.pos.z+=dz/d*step; }
   B.pos.x=clamp(B.pos.x,-HALF+1,HALF-1); B.pos.z=clamp(B.pos.z,-HALF+1,HALF-1);
-  if(segHitsWall(bx,bz, B.pos.x,B.pos.z)){ B.pos.x=bx; B.pos.z=bz; }
+  if(segCrossesWall(bx,bz, B.pos.x,B.pos.z, SECR.BODY_R)){ B.pos.x=bx; B.pos.z=bz; }   // swept anti-tunnel (exact)
   collideWalls(B.pos, SECR.BODY_R); collideStoneWalls(B.pos, SECR.BODY_R);
   B.pos.y=terrainY(B.pos.x,B.pos.z); B.mesh.position.copy(B.pos);
   faceSecretary(B, tx-bx, tz-bz, dt);
@@ -6109,7 +6144,7 @@ function snakeStep(S, tx, tz, spd, dt){
   const bx=S.pos.x, bz=S.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
   if(d>0.001){ const step=Math.min(spd*dt,d); S.pos.x+=dx/d*step; S.pos.z+=dz/d*step; }
   S.pos.x=clamp(S.pos.x,-HALF+1,HALF-1); S.pos.z=clamp(S.pos.z,-HALF+1,HALF-1);
-  if(segHitsWall(bx,bz, S.pos.x,S.pos.z)){ S.pos.x=bx; S.pos.z=bz; }
+  if(segCrossesWall(bx,bz, S.pos.x,S.pos.z, SNAKE.BODY_R)){ S.pos.x=bx; S.pos.z=bz; }   // swept anti-tunnel (exact)
   collideWalls(S.pos, SNAKE.BODY_R); collideStoneWalls(S.pos, SNAKE.BODY_R);
   S.pos.y=terrainY(S.pos.x,S.pos.z)+0.5;
   faceSnake(S, tx-bx, tz-bz, dt);
