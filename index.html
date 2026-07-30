@@ -5526,36 +5526,51 @@ function snakeSegRadius(S, i){
 // renders ~2× LIGHTER than the literal hex. These were all iterated through
 // dossiers/render_cobra.py, which reproduces that lift — judge them on the rendered
 // sheet, never on the hex.
+// ⚠ BLACK FROM ABOVE (2026-07-30h, Steven: "I want them to be black on top still, but
+// have just the colour on the belly and the hoods… the colour can be on their back, but
+// really dark so it's almost black"). The first cut let the morph hue saturate the whole
+// animal — an acid cobra was a BRIGHT GREEN snake. Now every morph is a NEAR-BLACK snake
+// that happens to have a coloured underside.
+//   DARK — hue carried as a channel RATIO only, never as saturation: texBase, texLit,
+//     texMid, rim, tint, emis, spec. Every morph's texMid sits at 3.8–5.4% luminance.
+//   FULL SATURATION — untouched: belly (matBlot), spot, mm/mmHot, venom. That is where
+//     the identity reads: from underneath, off the flared hood, on the radar, in the spit.
+// The `midnight` row is the REFERENCE. It already looked exactly right, so the other four
+// are ITS value ladder (dominant channel: texBase 2 / texMid 19 / texLit 40 / rim 102 /
+// emis 9 / spec 40) re-pointed at each morph's hue.
 const COBRA_COLORS = [
-  // Fluorescent, poison-dart green — the loudest of the five.
+  // Poison-dart green — but a BLACK snake with a green cast, not a green snake.
   { id:'acid',     label:'acid-green',   weight:23.75,
-    texBase:'#071502', texLit:'#63ad12', texMid:'#2d6106', rim:'62,150,20',
+    texBase:'#010200', texLit:'#112806', texMid:'#081303', rim:'43,102,15',
     // spot is deliberately DARK here: acid's belly is the brightest of the five, so a
     // dark marking is what reads on it. The dark-bellied morphs get a light ochre
     // instead — the spectacle has to contrast with its OWN hood, not match a fixed hue.
-    tint:0x7fae52, belly:0x2c5c04, spot:0x081204, emis:0x040a01, spec:0x4a7a18,
+    tint:0x97a88f, belly:0x2c5c04, spot:0x081204, emis:0x040901, spec:0x112806,
     mm:'#6cc41e', mmHot:'#b6ff3c', venom:0xb6ff3c },
-  // THE ORIGINAL — near-black scales over a deep blue belly. Byte-for-byte the
-  // pre-morph cobra, so the animal Steven already knows is still in the pool.
+  // THE ORIGINAL and the REFERENCE WEIGHTING — near-black scales over a deep blue
+  // belly. Byte-for-byte the pre-morph cobra, so the animal Steven already approved is
+  // still in the pool and still looks identical. ⚠ DO NOT retune these to match a
+  // formula: the other four were derived to match THEM.
   { id:'midnight', label:'black',        weight:23.75,
     texBase:'#010102', texLit:'#141728', texMid:'#0a0b13', rim:'38,52,102',
     tint:0x8790a8, belly:0x020b46, spot:0x44290a, emis:0x020309, spec:0x121728,
     mm:'#5b2f8a', mmHot:'#b07bff', venom:0x9be34a },
-  // Oxblood — dark red scales, a brighter arterial belly.
+  // Oxblood — a black snake with a red cast, over an arterial belly.
   { id:'crimson',  label:'crimson',      weight:23.75,
-    texBase:'#100203', texLit:'#6b1016', texMid:'#33060a', rim:'128,26,32',
-    tint:0xa8707a, belly:0x520208, spot:0x3a1204, emis:0x0a0102, spec:0x5a1a22,
+    texBase:'#020001', texLit:'#280a0b', texMid:'#130505', rim:'102,26,29',
+    tint:0xa88f90, belly:0x520208, spot:0x3a1204, emis:0x090203, spec:0x280a0b,
     mm:'#b0303a', mmHot:'#ff5a68', venom:0xff5a68 },
-  // Deep violet with a plum belly.
+  // A black snake with a violet cast, over a plum belly.
   { id:'violet',   label:'dark-violet',  weight:23.75,
-    texBase:'#08030f', texLit:'#43206b', texMid:'#200d38', rim:'92,52,150',
+    texBase:'#010102', texLit:'#1d1128', texMid:'#0e0813', rim:'73,43,102',
     // Warm ochre spectacle on a cool purple hood — the same complementary trick that
     // makes the original blue morph's marking the clearest of the five. A violet spot
     // on a violet belly rendered as a washed-out smudge.
-    tint:0x9682b8, belly:0x300650, spot:0x46280c, emis:0x050210, spec:0x321a5a,
+    tint:0x9c8fa8, belly:0x300650, spot:0x46280c, emis:0x060409, spec:0x1d1128,
     mm:'#7a3fc0', mmHot:'#c48cff', venom:0xc48cff },
-  // ⚠ THE RARE ONE — 5%. Warm brass scales, bright gilt belly, and the only morph
-  // that is genuinely bright rather than a dark animal with a coloured belly.
+  // ⚠ THE RARE ONE — 5%. A black snake with a brass cast over a bright gilt belly.
+  // (It used to be the one genuinely BRIGHT morph; it now follows the same
+  // black-on-top rule as the rest — the gilt belly and hood carry it instead.)
   // ⚠ …and the only one that is not purely cosmetic: `hp` overrides the variant's
   // baseline, so a gold cobra is a 1500-HP BOSS (2026-07-30g, Steven's call) against
   // everyone else's 700. Nothing else about it differs — bite, venom, speed,
@@ -5563,8 +5578,8 @@ const COBRA_COLORS = [
   // A morph without an `hp` field falls through to SNAKE_VARIANTS.cobra.HEALTH, so
   // retuning the ordinary cobra still moves the other four together.
   { id:'gold',     label:'GOLD',         weight:5, hp:1500,
-    texBase:'#1a1204', texLit:'#c79a1e', texMid:'#6e4e08', rim:'190,150,40',
-    tint:0xd8b45c, belly:0x8a6408, spot:0x4a3402, emis:0x120c02, spec:0x9a7a28,
+    texBase:'#020200', texLit:'#281f09', texMid:'#130f04', rim:'102,80,22',
+    tint:0xa8a18f, belly:0x8a6408, spot:0x4a3402, emis:0x090702, spec:0x281f09,
     mm:'#d8a81e', mmHot:'#ffe066', venom:0xffe066 },
 ];
 // Weighted roll. Kept as its own helper (rather than inlined at the spawn site) so

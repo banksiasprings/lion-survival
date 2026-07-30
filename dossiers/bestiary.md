@@ -353,9 +353,14 @@ bite** as any other kill, so a serpent that wins a civil war comes out of it big
 #### ☠️ Black cobra — ambush by day, hunter by night
 - **🎨 FIVE COLOUR MORPHS — rolled at spawn, kept for life.** Every cobra rolls one of five colours when it
   arrives and keeps it forever: it never changes on growth, damage, state or the day/night flip. A gold cobra
-  that eats its way to 40 segments is still gold, just enormous. The morph colours its **scales, its belly and
-  hood, its hood spectacle marking, its minimap dot and its venom spit**, so you can tell them apart across
-  the map and on the radar. Offline render of all five: [`cobra_morphs.png`](cobra_morphs.png).
+  that eats its way to 40 segments is still gold, just enormous. Offline render of all five:
+  [`cobra_morphs.png`](cobra_morphs.png).
+  - **⚠ ALL OF THEM ARE BLACK FROM ABOVE.** Look down at a cobra and every morph is a near-black snake with
+    only a faint cast of its colour on the back — you will not identify one from above. The colour lives
+    **underneath and on the hood**: the belly, the **flared hood membrane**, the hood's spectacle marking,
+    its **minimap dot** and its **venom spit** are all full-strength. So a cobra you spot from a distance is
+    just a black snake; you learn which one it is when it **rears and flares at you**, when it **spits**, or
+    off the **radar**.
 
   | Morph | Look | Chance |
   |---|---|---|

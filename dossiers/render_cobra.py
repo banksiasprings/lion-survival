@@ -111,13 +111,16 @@ def place(faces,pos=(0,0,0),rx=0.0,ry=0.0,rz=0.0,sc=None):
 # cobraScaleTex()'s MEAN tone is about HALF its texMid stop, because most of the canvas
 # is the near-black bottom of each scale gradient (using texMid flat makes the animal
 # look twice as pale as it does in engine), then x the matA / matB tints.
+# 2026-07-30h: every texMid is now NEAR-BLACK (3.8-5.4% luminance) with the hue carried
+# as a channel ratio only, so the animal reads black from above; belly/spot stay fully
+# saturated. midnight is the reference the other four were derived from.
 PALETTES = [
     # id,         texMid,     tint,     belly,    spot
-    ('acid',     0x2d6106, 0x7fae52, 0x2c5c04, 0x081204),
+    ('acid',     0x081303, 0x97a88f, 0x2c5c04, 0x081204),
     ('midnight', 0x0a0b13, 0x8790a8, 0x020b46, 0x44290a),
-    ('crimson',  0x33060a, 0xa8707a, 0x520208, 0x3a1204),
-    ('violet',   0x200d38, 0x9682b8, 0x300650, 0x46280c),
-    ('gold',     0x6e4e08, 0xd8b45c, 0x8a6408, 0x4a3402),
+    ('crimson',  0x130505, 0xa88f90, 0x520208, 0x3a1204),
+    ('violet',   0x0e0813, 0x9c8fa8, 0x300650, 0x46280c),
+    ('gold',     0x130f04, 0xa8a18f, 0x8a6408, 0x4a3402),
 ]
 def _mul(col, tint):
     r=((col>>16)&255)*((tint>>16)&255)//255; g=((col>>8)&255)*((tint>>8)&255)//255
@@ -283,8 +286,11 @@ sheet.save(out); print('wrote',out,sheet.size)
 # head (where the hood membrane and the spectacle marking carry the colour) and the
 # reared body (where the scale mass and the ventral scutes do).
 MW,MH=430,400; mth=58
-rows=[('HOOD FLARED', lambda: place(cobra_head(1.0)), 0.10, 0.08, 0.80),
-      ('REARED BODY', lambda: cobra_body(0.85),       0.62, 0.40, 0.86)]
+# Steven asked specifically for top + side, to confirm "black from above" holds while
+# the belly/hood identity still reads. pitch ~1.30 rad is a near-top-down camera.
+rows=[('TOP-DOWN (dorsal)', lambda: cobra_body(0.0),        0.00, 1.30, 0.88),
+      ('SIDE',              lambda: cobra_body(0.85),       0.62, 0.22, 0.86),
+      ('HOOD FLARED (front)', lambda: place(cobra_head(1.0)), 0.10, 0.08, 0.80)]
 msheet=Image.new('RGB',(MW*len(PALETTES), mth+MH*len(rows)),(24,24,28))
 md=ImageDraw.Draw(msheet)
 md.text((20,10),'Survive the Savannah — BLACK COBRA colour morphs (offline render, gamma-matched to the app)',
@@ -294,7 +300,7 @@ md.text((20,34),'acid-green 23.75%   ·   black 23.75%   ·   crimson 23.75%   �
 for ri,(rlabel,build,yaw,pitch,fit) in enumerate(rows):
     for ci,entry in enumerate(PALETTES):
         set_palette(entry)
-        bg=(198,190,172) if ri==0 else (194,182,156)
+        bg=[(198,190,172),(194,182,156),(200,192,176)][ri]
         panel=project(build(),MW,MH,yaw,pitch,bg,tuple(int(c*0.8) for c in bg),fit)
         dd=ImageDraw.Draw(panel)
         dd.rectangle([0,0,MW-1,MH-1],outline=(60,60,66),width=2)

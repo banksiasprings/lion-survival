@@ -1446,4 +1446,60 @@ Steven: *"keep everything else the same, but just the gold cobra, make it have o
   gold-specific spawn → grow → death-collapse cycles. The floating HP bar is the unchanged 256×44 canvas and
   `"1500/1500"` is the same 9 characters the python's `"1000/1000"` has always rendered.
 
+
+## Cobras go BLACK FROM ABOVE — colour moves to belly + hood only (2026-07-30h)
+Steven: *"I want them to be black on top still, but have just the colour on the belly and the hoods. And then
+the colour can be on their back, but just make it really dark so it's almost black."*
+
+The first morph cut let the hue saturate the **whole animal** — an acid cobra was a bright green snake, a gold
+one was brass from nose to tail. Reversed: every morph is now a **near-black snake with a coloured underside**.
+
+- **`midnight` is the reference, not a formula.** It already looked exactly right — near-black with the hue
+  carried as a channel *ratio* rather than saturation — and Steven had approved it. So instead of inventing a
+  weighting, the other four were **derived from midnight's value ladder** (dominant channel: texBase 2 /
+  texMid 19 / texLit 40 / rim 102 / emis 9 / spec 40) re-pointed at each hue. That makes "black is unchanged"
+  **structural** rather than something to be careful about — and the palette carries a ⚠ comment telling a
+  future session not to retune midnight to match a formula, because the formula was fitted to *it*.
+- **New palette:**
+
+| morph | texBase | texMid | texLit | rim | tint | emis | spec | body luma (was → now) |
+|---|---|---|---|---|---|---|---|---|
+| **acid-green** | `#010200` | `#081303` | `#112806` | `43,102,15` | `0x97a88f` | `0x040901` | `0x112806` | 13.5% → **3.9%** |
+| **black** *(reference — untouched)* | `#010102` | `#0a0b13` | `#141728` | `38,52,102` | `0x8790a8` | `0x020309` | `0x121728` | 5.0% → **5.0%** |
+| **crimson** | `#020001` | `#130505` | `#280a0b` | `102,26,29` | `0xa88f90` | `0x090203` | `0x280a0b` | 7.0% → **3.8%** |
+| **dark-violet** | `#010102` | `#0e0813` | `#1d1128` | `73,43,102` | `0x9c8fa8` | `0x060409` | `0x1d1128` | 10.6% → **5.3%** |
+| **GOLD** | `#020200` | `#130f04` | `#281f09` | `102,80,22` | `0xa8a18f` | `0x090702` | `0x281f09` | 18.6% → **4.9%** |
+
+Unchanged at full saturation on every row: `belly`, `spot`, `mm`/`mmHot`, `venom` (and gold's `hp:1500`).
+
+- **What moved vs what didn't.** Dark now, hue as ratio only: `texBase`, `texMid`, `texLit`, `rim`, `tint`,
+  `emis`, `spec`. Untouched and fully saturated: **`belly` (matBlot), `spot`, `mm`/`mmHot`, `venom`** — the
+  `git diff` shows `belly:` and `spot:` byte-identical on both sides of every changed line, and `mm:`/`venom:`
+  never appear in the diff at all. Identity now reads from **underneath, off the flared hood, on the radar and
+  in the spit** — never from above.
+- **Black is provably unchanged.** No `midnight` palette line appears in the diff. Measured independently: its
+  drawn-texture luminance is **4.9550% before and 4.9550% after — bit-identical**.
+- **Measured, not eyeballed** (see the ⚠ below for why this took a detour): replicating `cobraScaleTex()` in
+  PIL and measuring the actual drawn 64² gives every morph **3.8–5.3%** raw luminance, bracketing midnight's
+  **5.0%**. Gold was the worst offender at **18.6%** (nearly 4× the reference) and is now at parity.
+- **Render updated:** `dossiers/render_cobra.py`'s morph sheet went from 2 rows to **3 — TOP-DOWN (dorsal),
+  SIDE, HOOD FLARED (front)** — because "black from above" is the claim and the old sheet had no top view to
+  check it against. Confirmed on the sheet: the dorsal row is five dark snakes, the hood row is five
+  full-saturation hoods.
+- **⚠ ENVIRONMENT GOTCHA worth remembering: 2-D canvas readback is BLOCKED in the Browser pane.**
+  `getImageData` returns an all-zero buffer *including alpha*, even for a canvas just `fillRect`'d — a
+  `#ff8000` control read back `0,0,0,0`. So an in-page measurement of any procedural CanvasTexture
+  (`cobraScaleTex`, `giraffeTex`, `elephantTex`, the HP bars) is impossible, and it fails **silently, looking
+  exactly like "the texture is black"**. First attempt at verifying this change reported all five morphs at 0%
+  luminance, which was the probe being broken, not a finding. Recorded in the verify memory; run the `#ff8000`
+  control first whenever a canvas-pixel number looks impossible.
+- **Verified live:** 150 s soak with all five morphs + python + worm — **0 errors, 0 NaN, 0 console errors**;
+  every survivor kept its morph and minimap colour; **all five venom colours** observed in flight
+  (`#b6ff3c`/`#9be34a`/`#ff5a68`/`#c48cff`/`#ffe066`); gold still **1500** HP. Material wiring re-confirmed
+  per morph (belly, matB tint, matA specular).
+- **⚠ Interpretive call:** gold used to be the one genuinely *bright* morph and is now dark-on-top like the
+  rest, per the instruction. Its "rare" read now comes entirely from the **gilt hood + belly**, the killfeed
+  announcement, the gold minimap dot and the 1500 HP — not from being shiny at distance. Flagged in case
+  Steven wants the boss to stay visually loud from afar.
+
 Each phase is an independent commit so it can be iterated in isolation.
