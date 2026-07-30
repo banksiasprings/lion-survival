@@ -2062,4 +2062,64 @@ construction**: whatever comes down goes back up at dawn, whether the axe or a c
 | cobra felling still works | 6 bites, **0 wood** (destruction, not harvest) — and it **counts toward regrowth** |
 - 0 console errors.
 
+
+## 🫐 Berry bush · 🌿 Bramble fence · 🐆 Cheetah (2026-07-31)
+
+### 🫐 Berry bush
+Modelled on a TREE, not a pickup: a permanent world fixture with a per-day crop. The 5 berries are **child
+meshes that hide when picked and come back at dawn** — no spawn/dispose churn, and "how many are left" is just
+how many are visible. Prickles are explicit (14 cones poking out of the foliage), as asked.
+- **90 bushes** (~1 per 2,800 m² of the 500×500 map) — "quite a few around the map".
+- `[E]` eats one for **+14 hunger** ("not the best"). Key order is now gate → **berry** → carcass → collect.
+- **Axe chops it in 2 swings** (60 HP / 42) for **3 bramble**. Chopped bushes **regrow at dawn**, and the crop
+  refills on every surviving bush.
+- ⚠ Bushes are **scenery like trees** — `resetGame` leaves them standing (it does the same for `treeObjects`).
+  A reset replants anything chopped last run and refills every crop.
+
+### 🌿 Bramble fence
+⚠ **Deliberately NOT a wall.** A wall BLOCKS; a bramble is a hazard you push THROUGH — so it is kept out of
+`wallMeshes`/`wallAABBs` entirely. Registering it would have made it solid and the "go through it" mechanic
+impossible. Own array, own zone check.
+- Steven's numbers exactly: **half speed** inside, **20 damage** per crossing, on a 1.2 s per-victim cooldown so
+  a slow crossing is a few pricks rather than 20 dmg every frame.
+- **DESIGN CALL — it hurts the player too.** Steven said "animals". But a bramble that only bites animals is a
+  free one-way wall with no downside, and the game already has the right answer for getting through your own
+  defences: **a gate**. Damage and slow are identical for everyone. One line to make it animals-only
+  (`if(isPlayer) return;` in the prick pass) if he'd rather.
+- The half-speed rule rides the **same 9 movement sites** the water rule uses — `brambleSpeedMul` was folded in
+  next to `waterSpeedMul`, so the two hazards compose (a bramble in the shallows is ⅙ speed).
+- 8 coins to unlock; the real cost is chopping bushes.
+
+### 🐆 Cheetah
+- **⚠ SPEED IS 45, NOT 64.** Steven originally said "twice as fast as the worm" (2×32). Measured, 64 is **3.2
+  units per frame** — it crosses the 500-unit map in eight seconds, reads as teleporting, and gives the player
+  nothing to react to. He approved **45**: still decisively the fastest thing alive (worm 32 · dog vendetta 18 ·
+  player sprint 16), still uncatchable, but visible. **2.25 units/frame.**
+- **The personality is the feature.** It lounges at 3.5 all day and will not chase at all outside a midday
+  window (38–66 % of the day phase, ~11:00–15:00). At most **2 sprints per day**, 7 s each, then a 25 s
+  blown-cooldown. You can walk past a resting cheetah.
+- States: `REST` (amble to random spots) → `STALK` (close to 26 at speed 8) → `SPRINT` (45, lethal: 46 dmg).
+- Built as a full module on the dog's template so it rides every existing seam: `setHitbox`, `attachHealthBar`,
+  `killObj` disposal, the daily dawn wave, creature venom, the day/night reheal, cobra target lists, melee aim,
+  and it drops a carcass.
+
+### ⚠ Speed 45 verified against the wall-collision fix
+The `pushOutOfAABB` + `segCrossesWall` work from 2026-07-30l is exactly what makes 45 safe. `cheetahStep` uses
+the **exact slab test** (no sampling), so no speed can slip between samples.
+**Charged a 16-wall barrier from 32 angles at full sprint, alternating wood and stone: 0 tunnelled.**
+
+### Verified
+| check | result |
+|---|---|
+| bushes / crop | **90** bushes, 5 berries each; eat → 4; empty → `[E]` refuses; dawn → back to 5 |
+| eat value | hunger 50 → **64** (+14) |
+| chop bush | **2 swings** → **+3 bramble**, bush gone, **regrows at dawn** (89 → 90) |
+| bramble speed | **0.5** inside, **1.0** outside; **not** in `wallMeshes` |
+| bramble damage | **20** to the player *and* **20** to a lion; no double-dip inside the cooldown |
+| cheetah speed | 45, fastest alive, 2.25 units/frame |
+| **cheetah vs walls at 45** | **0 of 32** sprint angles tunnelled, wood + stone |
+| chill personality | REST at morning / afternoon / night, **SPRINT only at midday** |
+| sprints per day | exactly **2**, then `sprintsLeft` 0; dawn reset gives 1–2 |
+- 0 console errors.
+
 Each phase is an independent commit so it can be iterated in isolation.

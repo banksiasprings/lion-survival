@@ -502,6 +502,8 @@ const SHOP_ITEMS = [
     desc:'Hurl a flint spear — heavy damage at range, no crafting needed. 3s cooldown.', cd:3 },
   { id:'kit_wall',    type:'ability', icon:'🪵', name:'Palisade Wall',
     desc:'Drop a permanent wooden barrier in front of you for cover (up to 50 up at once). Costs 2 wood. Walkable on top. No cooldown.', cd:0 },
+  { id:'kit_bramble', type:'ability', icon:'🌿', name:'Bramble Fence',
+    desc:'Plant a tangle of thorns. Anything crossing it — you included — is slowed to HALF speed and torn for 20. It does NOT block, it punishes. Costs 2 bramble: chop a berry bush with the axe. No cooldown.', cd:0 },
   { id:'kit_gate',    type:'ability', icon:'🚪', name:'Palisade Gate',
     desc:'Drop a hinged gate (up to 20). Face it and press [E] to swing it open, walk through, then turn round and press [E] to shut it behind you. Shut, it is a wall — collision and a walkable top. Left open, anything can follow you in. Costs 2 wood. No cooldown.', cd:0 },
   { id:'kit_grapple', type:'ability', icon:'🪝', name:'Grappling Hook',
@@ -544,6 +546,9 @@ let buffs = { adrenaline:0, smoke:0, eagleEye:0 };   // seconds remaining on tim
 let abilityFX = { fireTorch:null }; // { group, light, flame, on } — a disposable Three object
 let kitWalls  = [];                 // { mesh } permanent Palisade Wall chunks (mesh also lives in wallMeshes)
 let kitGates  = [];                 // { mesh, swing, open } hinged Palisade Gates — see the gate module
+let berryBushes = [];               // 🫐 { mesh, pos, berries[], picked } — see the berry module
+let cheetahMeshes = [];             // 🐆 the fastest thing alive — see the cheetah module
+let kitBrambles = [];               // 🌿 { mesh } bramble fences (mesh also lives in wallMeshes? NO — see module)
 let kitSwings = [];                 // { mesh, t } transient Hand Axe swing arcs — self-dispose
 let skyHammers = [];                // { grp,... } Hammer "from the sky" VFX — fall, impact, fade
 let _impactFlashes = [];            // { mesh,mat,life } bright ground bursts under a landing sky hammer
@@ -1598,6 +1603,338 @@ function plantTree(item, placed){
 }
 
 // =====================================================================
+//  🐆 CHEETAH  (2026-07-31) — the fastest thing in the game, and the laziest
+// =====================================================================
+// Steven: "add a cheetah, which is the fastest thing in the game… but it's really
+// chill. It only runs, like, once or twice in the middle of the day to kill."
+//
+// ⚠ SPEED IS 45, NOT 64. Steven originally said "twice as fast as the worm" (2×32).
+// Measured, 64 is 3.2 units per FRAME — it crosses the whole 500-unit map in eight
+// seconds, which reads as teleporting and gives the player nothing to react to. He
+// approved 45: still decisively the fastest thing alive (worm 32, dog vendetta 18,
+// player sprint 16), still uncatchable, but visible.
+//
+// The personality is the point: it spends the whole day lounging at 3.5 and makes at
+// most TWO sprints, only in the middle of the day. Outside that window it will not
+// chase at all — you can walk past a resting cheetah.
+const CHEETAH = {
+  MAX: 3, PER_DAWN: 1,
+  HEALTH: 70,            // lean — 1 spear, ~5 rocks
+  BITE_DMG: 46,          // when it does commit, it is lethal
+  BITE_CD: 1.2,
+  BODY_R: 0.6,
+  SPEED_REST: 3.5,       // lounging amble
+  SPEED_STALK: 8,        // creeping into range before the burst
+  SPEED_SPRINT: 45,      // ⚠ the run. See the note above.
+  SPRINTS_PER_DAY: 2,    // "once or twice"
+  MIDDAY_LO: 0.38, MIDDAY_HI: 0.66,   // fraction of the DAY phase — roughly 11:00–15:00
+  SPRINT_TIME: 7,        // a burst is short; real cheetahs cannot sustain it
+  SPRINT_COOLDOWN: 25,   // blown after a run
+  DETECT: 44,            // it can see a long way across open ground
+  STALK_RANGE: 26,       // closes to here before opening the taps
+  MELEE_R: 2.6,
+};
+function makeCheetah(x, z){
+  const g = new THREE.Group();
+  const coat  = new THREE.MeshLambertMaterial({color:jcol(0xd9b061,0.04)});
+  const pale  = new THREE.MeshLambertMaterial({color:0xefe0bd});
+  const spotM = new THREE.MeshLambertMaterial({color:0x2b2118});
+  const box=(w,h,d,m,px,py,pz)=>{ const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);
+    o.position.set(px,py,pz); o.castShadow=true; g.add(o); return o; };
+  const sph=(r,m,px,py,pz)=>{ const o=new THREE.Mesh(new THREE.SphereGeometry(r,8,7),m);
+    o.position.set(px,py,pz); g.add(o); return o; };
+  // deep narrow chest, whippet waist, high haunches — a sprinter's silhouette
+  box(0.52,0.44,0.60, coat, 0,0.70,0.46);
+  box(0.44,0.38,0.72, coat, 0,0.72,-0.10);
+  box(0.56,0.48,0.52, coat, 0,0.78,-0.66);
+  box(0.40,0.22,1.10, pale, 0,0.54,-0.06);
+  // long neck + small round head
+  box(0.28,0.28,0.44, coat, 0,0.92,0.82,-0.2);
+  const head = box(0.34,0.32,0.36, coat, 0,1.02,1.14);
+  box(0.22,0.18,0.22, pale, 0,0.96,1.34);
+  sph(0.05, spotM, -0.10,1.08,1.30); sph(0.05, spotM, 0.10,1.08,1.30);
+  // the tear stripes — the cheetah's signature marking
+  box(0.04,0.20,0.03, spotM, -0.10,0.94,1.31); box(0.04,0.20,0.03, spotM, 0.10,0.94,1.31);
+  sph(0.09, coat, -0.14,1.18,1.02); sph(0.09, coat, 0.14,1.18,1.02);
+  // spots
+  for(let i=0;i<26;i++){
+    const sp = new THREE.Mesh(new THREE.SphereGeometry(rand(0.045,0.075),5,4), spotM);
+    sp.position.set(rand(-0.30,0.30), rand(0.52,1.00), rand(-0.95,0.75));
+    sp.scale.set(1,0.6,1); g.add(sp);
+  }
+  // long legs
+  const legs=[];
+  const mkLeg=(lx,lz)=>{ const l=new THREE.Mesh(new THREE.CylinderGeometry(0.075,0.06,0.78,6), coat);
+    l.position.set(lx,0.39,lz); l.userData.baseY=0.39; legs.push(l); g.add(l); };
+  mkLeg(-0.20,0.44); mkLeg(0.20,0.44); mkLeg(-0.22,-0.56); mkLeg(0.22,-0.56);
+  // long counterweight tail
+  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.055,0.035,1.15,6), coat);
+  tail.position.set(0,0.80,-1.10); tail.rotation.x = 0.7; g.add(tail);
+  sph(0.07, spotM, 0,0.66,-1.62);
+  g.children.forEach(c=>{ if(c.isMesh) c.userData.origMat = c.material; });
+  const ty = terrainY(x,z);
+  g.position.set(x,ty,z); g.name='cheetah'; scene.add(g);
+  const C = { mesh:g, legs, pos:new THREE.Vector3(x,ty,z),
+    health:CHEETAH.HEALTH, maxHealth:CHEETAH.HEALTH,
+    state:'REST',                       // REST | STALK | SPRINT
+    heading:rand(0,Math.PI*2), biteCd:0, stunTimer:0, flashTimer:0,
+    target:null, targetKind:null,
+    sprintsLeft:CHEETAH.SPRINTS_PER_DAY, sprintT:0, cooldown:0, restSpot:null, restT:0,
+    legPhase:Math.random()*6.28, _lastSpeed:0,
+    lastHitBy:null, lastHitKind:null, _prevHealth:CHEETAH.HEALTH, _brambleCd:0 };
+  setHitbox(C); attachHealthBar(C); cheetahMeshes.push(C);
+  return C;
+}
+function spawnCheetah(){
+  const a=rand(0,Math.PI*2), r=rand(60,100);
+  return makeCheetah(clamp(player.pos.x+Math.cos(a)*r,-MAPR,MAPR),
+                     clamp(player.pos.z+Math.sin(a)*r,-MAPR,MAPR));
+}
+// Movement. Same swept anti-tunnel guard the dog and snakes use — mandatory here,
+// because at 45 the cheetah covers 2.25 units per clamped frame and a wall is 0.3
+// thick. segCrossesWall is EXACT (slab method, no sampling), so speed cannot defeat it.
+function cheetahStep(C, tx, tz, speed, dt){
+  speed *= waterSpeedMul(C.pos.x, C.pos.z)*brambleSpeedMul(C.pos.x, C.pos.z) * brambleSpeedMul(C.pos.x, C.pos.z);
+  const bx=C.pos.x, bz=C.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
+  if(d>0.001){ const step=Math.min(speed*dt,d); C.pos.x+=dx/d*step; C.pos.z+=dz/d*step; }
+  C.pos.x=clamp(C.pos.x,-HALF+1,HALF-1); C.pos.z=clamp(C.pos.z,-HALF+1,HALF-1);
+  if(segCrossesWall(bx,bz, C.pos.x,C.pos.z, CHEETAH.BODY_R)){ C.pos.x=bx; C.pos.z=bz; }
+  collideWalls(C.pos, CHEETAH.BODY_R); collideStoneWalls(C.pos, CHEETAH.BODY_R);
+  C.pos.y = terrainY(C.pos.x,C.pos.z); C.mesh.position.copy(C.pos);
+  const a=Math.atan2(tx-bx, tz-bz); let dd=a-C.heading;
+  while(dd>Math.PI)dd-=Math.PI*2; while(dd<-Math.PI)dd+=Math.PI*2;
+  C.heading += dd*Math.min(1, 3.0*dt); C.mesh.rotation.y = C.heading;
+  C._lastSpeed = speed;
+}
+// Is it inside its hunting window? Steven: "only in the middle of the day."
+function cheetahMidday(){
+  if(!dn.isDay) return false;
+  const p = dn.time/HALF_CYCLE;
+  return p >= CHEETAH.MIDDAY_LO && p <= CHEETAH.MIDDAY_HI;
+}
+function cheetahPickTarget(C){
+  let best=null, bd=CHEETAH.DETECT;
+  if(!playerOffGround() && player.health>0){
+    const d = Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z);
+    if(d<bd){ bd=d; best={pos:player.pos, kind:'player', ent:player}; }
+  }
+  preyMeshes.forEach(P=>{ if(P.health<=0 || P.species==='elephant') return;
+    const d=Math.hypot(P.pos.x-C.pos.x, P.pos.z-C.pos.z);
+    if(d<bd){ bd=d; best={pos:P.pos, kind:'prey', ent:P}; } });
+  return best;
+}
+function cheetahBite(C){
+  const t = C.target;
+  if(C.targetKind==='player'){
+    if(playerOffGround() || segHitsWall(C.pos.x,C.pos.z, player.pos.x,player.pos.z)) return;
+    player.health -= CHEETAH.BITE_DMG;
+    const ax=player.pos.x-C.pos.x, az=player.pos.z-C.pos.z, al=Math.hypot(ax,az)||1;
+    player.knockback.x=(ax/al)*10; player.knockback.z=(az/al)*10;
+    player.stunTimer = Math.max(player.stunTimer||0, 0.5);
+    shakeTime=Math.max(shakeTime,0.3); shakeAmt=0.008; playSound('spotted');
+    showKillfeed('🐆 The cheetah runs you down!');
+  } else if(t && t.health>0){
+    t.health -= CHEETAH.BITE_DMG; t.flashTimer=0.25; t.state='flee'; t.alertTimer=3;
+    t.lastHitBy=C; t.lastHitKind='cheetah';
+    if(t.health<=0) showKillfeed('🐆 The cheetah brings down a '+(t.label||'animal')+'!');
+  }
+}
+function updateCheetahs(dt){
+  if(gameState!=='playing') return;
+  const midday = cheetahMidday();
+  cheetahMeshes.forEach(C=>{
+    // gait
+    C.legPhase += dt*(2 + (C._lastSpeed||0)*0.30);
+    C.legs.forEach((l,i)=>{ l.position.y = (l.userData.baseY||0.39)
+      + Math.sin(C.legPhase + i*Math.PI/2)*(C.state==='SPRINT'?0.16:0.07); });
+    if(C.flashTimer>0){ C.flashTimer-=dt; const f=C.flashTimer>0;
+      C.mesh.children.forEach(c=>{ if(c.isMesh) c.material = f?FLASH_MAT:c.userData.origMat; }); }
+    // retaliation bookkeeping (mirrors every other predator)
+    if(C.health < C._prevHealth - 0.001 && C.lastHitBy) C.target = C.lastHitBy, C.targetKind = C.lastHitKind==='player'?'player':'prey';
+    C._prevHealth = C.health;
+    C.biteCd = Math.max(0, C.biteCd-dt);
+    C.cooldown = Math.max(0, C.cooldown-dt);
+    if((C.stunTimer||0) > 0){ C.stunTimer-=dt; return; }
+
+    // ---- SPRINT: the whole point of the animal ----
+    if(C.state==='SPRINT'){
+      C.sprintT -= dt;
+      const t = C.target;
+      const alive = C.targetKind==='player' ? (player.health>0 && !playerOffGround()) : (t && t.health>0);
+      if(C.sprintT<=0 || !alive){
+        C.state='REST'; C.target=null; C.cooldown=CHEETAH.SPRINT_COOLDOWN; C.restSpot=null;
+        return;
+      }
+      const tp = C.targetKind==='player' ? player.pos : t.pos;
+      const d = Math.hypot(tp.x-C.pos.x, tp.z-C.pos.z);
+      if(d > CHEETAH.MELEE_R) cheetahStep(C, tp.x, tp.z, CHEETAH.SPEED_SPRINT, dt);
+      else if(C.biteCd<=0){ cheetahBite(C); C.biteCd=CHEETAH.BITE_CD; }
+      return;
+    }
+    // ---- STALK: creep into range, then open the taps ----
+    if(C.state==='STALK'){
+      const t = C.target;
+      const alive = C.targetKind==='player' ? (player.health>0 && !playerOffGround()) : (t && t.health>0);
+      if(!midday || !alive || C.sprintsLeft<=0){ C.state='REST'; C.target=null; return; }
+      const tp = C.targetKind==='player' ? player.pos : t.pos;
+      const d = Math.hypot(tp.x-C.pos.x, tp.z-C.pos.z);
+      if(d < CHEETAH.STALK_RANGE){
+        C.state='SPRINT'; C.sprintT=CHEETAH.SPRINT_TIME; C.sprintsLeft--;
+        if(d < 60) showKillfeed('🐆 A cheetah explodes into a sprint!');
+      } else cheetahStep(C, tp.x, tp.z, CHEETAH.SPEED_STALK, dt);
+      return;
+    }
+    // ---- REST: the default. Lounges, ambles, ignores everything. ----
+    if(midday && C.sprintsLeft>0 && C.cooldown<=0){
+      const pick = cheetahPickTarget(C);
+      if(pick){ C.target = pick.ent; C.targetKind = pick.kind; C.state='STALK'; return; }
+    }
+    C.restT -= dt;
+    if(!C.restSpot || C.restT<=0){
+      C.restSpot = { x: clamp(C.pos.x+rand(-22,22),-MAPR,MAPR), z: clamp(C.pos.z+rand(-22,22),-MAPR,MAPR) };
+      C.restT = rand(6,14);
+    }
+    const s = C.restSpot;
+    if(Math.hypot(s.x-C.pos.x, s.z-C.pos.z) > 1.5) cheetahStep(C, s.x, s.z, CHEETAH.SPEED_REST, dt);
+    else C._lastSpeed = 0;
+  });
+  // dead-loop
+  for(let i=cheetahMeshes.length-1;i>=0;i--){
+    const C=cheetahMeshes[i];
+    if(C.health<=0){
+      spawnCarcass(C.pos.clone(), 70, 'cheetah');
+      killObj(C.mesh); cheetahMeshes.splice(i,1);
+      showKillfeed('🐆 The cheetah is down');
+    }
+  }
+}
+// Dawn: fresh legs. Steven's "once or twice a day" is enforced by this reset.
+function resetCheetahDay(){
+  cheetahMeshes.forEach(C=>{ C.sprintsLeft = 1 + ((Math.random()<0.5)?1:0); C.cooldown = 0; });
+}
+
+// =====================================================================
+//  🫐 BERRY BUSH  (2026-07-31)
+// =====================================================================
+// Steven: "add a berry bush which has prickles on it. It has five berries every day.
+// If you hit E with the berries you can eat them — not the best, but there's quite a
+// few of them around the map. And you can cut them down with an axe and make a bramble
+// fence, which is half the speed of animals going through it and does twenty damage."
+//
+// Modelled on the tree, not on a pickup: a bush is a permanent world fixture with a
+// per-day berry crop. Berries are child meshes that hide when picked and come back at
+// dawn — no spawning/disposal churn, and the crop count is just how many are visible.
+const BERRY = {
+  COUNT:      5,     // berries per bush per day
+  FOOD:      14,     // hunger restored per berry — "not the best"
+  REACH:    3.2,     // how close you must be to press [E]
+  BUSHES:   90,      // ~1 per 2800 m² of the 500×500 map — common, as asked
+  HP:        60,     // axe (42) fells a bush in 2 swings
+  YIELD:      3,     // bramble bundles per bush chopped
+};
+let brambleCount = 0;   // 🌿 harvested bramble, spent placing bramble fence (run-scoped like wood/rock)
+
+function makeBerryBush(x, z){
+  const g = new THREE.Group();
+  const y = terrainY(x,z);
+  g.position.set(x, y, z);
+  g.rotation.y = rand(0, Math.PI*2);
+  const leafM  = new THREE.MeshLambertMaterial({color:jcol(0x3f5a2a,0.06)});
+  const woodM  = new THREE.MeshLambertMaterial({color:0x4a3a28});
+  const thornM = new THREE.MeshLambertMaterial({color:0x6e6250});
+  const berryM = new THREE.MeshLambertMaterial({color:0x6a1b4d, emissive:0x1a0510});
+  // squat tangle of foliage lobes
+  for(let i=0;i<5;i++){
+    const r = rand(0.42,0.66);
+    const lobe = new THREE.Mesh(new THREE.SphereGeometry(r, 7, 6), leafM);
+    lobe.position.set(rand(-0.5,0.5), 0.42+rand(0,0.34), rand(-0.5,0.5));
+    lobe.scale.y = 0.8; lobe.castShadow = true; g.add(lobe);
+  }
+  // woody stems
+  for(let i=0;i<4;i++){
+    const st = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.07,0.7,5), woodM);
+    st.position.set(rand(-0.3,0.3), 0.35, rand(-0.3,0.3));
+    st.rotation.z = rand(-0.3,0.3); st.rotation.x = rand(-0.3,0.3); g.add(st);
+  }
+  // ⚠ PRICKLES — Steven asked for them explicitly. Thin cones poking out of the mass.
+  for(let i=0;i<14;i++){
+    const th = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.22, 4), thornM);
+    const a = rand(0,Math.PI*2), rr = rand(0.42,0.62);
+    th.position.set(Math.cos(a)*rr, 0.34+rand(0,0.5), Math.sin(a)*rr);
+    th.rotation.z = -Math.cos(a)*1.2; th.rotation.x = Math.sin(a)*1.2; g.add(th);
+  }
+  // the crop — kept as meshes so "how many are left" is just visibility
+  const berries = [];
+  for(let i=0;i<BERRY.COUNT;i++){
+    const b = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), berryM);
+    const a = (i/BERRY.COUNT)*Math.PI*2 + rand(-0.4,0.4), rr = rand(0.34,0.58);
+    b.position.set(Math.cos(a)*rr, 0.5+rand(0,0.42), Math.sin(a)*rr);
+    g.add(b); berries.push(b);
+  }
+  g.name = 'berrybush';
+  scene.add(g);
+  const bush = { mesh:g, pos:new THREE.Vector3(x,y,z), berries, hp:BERRY.HP, maxHp:BERRY.HP };
+  berryBushes.push(bush);
+  return bush;
+}
+function createBerryBushes(){
+  let placed = 0, att = 0;
+  while(placed < BERRY.BUSHES && att++ < BERRY.BUSHES*40){
+    const x = rand(-MAPR,MAPR), z = rand(-MAPR,MAPR);
+    if(wateringHole && Math.hypot(x-wateringHole.x, z-wateringHole.z) < wateringHole.r+2) continue;
+    if(berryBushes.some(b=>Math.hypot(b.pos.x-x, b.pos.z-z) < 7)) continue;
+    makeBerryBush(x,z); placed++;
+  }
+}
+function bushBerriesLeft(b){ let n=0; for(const m of b.berries) if(m.visible) n++; return n; }
+// [E] near a bush eats ONE berry. Returns true if it consumed a turn of the E key.
+function eatNearbyBerry(){
+  let best=null, bd=BERRY.REACH;
+  for(const b of berryBushes){
+    if(bushBerriesLeft(b) <= 0) continue;
+    const d = Math.hypot(b.pos.x-player.pos.x, b.pos.z-player.pos.z);
+    if(d < bd){ bd = d; best = b; }
+  }
+  if(!best) return false;
+  for(const m of best.berries) if(m.visible){ m.visible = false; break; }
+  player.hunger = clamp(player.hunger + BERRY.FOOD, 0, PLAYER.maxHunger);
+  showKillfeed('🫐 Ate a berry (+'+BERRY.FOOD+' food) — '+bushBerriesLeft(best)+' left on this bush');
+  playSound('collect');
+  return true;
+}
+// Dawn: every surviving bush grows its full crop back.
+function regrowBerries(){
+  let n=0;
+  for(const b of berryBushes) for(const m of b.berries) if(!m.visible){ m.visible = true; n++; }
+  if(n>0) showKillfeed('🫐 Berries have ripened overnight');
+}
+// Axe damage → chop the bush down for bramble.
+function damageBerryBush(b, dmg){
+  const i = berryBushes.indexOf(b);
+  if(i < 0) return false;
+  b.hp -= dmg;
+  if(b.hp > 0) return false;
+  berryBushes.splice(i,1);
+  for(let k=0;k<3;k++) spawnDustPuff(new THREE.Vector3(b.pos.x+rand(-0.8,0.8), b.pos.y, b.pos.z+rand(-0.8,0.8)));
+  killObj(b.mesh);
+  brambleCount += BERRY.YIELD;
+  bushesChoppedToday++;
+  showKillfeed('🌿 Cut the bush down — +'+BERRY.YIELD+' bramble ('+brambleCount+')');
+  return true;
+}
+let bushesChoppedToday = 0;
+function regrowBushes(){
+  const n = bushesChoppedToday; bushesChoppedToday = 0;
+  let grown=0, att=0;
+  while(grown < n && att++ < n*40){
+    const x = rand(-MAPR,MAPR), z = rand(-MAPR,MAPR);
+    if(wateringHole && Math.hypot(x-wateringHole.x, z-wateringHole.z) < wateringHole.r+2) continue;
+    if(berryBushes.some(b=>Math.hypot(b.pos.x-x, b.pos.z-z) < 7)) continue;
+    makeBerryBush(x,z); grown++;
+  }
+}
+
+// =====================================================================
 //  ROCKS
 // =====================================================================
 const ROCK_TINTS = [0x8f8f93, 0x7f7f84, 0xb39a6d, 0xc2ac7c, 0x46464c, 0x55524e]; // granite/sandstone/basalt
@@ -1726,7 +2063,7 @@ function registerControls(){
     if(e.code==='KeyC' && !e.repeat) _crouchDownT = performance.now();   // start timing — a brief C press = a tap (see keyup)
     if(e.code==='Space' && player.inTree) dropFromTree();   // drop off the branch
     if(e.code==='KeyF') throwRock();
-    if(e.code==='KeyE'){ if(!toggleNearestGate() && !eatNearbyCarcass()) doCollect(); }   // work a gate, else eat carcass, else collect
+    if(e.code==='KeyE'){ if(!toggleNearestGate() && !eatNearbyBerry() && !eatNearbyCarcass()) doCollect(); }   // gate → berry → carcass → collect
     if(e.code==='KeyQ') pouncePrey();                            // hunt: pounce on prey
   });
   document.addEventListener('keyup', e=>{
@@ -1999,8 +2336,9 @@ function updatePlayer(dt){
       if(keys['Space'] && !stunned) player.vel.y = WATER.SWIM_UP;
       else player.vel.y += (WATER.SINK - player.vel.y) * Math.min(1, dt*3);   // ease to a slow sink
     } else {
-      player.vel.x = move.x;
-      player.vel.z = move.z;
+      const bm = brambleSpeedMul(player.pos.x, player.pos.z);   // 🌿 half speed in a bramble
+      player.vel.x = move.x * bm;
+      player.vel.z = move.z * bm;
       // Gravity
       if(!player.onGround) player.vel.y += PLAYER.gravity * dt;
       // Jump
@@ -2721,7 +3059,7 @@ function updateLions(dt){
       speed = (L.isMale?3.0:3.6) * (0.5 + activity*0.8) * restF;
     }
     if(L.fedTimer > 0) speed *= 0.6;          // a full lion moves lazily
-    speed *= waterSpeedMul(L.pos.x, L.pos.z); // 💧 a third speed in the pool
+    speed *= waterSpeedMul(L.pos.x, L.pos.z)*brambleSpeedMul(L.pos.x, L.pos.z); // 💧 a third speed in the pool
     L._lastSpeed = speed;
 
     // Feeding: pressed against the player, the lion is eating → hunger drops.
@@ -3167,7 +3505,7 @@ function updatePrey(dt){
         if(wb>=0){ const wp=removeWallAt(wb); if(wp){ P.smashWallCd=0.8; playSound('place'); showKillfeed('🐘 An elephant smashed a wall');
           if(wp.distanceTo(player.pos)<18){ shakeTime=Math.max(shakeTime,0.25); shakeAmt=0.006; } } }
       }
-      P.pos.addScaledVector(dir, spd*waterSpeedMul(P.pos.x,P.pos.z)*dt);   // 💧
+      P.pos.addScaledVector(dir, spd*waterSpeedMul(P.pos.x, P.pos.z)*brambleSpeedMul(P.pos.x, P.pos.z)*dt);   // 💧
       P.pos.x=clamp(P.pos.x,-(HALF-1),HALF-1); P.pos.z=clamp(P.pos.z,-(HALF-1),HALF-1);
       collideWalls(P.pos,1.4);
       P.pos.y=terrainY(P.pos.x,P.pos.z); P.mesh.position.set(P.pos.x,P.pos.y,P.pos.z);
@@ -3221,7 +3559,7 @@ function updatePrey(dt){
     if(s.hop && P.state==='flee'){ P.hopPhase+=dt*6.5; hopY=Math.max(0,Math.sin(P.hopPhase))*0.55*s.size; }
     if(s.dust && P.state==='flee' && Math.random()<dt*3.5) spawnDustPuff(P.pos);
 
-    P.pos.addScaledVector(dir, speed*waterSpeedMul(P.pos.x,P.pos.z)*dt);   // 💧
+    P.pos.addScaledVector(dir, speed*waterSpeedMul(P.pos.x, P.pos.z)*brambleSpeedMul(P.pos.x, P.pos.z)*dt);   // 💧
     P.pos.x=clamp(P.pos.x,-(HALF-1),HALF-1); P.pos.z=clamp(P.pos.z,-(HALF-1),HALF-1);
     collideWalls(P.pos, 0.7);                       // don't run through walls
     P.pos.y=terrainY(P.pos.x,P.pos.z);
@@ -3712,7 +4050,7 @@ function gorillaFace(G, tx, tz, dt){
 
 // Step the gorilla toward an XZ target, clamp to the world, drop onto terrain.
 function gorillaMoveToward(G, tx, tz, speed, dt){
-  speed *= waterSpeedMul(G.pos.x, G.pos.z);   // 💧
+  speed *= waterSpeedMul(G.pos.x, G.pos.z)*brambleSpeedMul(G.pos.x, G.pos.z);   // 💧
   const dx = tx - G.pos.x, dz = tz - G.pos.z;
   const d = Math.hypot(dx, dz);
   if(d > 0.001){
@@ -4281,7 +4619,7 @@ function animateRhino(R, dt, gait){
 // Step toward (tx,tz): move, clamp to world, BLOCKED BY WALLS, drop to terrain,
 // smooth-face the heading. Returns true if a wall/edge stopped its progress.
 function rhinoStep(R, tx, tz, speed, dt, turn){
-  speed *= waterSpeedMul(R.pos.x, R.pos.z);   // 💧
+  speed *= waterSpeedMul(R.pos.x, R.pos.z)*brambleSpeedMul(R.pos.x, R.pos.z);   // 💧
   const bx=R.pos.x, bz=R.pos.z;
   const dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
   const dirx=d>0.001?dx/d:0, dirz=d>0.001?dz/d:0;
@@ -4611,7 +4949,7 @@ function faceDog(D, dx, dz, dt){
 // stopped on the near side, THEN collideWalls/collideStoneWalls resolve resting contact
 // (both wood AND stone — same as the lion/rhino wall pattern).
 function dogStep(D, tx, tz, speed, dt){
-  speed *= waterSpeedMul(D.pos.x, D.pos.z);   // 💧 a third speed in the pool
+  speed *= waterSpeedMul(D.pos.x, D.pos.z)*brambleSpeedMul(D.pos.x, D.pos.z);   // 💧 a third speed in the pool
   const bx=D.pos.x, bz=D.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
   if(d>0.001){ const step=Math.min(speed*dt,d); D.pos.x+=dx/d*step; D.pos.z+=dz/d*step; }
   D.pos.x=clamp(D.pos.x,-HALF+1,HALF-1); D.pos.z=clamp(D.pos.z,-HALF+1,HALF-1);
@@ -5542,7 +5880,7 @@ function faceSecretary(B, dx, dz, dt){
 }
 // Walk toward (tx,tz) with the same swept anti-tunnel wall guard the wild dog uses.
 function secretaryStep(B, tx, tz, speed, dt){
-  speed *= waterSpeedMul(B.pos.x, B.pos.z);   // 💧
+  speed *= waterSpeedMul(B.pos.x, B.pos.z)*brambleSpeedMul(B.pos.x, B.pos.z);   // 💧
   const bx=B.pos.x, bz=B.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
   if(d>0.001){ const step=Math.min(speed*dt,d); B.pos.x+=dx/d*step; B.pos.z+=dz/d*step; }
   B.pos.x=clamp(B.pos.x,-HALF+1,HALF-1); B.pos.z=clamp(B.pos.z,-HALF+1,HALF-1);
@@ -6425,7 +6763,7 @@ function faceSnake(S, dx, dz, dt){
 }
 // Move the head toward (tx,tz): swept anti-tunnel + wall collision (wood & stone), face.
 function snakeStep(S, tx, tz, spd, dt){
-  spd *= waterSpeedMul(S.pos.x, S.pos.z);     // 💧
+  spd *= waterSpeedMul(S.pos.x, S.pos.z)*brambleSpeedMul(S.pos.x, S.pos.z);     // 💧
   const bx=S.pos.x, bz=S.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
   if(d>0.001){ const step=Math.min(spd*dt,d); S.pos.x+=dx/d*step; S.pos.z+=dz/d*step; }
   S.pos.x=clamp(S.pos.x,-HALF+1,HALF-1); S.pos.z=clamp(S.pos.z,-HALF+1,HALF-1);
@@ -6491,6 +6829,7 @@ function updateCreatureVenom(dt){
     if(o.health > VENOM.FLOOR) o.health = Math.max(VENOM.FLOOR, o.health - (o.venomDps||0)*dt);
   };
   lionMeshes.forEach(tick); preyMeshes.forEach(tick); gorillaMeshes.forEach(tick);
+  cheetahMeshes.forEach(tick);
   rhinoMeshes.forEach(tick); dogMeshes.forEach(tick); skyVultureMeshes.forEach(tick);
   secretaryMeshes.forEach(tick);
   eagleMeshes.forEach(E=>{ if(!E.dying) tick(E); });
@@ -6568,6 +6907,7 @@ function pickSpitTarget(S){
   scan(secretaryMeshes, 'secretary', B=>!secretaryGrounded(B));       // its own predator — the fight cuts both ways
   scan(eagleMeshes, 'eagle', E=>!eagleGrounded(E));
   scan(preyMeshes, 'prey');
+  scan(cheetahMeshes, 'cheetah');
   scan(snakeMeshes, 'snake', O=>snakeRivalSkip(S, O));   // a rival species it can actually reach (see snakeTreedOutOfReach)
   // TREES last — only when nothing alive is in range. Living targets are urgent and
   // move; a tree is scenery that will still be there.
@@ -7011,6 +7351,7 @@ function snakeNightTarget(S){
   };
   scan(lionMeshes, 'lion');
   scan(dogMeshes, 'dog');
+  scan(cheetahMeshes, 'cheetah');
   scan(gorillaMeshes, 'gorilla', G=>G.state==='perched');   // one up a tree is out of reach
   scan(rhinoMeshes, 'rhino');
   // Its own predator, on the ground and in the dark — the cobra-vs-secretary-bird
@@ -8087,6 +8428,7 @@ function updateHealthBars(dt){
   };
   lionMeshes.forEach(step); preyMeshes.forEach(step);
   gorillaMeshes.forEach(step); rhinoMeshes.forEach(step); dogMeshes.forEach(step);
+  cheetahMeshes.forEach(step);
   skyVultureMeshes.forEach(step); snakeMeshes.forEach(step);
   eagleMeshes.forEach(step); secretaryMeshes.forEach(step);
 }
@@ -8248,6 +8590,7 @@ const COIN_PRICES = {
   kit_wall:       10,
   kit_grapple:    12,    // the tree escape — genuinely strong
   kit_gate:       12,
+  kit_bramble:     8,    // cheap to unlock; the real cost is chopping bushes for bramble
   swift_boots:    14,
   bone_talisman:  14,
   kit_spear:      15,
@@ -8389,6 +8732,7 @@ function useActiveAbility(){
   else if(id==='kit_wall'){      did = kitPlaceWall();      quiet = true; }
   else if(id==='kit_stonewall'){ did = kitPlaceStoneWall();quiet = true; }
   else if(id==='kit_gate'){      did = placeKitGate();     quiet = true; }
+  else if(id==='kit_bramble'){   did = kitPlaceBramble();  quiet = true; }
   else if(id==='kit_fire'){      did = kitPlaceCampfire();  quiet = true; }
   else if(id==='kit_axe'){       did = kitAxe();            quiet = true; }
   else if(id==='kit_hammer'){    did = kitHammer();         quiet = true; }
@@ -8666,6 +9010,105 @@ function placeKitWall(stone){
   playSound('place');
   return true;
 }
+// =====================================================================
+//  🌿 BRAMBLE FENCE  (2026-07-31)
+// =====================================================================
+// Steven: "you can cut them down with an axe and make a bramble fence, which is half
+// the speed of animals going through it, and it does twenty damage if they go through."
+//
+// ⚠ DELIBERATELY *NOT* A WALL. A wall BLOCKS; a bramble is a hazard you push THROUGH —
+// so it is kept out of wallMeshes/wallAABBs entirely (registering it would make it
+// solid and the "go through it" mechanic impossible). It gets its own array and its
+// own per-frame zone check.
+//
+// ⚠ IT HURTS THE PLAYER TOO — design call, flagged. Steven said "animals", but a
+// bramble that only bites animals is a free one-way wall with no downside, and the
+// game already has the right answer for getting through your own defences: a GATE.
+// Damage and slow are identical for everyone. One line to make it animals-only
+// (`if(e===player) return;` in the zone check) if he'd rather.
+const BRAMBLE = {
+  COST:      2,     // bramble bundles per fence (a chopped bush yields 3)
+  MAX:      40,
+  DMG:      20,     // Steven's number, per crossing
+  SPEED:   0.5,     // Steven's number — half speed inside
+  RADIUS:  1.5,     // effect radius around the fence centre
+  RECHARGE: 1.2,    // seconds before the same victim can be pricked again
+};
+function placeKitBramble(){
+  if(kitBrambles.length >= BRAMBLE.MAX){
+    showKillfeed('🌿 Bramble limit ('+BRAMBLE.MAX+') reached'); return false; }
+  if(brambleCount < BRAMBLE.COST){
+    showKillfeed('🌿 Need '+BRAMBLE.COST+' bramble (have '+brambleCount+') — chop a berry bush with the axe');
+    return false; }
+  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  const pos = player.pos.clone().addScaledVector(fwd, 2.5);
+  const gy = terrainY(pos.x, pos.z);
+  const g = new THREE.Group(); g.position.set(pos.x, gy, pos.z); g.rotation.y = yaw;
+  const vineM  = new THREE.MeshLambertMaterial({color:0x40361f});
+  const thornM = new THREE.MeshLambertMaterial({color:0x8a7a5e});
+  const leafM  = new THREE.MeshLambertMaterial({color:0x35471f});
+  // a low tangle: crossed vines, spiky, knee-to-waist high — clearly passable, clearly nasty
+  for(let i=0;i<7;i++){
+    const v = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05, rand(1.6,2.4), 5), vineM);
+    v.position.set(rand(-1.1,1.1), rand(0.25,0.75), rand(-0.12,0.12));
+    v.rotation.z = Math.PI/2 + rand(-0.5,0.5); v.rotation.y = rand(-0.4,0.4);
+    v.castShadow = true; g.add(v);
+  }
+  for(let i=0;i<18;i++){
+    const th = new THREE.Mesh(new THREE.ConeGeometry(0.04,0.26,4), thornM);
+    th.position.set(rand(-1.15,1.15), rand(0.2,0.9), rand(-0.16,0.16));
+    th.rotation.z = rand(-1,1); th.rotation.x = rand(-1,1); g.add(th);
+  }
+  for(let i=0;i<6;i++){
+    const lf = new THREE.Mesh(new THREE.SphereGeometry(rand(0.14,0.24),5,4), leafM);
+    lf.position.set(rand(-1.0,1.0), rand(0.3,0.8), rand(-0.14,0.14)); g.add(lf);
+  }
+  g.name = 'bramble';
+  scene.add(g);
+  kitBrambles.push({ mesh:g, pos:new THREE.Vector3(pos.x, gy, pos.z) });
+  brambleCount -= BRAMBLE.COST;
+  playSound('place');
+  return true;
+}
+// Is (x,z) inside any bramble? Returns the fence, or null. Used by the movement
+// multiplier and by the per-frame damage pass.
+function brambleAt(x, z){
+  for(let i=0;i<kitBrambles.length;i++){
+    const b = kitBrambles[i];
+    const dx = x-b.pos.x, dz = z-b.pos.z;
+    if(dx*dx + dz*dz < BRAMBLE.RADIUS*BRAMBLE.RADIUS) return b;
+  }
+  return null;
+}
+// Half speed inside a bramble. Folded into waterSpeedMul's callers via brambleSpeedMul
+// so every mover picks it up at the same nine sites the water rule uses.
+function brambleSpeedMul(x, z){ return brambleAt(x,z) ? BRAMBLE.SPEED : 1; }
+// Per-frame prick pass. Every entity standing in a bramble takes DMG, then goes on a
+// short cooldown so a slow crossing is a few pricks rather than 20 dmg every frame.
+function updateBrambles(dt){
+  if(gameState!=='playing' || !kitBrambles.length) return;
+  const prick = (e, isPlayer)=>{
+    if(!brambleAt(e.pos.x, e.pos.z)){ e._brambleCd = 0; return; }
+    e._brambleCd = (e._brambleCd||0) - dt;
+    if(e._brambleCd > 0) return;
+    e._brambleCd = BRAMBLE.RECHARGE;
+    if(isPlayer){
+      player.health -= BRAMBLE.DMG;
+      shakeTime = Math.max(shakeTime,0.18); shakeAmt = 0.005;
+      showKillfeed('🌿 The brambles tear at you! (-'+BRAMBLE.DMG+')');
+    } else {
+      e.health -= BRAMBLE.DMG; e.flashTimer = 0.2;
+    }
+  };
+  prick(player, true);
+  [lionMeshes, preyMeshes, dogMeshes, rhinoMeshes, gorillaMeshes,
+   snakeMeshes, secretaryMeshes, cheetahMeshes].forEach(list=>{
+    if(!list) return;
+    list.forEach(e=>{ if(e.health>0 && !e.dying) prick(e, false); });
+  });
+}
+function kitPlaceBramble(){ return placeKitBramble(); }
+
 function kitPlaceWall(){      return placeKitWall(false); }
 function kitPlaceStoneWall(){ return placeKitWall(true);  }
 
@@ -8885,6 +9328,7 @@ function nearestAnimalInFront(range, minDot){
   scan(gorillaMeshes,'gorilla', G=>G.state==='perched'||G.state==='sleeping');
   scan(rhinoMeshes,'rhino');
   scan(dogMeshes,'dog');
+  scan(cheetahMeshes,'cheetah');
   scan(skyVultureMeshes,'skyvulture', V=>(V.pos.y - terrainY(V.pos.x,V.pos.z)) > SKYV.MELEE_CEIL);   // melee only reaches it when low (landed / diving)
   scan(eagleMeshes,'eagle', E=>E.dying || (E.pos.y - terrainY(E.pos.x,E.pos.z)) > EAGLE.MELEE_CEIL); // …same for the eagle: only while it mantles or stoops low
   scan(secretaryMeshes,'secretary', B=>(B.pos.y - terrainY(B.pos.x,B.pos.z)) > SECR.GROUND_CEIL);    // it's a walker — only out of reach mid-escape-flight
@@ -8963,6 +9407,14 @@ function kitAxe(){
   // cut the tree down, you get one. If you cut it down you get like three to four."
   // So: [E] = 1 wood, tree stands (doCollect, unchanged). AXE = damage → topple →
   // TREE_FELL_WOOD. At 42 damage a swing that is 3 swings for a normal tree, 6 for a big one.
+  // Priority 0: a berry bush in reach — chop it for bramble.
+  { let bush=null, bd=3.4;
+    for(const b of berryBushes){ const d=Math.hypot(b.pos.x-player.pos.x, b.pos.z-player.pos.z);
+      if(d<bd){ bd=d; bush=b; } }
+    if(bush){
+      if(!damageBerryBush(bush, 42)) showKillfeed('🪓 Hacking at the bush…');
+      playSound('throw'); return true;
+    } }
   let tree=null, td=4.2;
   treeObjects.forEach(t=>{ const d=t.pos.distanceTo(player.pos); if(d<td){ td=d; tree=t; } });
   if(tree){
@@ -9514,6 +9966,7 @@ function dnState(t){
 // from just out of sight wherever you are on the big map.
 function spawnDailyWave(){
   for(let i=0;i<3 && lionMeshes.length    < 14;       i++) spawnLion(Math.random()<0.75?'lioness':'male');
+  for(let i=0;i<CHEETAH.PER_DAWN && cheetahMeshes.length < CHEETAH.MAX; i++) spawnCheetah();
   for(let i=0;i<2 && gorillaMeshes.length < GOR.MAX;  i++) spawnGorilla();
   for(let i=0;i<2 && rhinoMeshes.length   < RHINO.MAX;i++) spawnRhino();   // 2 rhinos/day (was 1)
   for(let i=0;i<DOG.PACK && dogMeshes.length < DOG.MAX;  i++) spawnWildDog();   // 10 wild dogs/day (cap 15)
@@ -9570,6 +10023,7 @@ function healAllAnimals(){
   // would make it effectively immortal — a permanent venom sprinkler. Leaving it
   // wounded is what keeps the counter-play honest: it stays out of your reach, you
   // stay able to finish it with a spear, bolt, rock or boomerang.
+  cheetahMeshes.forEach(C=>{ if(ok(C)) C.health=C.maxHealth; });
   snakeMeshes.forEach(S=>{ if(!S.dying && !S.turret && ok(S)) S.health=S.maxHealth; });
 }
 
@@ -9599,6 +10053,8 @@ function updateDayNight(dt){
   if(dn.isDay && !wasDay){                          // DAWN → a new day
     grantDailyCoins(dn.day);                        // paid for the day that JUST ENDED
     regrowTrees();                                  // 🌱 whatever was felled yesterday comes back
+    regrowBerries(); regrowBushes();                // 🫐 crops ripen; chopped bushes come back
+    resetCheetahDay();                              // 🐆 fresh legs: 1–2 sprints for the new day
     dn.day++;
     spawnDailyWave();                               // 3 lions, 2 gorillas, 2 rhinos
     showKillfeed('🌅 Day '+dn.day+' — fresh predators move in');
@@ -10026,6 +10482,10 @@ function resetGame(){
   [...gorillaMeshes].forEach(G=>killObj(G.mesh));
   [...rhinoMeshes].forEach(R=>killObj(R.mesh));
   [...dogMeshes].forEach(D=>killObj(D.mesh));
+  [...cheetahMeshes].forEach(C=>killObj(C.mesh));
+  // 🫐 berry bushes are SCENERY (like trees, which resetGame also leaves alone) — they
+  // survive a run. Only the player-built brambles come down.
+  [...kitBrambles].forEach(b=>killObj(b.mesh));
   [...skyVultureMeshes].forEach(V=>killObj(V.mesh));
   [...eagleMeshes].forEach(E=>killObj(E.mesh));
   [...secretaryMeshes].forEach(B=>killObj(B.mesh));
@@ -10050,6 +10510,11 @@ function resetGame(){
   gorillaMeshes.length = 0;
   rhinoMeshes.length = 0;
   dogMeshes.length = 0;
+  cheetahMeshes.length = 0;
+  kitBrambles.length = 0;
+  brambleCount = 0;
+  regrowBushes();     // replant anything chopped last run, then refill every crop
+  berryBushes.forEach(b=>b.berries.forEach(m=>m.visible=true));
   skyVultureMeshes.length = 0;
   eagleMeshes.length = 0;
   secretaryMeshes.length = 0;
@@ -10132,7 +10597,9 @@ function animate(){
   updatePrey(dt);             // herbivores: graze / herd / flee (Phase 6)
   updateGorillas(dt);         // territorial gorilla (Phase 7)
   updateRhinos(dt);           // neutral rhinos — roam, charge when provoked
-  updateWildDogs(dt);         // fast pack predator — hunt/roam, relentless vendetta if provoked
+  updateWildDogs(dt);
+  updateCheetahs(dt);         // 🐆 lounges all day, one or two lethal midday sprints
+  updateBrambles(dt);         // 🌿 prick anything standing in a bramble fence         // fast pack predator — hunt/roam, relentless vendetta if provoked
   updateSkyVultures(dt);      // high-cruising raptor — dives on smaller prey, never dies airborne
   updateMartialEagles(dt);    // 🦅 sky hunter — soar high on level wings, bank → stoop → strike → mantle → rebound
   updateSecretaryBirds(dt);   // 🦩 ground bird — strides solo, hunts serpents, hesitates then STOMPS
@@ -10170,6 +10637,7 @@ chooseWaterHole();        // ⚠ BEFORE createTerrain — the mesh must be built
 createTerrain();
 createSavanna();          // sky dome, hills, grass, dust, tall-grass clumps
 createTrees();
+createBerryBushes();      // 🫐 prickly bushes with a daily berry crop
 createRocks();
 createRockFormations();   // scenery boulders/standing stones/outcrops
 registerControls();
