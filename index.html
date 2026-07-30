@@ -44,6 +44,11 @@ body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-se
   border-radius:50%;border:2px solid rgba(255,255,255,0.3);overflow:hidden;background:#1a3a1a}
 #minimap canvas{position:static;inset:auto;z-index:auto;display:block;width:150px;height:150px}
 #vignette{position:fixed;inset:0;pointer-events:none;z-index:5}
+/* 💧 Underwater: a blue-green wash + soft edge darkening while the head is submerged. */
+#underwater{position:fixed;inset:0;pointer-events:none;z-index:6;display:none;
+  background:radial-gradient(circle at center, rgba(30,120,150,0.30) 0%, rgba(12,60,85,0.62) 78%)}
+#oxygen-wrap{width:240px;height:10px;background:rgba(0,0,0,0.45);border-radius:5px;overflow:hidden;display:none}
+#oxygen-bar{height:100%;width:100%;background:#4fc3f7;border-radius:5px}
 /* Rhino Crossbow scope (ADS): optic vignette + faint centred reticle. Below the HUD
    (z-10) so health/stamina still read through the scope; above the game vignette. */
 #scope{position:fixed;inset:0;pointer-events:none;display:none;z-index:8;
@@ -282,6 +287,7 @@ body.touch #crosshair{opacity:0.5}
     <button id="il-play" class="il-link">Or just play in the browser →</button>
   </div>
 </div>
+<div id="underwater"></div>
 <div id="vignette"></div>
 <div id="scope"><div id="scope-x"></div></div>
 <div id="hud">
@@ -294,6 +300,7 @@ body.touch #crosshair{opacity:0.5}
   <div id="bottombar">
     <div id="stamina-wrap"><div id="stamina-bar"></div></div>
     <div id="hunger-wrap"><div id="hunger-bar"></div></div>
+    <div id="oxygen-wrap"><div id="oxygen-bar"></div></div>
     <div id="health-wrap"><div id="health-bar"></div></div>
   </div>
   <div id="minimap"><canvas id="mm" width="150" height="150"></canvas></div>
@@ -616,10 +623,77 @@ function noise2d(x,z){
   return (Math.abs(s)+Math.abs(s2))*0.5;
 }
 
+// =====================================================================
+//  💧 WATER — a real hole in the ground you can swim in (2026-07-31)
+// =====================================================================
+// Steven: "make the water more graphic so there's actually a hole in the ground
+// that you can swim through and go underwater, and there's oxygen so you can drown…
+// all the animals go one third speed through the water… make sure there's a hole in
+// the ground so it's not just, like, a loading — I think it's water."
+//
+// He was right about the old one: it was a flat blue CircleGeometry sitting 0.09
+// ABOVE flat ground. A decal, not a pool.
+//
+// ⚠ THE WHOLE TRICK: the bowl is carved into `terrainY()` itself. That function is
+// the single source of truth for ground height — every animal, the player, walls,
+// trees, gates, projectiles and the terrain mesh all read it — so digging the hole
+// there makes it REAL for every system at once, with no per-system plumbing. The
+// terrain mesh samples terrainY, so it deforms; animals walk down the bank; a wall
+// built on the slope sits on the slope.
+const WATER = {
+  DEPTH:      4.2,    // bowl depth at the centre, below the surrounding ground
+  SURFACE:   -0.55,   // water plane, relative to the ground height at the hole centre
+  SPEED_MUL:  1/3,    // Steven: everything moves at a third speed in the water
+  OXY_MAX:    100,
+  OXY_DRAIN:  9,      // per second with your head under → ~11 s of breath
+  OXY_REFILL: 34,     // per second at the surface
+  DROWN_DPS:  9,      // health per second once the air is gone
+  SWIM_UP:    4.2,    // Space / jump swims you up
+  SINK:      -1.1,    // gentle negative buoyancy, so you drift down when idle
+};
+// Chosen BEFORE createTerrain() so the mesh is generated with the bowl already in it.
+let waterHole = null;   // { x, z, r, r2, depth } — read by terrainY on every call
+function chooseWaterHole(){
+  const r = rand(9,13);
+  waterHole = { x: rand(-HALF*0.5, HALF*0.5), z: rand(-HALF*0.5, HALF*0.5),
+                r, r2: r*r, depth: WATER.DEPTH };
+}
 function terrainY(x,z){
   // gentle rolling, flat-ish
-  return Math.sin(x*0.18)*0.6 + Math.cos(z*0.14)*0.5
-       + Math.sin(x*0.4+z*0.3)*0.25 - 0.4;
+  let y = Math.sin(x*0.18)*0.6 + Math.cos(z*0.14)*0.5
+        + Math.sin(x*0.4+z*0.3)*0.25 - 0.4;
+  // …then scoop the watering hole out of it. Squared-parabola falloff: a broad flat
+  // bottom and a rim that meets the surrounding ground at exactly zero offset, so
+  // there is no seam or cliff at the edge. Guarded with a squared-distance compare
+  // (no sqrt) because terrainY is one of the hottest functions in the file.
+  if(waterHole){
+    const dx = x-waterHole.x, dz = z-waterHole.z, d2 = dx*dx + dz*dz;
+    if(d2 < waterHole.r2){
+      const k = 1 - d2/waterHole.r2;          // 1 at centre → 0 at rim
+      y -= waterHole.depth * k * k;
+    }
+  }
+  return y;
+}
+// Water surface height in world space (constant across the pool).
+function waterSurfaceY(){
+  return waterHole ? (waterHole.groundY + WATER.SURFACE) : -1e9;
+}
+// Is this XZ inside the pool, and is `y` below the surface? Used by the player and
+// by every animal's movement for the one-third speed rule.
+function inWaterAt(x, z, y){
+  if(!waterHole) return false;
+  const dx = x-waterHole.x, dz = z-waterHole.z;
+  if(dx*dx + dz*dz > waterHole.r2) return false;
+  return y < waterSurfaceY();
+}
+// Movement multiplier for anything walking/swimming at (x,z). ONE call in each
+// animal's step so the rule is uniform: a third speed in the water, full on land.
+function waterSpeedMul(x, z){
+  if(!waterHole) return 1;
+  const dx = x-waterHole.x, dz = z-waterHole.z;
+  if(dx*dx + dz*dz > waterHole.r2) return 1;
+  return (terrainY(x,z) < waterSurfaceY()) ? WATER.SPEED_MUL : 1;
 }
 
 // In-game hour 0..24. dn.time 0 = dawn ≈ 05:00; HALF_CYCLE (120) = dusk ≈ 17:00.
@@ -922,7 +996,10 @@ function probeShadowSupport(){
 //  TERRAIN
 // =====================================================================
 function createTerrain(){
-  const geo = new THREE.PlaneGeometry(WORLD, WORLD, 200, 200);
+  // 200 → 300 segments (2.5 → 1.67 units per vertex). The watering hole is only ~22
+  // across, so at the old resolution the bowl was ~9 quads wide and read as a faceted
+  // funnel. 90k verts is still one static draw call.
+  const geo = new THREE.PlaneGeometry(WORLD, WORLD, 300, 300);
   geo.rotateX(-Math.PI/2);
   const pos = geo.attributes.position;
   for(let i=0;i<pos.count;i++){
@@ -970,20 +1047,73 @@ function createSavanna(){
 // A watering hole — the savanna's focal point. Animals (and the player) are
 // drawn here; lions drift in to drink and lie in ambush, especially at dusk.
 function createWateringHole(){
-  const x = rand(-HALF*0.5, HALF*0.5), z = rand(-HALF*0.5, HALF*0.5), r = rand(9,13);
-  const y = terrainY(x,z);
-  const grp = new THREE.Group(); grp.position.set(x, y, z);
-  // muddy/sandy shore ring (just above the ground plane so it's not occluded)
-  const shore = new THREE.Mesh(new THREE.CircleGeometry(r+1.4, 28),
-                  new THREE.MeshLambertMaterial({color:0x8a7448}));
-  shore.rotation.x = -Math.PI/2; shore.position.y = 0.04; grp.add(shore);
-  // water surface — sits a touch higher still so it reads as a pool
-  const water = new THREE.Mesh(new THREE.CircleGeometry(r, 28),
-                  new THREE.MeshLambertMaterial({color:0x2f74a0, transparent:true, opacity:0.9}));
-  water.rotation.x = -Math.PI/2; water.position.y = 0.09; water.renderOrder = 1; grp.add(water);
+  // Position/radius were fixed by chooseWaterHole() before the terrain was built —
+  // reuse them, or the pool would sit somewhere the ground was never dug.
+  const { x, z, r } = waterHole;
+  // `groundY` is the UNDUG ground height at the centre: sample just outside the rim,
+  // where the bowl term is zero, so the surface sits relative to the surrounding land
+  // rather than to the bottom of the hole it just carved.
+  const groundY = terrainY(x + r + 2.0, z);
+  waterHole.groundY = groundY;
+  const surfY = groundY + WATER.SURFACE;
+
+  const grp = new THREE.Group(); grp.position.set(x, 0, z);
   grp.name = 'waterhole';
+
+  // WET BANK: a ring of darker, damp sand following the bowl down to the waterline,
+  // so the transition from dry savanna to pool is a shore and not a hard edge.
+  const bankGeo = new THREE.RingGeometry(r*0.72, r+1.6, 40, 3);
+  bankGeo.rotateX(-Math.PI/2);
+  { const bp = bankGeo.attributes.position;
+    for(let i=0;i<bp.count;i++){
+      const vx = bp.getX(i)+x, vz = bp.getZ(i)+z;
+      bp.setY(i, terrainY(vx,vz) + 0.05);       // hug the carved ground
+    }
+    bankGeo.computeVertexNormals(); }
+  const bank = new THREE.Mesh(bankGeo, new THREE.MeshLambertMaterial({color:0x7d6540}));
+  bank.receiveShadow = true; grp.add(bank);
+
+  // SURFACE: a subdivided disc so updateWater() can ripple its vertices. Transparent
+  // and depthWrite:false so you can see the bank and the bottom through it, and so
+  // looking up from underwater reads as a lit ceiling rather than an opaque lid.
+  const wgeo = new THREE.CircleGeometry(r, 44, 6);
+  wgeo.rotateX(-Math.PI/2);
+  const wmat = new THREE.MeshLambertMaterial({ color:0x2e7d9a, transparent:true,
+                  opacity:0.72, depthWrite:false, side:THREE.DoubleSide });
+  const water = new THREE.Mesh(wgeo, wmat);
+  water.position.y = surfY; water.renderOrder = 2; grp.add(water);
+  water._base = Float32Array.from(wgeo.attributes.position.array);   // ripple reference
+
+  // FLOOR: darker silt disc just above the carved bottom, so the pool has a readable
+  // bed instead of showing the sandy savanna texture underwater.
+  const fgeo = new THREE.CircleGeometry(r*0.99, 40, 4);
+  fgeo.rotateX(-Math.PI/2);
+  { const fp = fgeo.attributes.position;
+    for(let i=0;i<fp.count;i++){
+      const vx = fp.getX(i)+x, vz = fp.getZ(i)+z;
+      fp.setY(i, terrainY(vx,vz) + 0.06);
+    }
+    fgeo.computeVertexNormals(); }
+  const floor = new THREE.Mesh(fgeo, new THREE.MeshLambertMaterial({color:0x3c4a3a}));
+  grp.add(floor);
+
   scene.add(grp);
-  wateringHole = { x, z, r, y, mesh:grp, water };
+  // wateringHole keeps its old shape ({x,z,r,y,mesh,water}) because ~14 existing call
+  // sites read it — grass exclusion, lion drinking, siesta spots, the minimap.
+  wateringHole = { x, z, r, y:groundY, mesh:grp, water, surfaceY:surfY };
+}
+// Cheap animated surface: two crossed sine waves walking across the disc. No shader,
+// no extra draw call — just the existing vertices nudged each frame.
+function updateWater(dt){
+  if(!wateringHole || !wateringHole.water) return;
+  const w = wateringHole.water, base = w._base;
+  if(!base) return;
+  const pos = w.geometry.attributes.position, t = elapsed;
+  for(let i=0;i<pos.count;i++){
+    const bx = base[i*3], bz = base[i*3+2];
+    pos.setY(i, Math.sin(bx*0.55 + t*1.5)*0.075 + Math.cos(bz*0.47 + t*1.1)*0.065);
+  }
+  pos.needsUpdate = true;
 }
 
 // Scatter tall-grass hide spots. These are the tactical heart of stealth
@@ -1554,6 +1684,7 @@ function initPlayer(){
     inTree: false, climbing: false,   // Phase 4 grapple/perch state
     _grappleCd: 0,                     // re-grapple cooldown after dropping
     hunger: PLAYER.maxHunger, _pounceCd: 0,   // Phase 6 food chain
+    oxygen: WATER.OXY_MAX, swimming:false,    // 💧 breath-hold while underwater
     poisonT: 0,                        // cobra venom: seconds left (see VENOM / updateHealth)
   };
   camera.position.copy(player.pos);
@@ -1848,12 +1979,25 @@ function updatePlayer(dt){
     if(dist > 0.5) player.vel.copy(toHook.normalize().multiplyScalar(14));
     else releaseGrapple();
   } else {
-    player.vel.x = move.x;
-    player.vel.z = move.z;
-    // Gravity
-    if(!player.onGround) player.vel.y += PLAYER.gravity * dt;
-    // Jump
-    if(keys['Space'] && player.onGround && !stunned){ player.vel.y = PLAYER.jumpForce; player.onGround = false; }
+    // 💧 SWIMMING. In the pool you move at a third speed, sink slowly, and Space
+    // swims you UP instead of jumping — so you can dive to the bottom and climb out.
+    // Gravity is replaced (not merely reduced) so there is no terminal-velocity
+    // plunge in 4 m of water.
+    const swimming = inWaterAt(player.pos.x, player.pos.z, player.pos.y);
+    player.swimming = swimming;
+    if(swimming){
+      player.vel.x = move.x * WATER.SPEED_MUL;
+      player.vel.z = move.z * WATER.SPEED_MUL;
+      if(keys['Space'] && !stunned) player.vel.y = WATER.SWIM_UP;
+      else player.vel.y += (WATER.SINK - player.vel.y) * Math.min(1, dt*3);   // ease to a slow sink
+    } else {
+      player.vel.x = move.x;
+      player.vel.z = move.z;
+      // Gravity
+      if(!player.onGround) player.vel.y += PLAYER.gravity * dt;
+      // Jump
+      if(keys['Space'] && player.onGround && !stunned){ player.vel.y = PLAYER.jumpForce; player.onGround = false; }
+    }
   }
 
   // Feet height BEFORE integrating — the swept wall-top test needs it (see wallSupportY).
@@ -1940,6 +2084,28 @@ function updatePlayer(dt){
 // =====================================================================
 //  HEALTH & DAMAGE
 // =====================================================================
+// 💧 OXYGEN. Drains only when your HEAD is under — the camera sits at eyeHeight, so
+// wading chest-deep is safe and only a real dive costs air. Refills fast at the
+// surface. At zero you take DROWN_DPS until you get a breath.
+function updateOxygen(dt){
+  if(gameState!=='playing') return;
+  const headY = player.pos.y + (player.crouching ? PLAYER.crouchHeight : PLAYER.eyeHeight);
+  const submerged = inWaterAt(player.pos.x, player.pos.z, headY);
+  if(submerged){
+    const was = player.oxygen;
+    player.oxygen = Math.max(0, player.oxygen - WATER.OXY_DRAIN*dt);
+    if(was > 0 && player.oxygen <= 0) showKillfeed('🫧 Out of air — you are drowning!');
+    if(player.oxygen <= 0){
+      player.health -= WATER.DROWN_DPS*dt;
+      shakeTime = Math.max(shakeTime, 0.15); shakeAmt = 0.004;
+    }
+  } else if(player.oxygen < WATER.OXY_MAX){
+    player.oxygen = Math.min(WATER.OXY_MAX, player.oxygen + WATER.OXY_REFILL*dt);
+  }
+  const uw = document.getElementById('underwater');
+  if(uw) uw.style.display = submerged ? 'block' : 'none';
+}
+
 function updateHealth(dt){
   if(gameState!=='playing') return;
   let nearLion = false;
@@ -2547,6 +2713,7 @@ function updateLions(dt){
       speed = (L.isMale?3.0:3.6) * (0.5 + activity*0.8) * restF;
     }
     if(L.fedTimer > 0) speed *= 0.6;          // a full lion moves lazily
+    speed *= waterSpeedMul(L.pos.x, L.pos.z); // 💧 a third speed in the pool
     L._lastSpeed = speed;
 
     // Feeding: pressed against the player, the lion is eating → hunger drops.
@@ -2992,7 +3159,7 @@ function updatePrey(dt){
         if(wb>=0){ const wp=removeWallAt(wb); if(wp){ P.smashWallCd=0.8; playSound('place'); showKillfeed('🐘 An elephant smashed a wall');
           if(wp.distanceTo(player.pos)<18){ shakeTime=Math.max(shakeTime,0.25); shakeAmt=0.006; } } }
       }
-      P.pos.addScaledVector(dir, spd*dt);
+      P.pos.addScaledVector(dir, spd*waterSpeedMul(P.pos.x,P.pos.z)*dt);   // 💧
       P.pos.x=clamp(P.pos.x,-(HALF-1),HALF-1); P.pos.z=clamp(P.pos.z,-(HALF-1),HALF-1);
       collideWalls(P.pos,1.4);
       P.pos.y=terrainY(P.pos.x,P.pos.z); P.mesh.position.set(P.pos.x,P.pos.y,P.pos.z);
@@ -3046,7 +3213,7 @@ function updatePrey(dt){
     if(s.hop && P.state==='flee'){ P.hopPhase+=dt*6.5; hopY=Math.max(0,Math.sin(P.hopPhase))*0.55*s.size; }
     if(s.dust && P.state==='flee' && Math.random()<dt*3.5) spawnDustPuff(P.pos);
 
-    P.pos.addScaledVector(dir, speed*dt);
+    P.pos.addScaledVector(dir, speed*waterSpeedMul(P.pos.x,P.pos.z)*dt);   // 💧
     P.pos.x=clamp(P.pos.x,-(HALF-1),HALF-1); P.pos.z=clamp(P.pos.z,-(HALF-1),HALF-1);
     collideWalls(P.pos, 0.7);                       // don't run through walls
     P.pos.y=terrainY(P.pos.x,P.pos.z);
@@ -3485,6 +3652,7 @@ function gorillaFace(G, tx, tz, dt){
 
 // Step the gorilla toward an XZ target, clamp to the world, drop onto terrain.
 function gorillaMoveToward(G, tx, tz, speed, dt){
+  speed *= waterSpeedMul(G.pos.x, G.pos.z);   // 💧
   const dx = tx - G.pos.x, dz = tz - G.pos.z;
   const d = Math.hypot(dx, dz);
   if(d > 0.001){
@@ -4053,6 +4221,7 @@ function animateRhino(R, dt, gait){
 // Step toward (tx,tz): move, clamp to world, BLOCKED BY WALLS, drop to terrain,
 // smooth-face the heading. Returns true if a wall/edge stopped its progress.
 function rhinoStep(R, tx, tz, speed, dt, turn){
+  speed *= waterSpeedMul(R.pos.x, R.pos.z);   // 💧
   const bx=R.pos.x, bz=R.pos.z;
   const dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
   const dirx=d>0.001?dx/d:0, dirz=d>0.001?dz/d:0;
@@ -4382,6 +4551,7 @@ function faceDog(D, dx, dz, dt){
 // stopped on the near side, THEN collideWalls/collideStoneWalls resolve resting contact
 // (both wood AND stone — same as the lion/rhino wall pattern).
 function dogStep(D, tx, tz, speed, dt){
+  speed *= waterSpeedMul(D.pos.x, D.pos.z);   // 💧 a third speed in the pool
   const bx=D.pos.x, bz=D.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
   if(d>0.001){ const step=Math.min(speed*dt,d); D.pos.x+=dx/d*step; D.pos.z+=dz/d*step; }
   D.pos.x=clamp(D.pos.x,-HALF+1,HALF-1); D.pos.z=clamp(D.pos.z,-HALF+1,HALF-1);
@@ -5312,6 +5482,7 @@ function faceSecretary(B, dx, dz, dt){
 }
 // Walk toward (tx,tz) with the same swept anti-tunnel wall guard the wild dog uses.
 function secretaryStep(B, tx, tz, speed, dt){
+  speed *= waterSpeedMul(B.pos.x, B.pos.z);   // 💧
   const bx=B.pos.x, bz=B.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
   if(d>0.001){ const step=Math.min(speed*dt,d); B.pos.x+=dx/d*step; B.pos.z+=dz/d*step; }
   B.pos.x=clamp(B.pos.x,-HALF+1,HALF-1); B.pos.z=clamp(B.pos.z,-HALF+1,HALF-1);
@@ -6194,6 +6365,7 @@ function faceSnake(S, dx, dz, dt){
 }
 // Move the head toward (tx,tz): swept anti-tunnel + wall collision (wood & stone), face.
 function snakeStep(S, tx, tz, spd, dt){
+  spd *= waterSpeedMul(S.pos.x, S.pos.z);     // 💧
   const bx=S.pos.x, bz=S.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
   if(d>0.001){ const step=Math.min(spd*dt,d); S.pos.x+=dx/d*step; S.pos.z+=dz/d*step; }
   S.pos.x=clamp(S.pos.x,-HALF+1,HALF-1); S.pos.z=clamp(S.pos.z,-HALF+1,HALF-1);
@@ -9482,6 +9654,15 @@ function updateHUD(){
     `<span style="color:#f1c40f">${COIN} Coins: ${progress.coins}</span><br>`+
     `🪨 Rocks: ${rockCount} &nbsp; 🪵 Wood: ${woodCount}`+mats;
 
+  // 💧 Oxygen bar — only shown while it matters (submerged, or refilling after a dive)
+  { const ow=document.getElementById('oxygen-wrap'), ob=document.getElementById('oxygen-bar');
+    if(ow && ob){
+      const show = player.oxygen < WATER.OXY_MAX - 0.01;
+      ow.style.display = show ? 'block' : 'none';
+      ob.style.width = (100*player.oxygen/WATER.OXY_MAX)+'%';
+      ob.style.background = player.oxygen < 25 ? '#e74c3c' : '#4fc3f7';
+    } }
+
   // Vignette
   const vig = document.getElementById('vignette');
   let shadow = 'none';
@@ -9865,9 +10046,11 @@ function animate(){
   updateWind(dt);
   updateDayNight(dt);
   updateWeather(dt);          // storm (after day/night — scales its lighting)
+  updateWater(dt);            // 💧 ripple the pool surface
   updateAbilities(dt);        // kit: cooldowns, timed buffs, EQUIP mods, fire-torch FX (before player/stealth read them)
   updatePlayer(dt);
   updateStealth(dt);
+  updateOxygen(dt);           // 💧 breath-hold / drowning (before health, so drown damage lands this frame)
   updateHealth(dt);
   updateHunger(dt);           // player hunger / starvation (Phase 6)
   updateLions(dt);
@@ -9908,6 +10091,7 @@ function animate(){
 //  BOOTSTRAP
 // =====================================================================
 initScene();
+chooseWaterHole();        // ⚠ BEFORE createTerrain — the mesh must be built with the bowl in it
 createTerrain();
 createSavanna();          // sky dome, hills, grass, dust, tall-grass clumps
 createTrees();

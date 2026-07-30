@@ -1964,4 +1964,62 @@ and both now mention the walkable top.
 Chrome (the Browser pane's compositor still returns black; see the verify memory). Shows the gold coins line,
 green `Buy (🪙N)` buttons, greyed-out unaffordable buys, and the double-gated `Buy (🪙40 + 1 🦴)` labels.
 
+
+## 💧 WATER — a real hole in the ground, swimming, oxygen, one-third speed (2026-07-31)
+Steven: *"make the water more graphic so there's actually a hole in the ground that you can swim through and go
+underwater, and there's oxygen so you can drown… all the animals go one third speed through the water… make
+sure there's a hole in the ground so it's not just, like, a loading — I think it's water."*
+
+**He was right about the old one.** It was a flat blue `CircleGeometry` sitting **0.09 above flat ground** — a
+decal, not a pool. Nothing was ever dug.
+
+### The approach: carve the bowl into `terrainY()` itself
+`terrainY(x,z)` is a pure analytic heightfield and **the single source of truth for ground height** — the
+terrain mesh, every animal, the player, walls, gates, trees and projectiles all read it. Digging the hole
+*there* makes it real for every system at once, with **zero per-system plumbing**: the mesh deforms, animals
+walk down the bank, a wall built on the slope sits on the slope.
+- Falloff is a **squared parabola** (`1 - d²/r²`, squared) → broad flat bottom, and the rim meets the
+  surrounding ground at **exactly zero offset**. Measured rim discontinuity: **0.000**. No seam, no cliff.
+- Guarded by a **squared-distance** compare (no `sqrt`) because `terrainY` is one of the hottest functions in
+  the file.
+- ⚠ `chooseWaterHole()` runs **before `createTerrain()`** in the bootstrap — the mesh has to be generated with
+  the bowl already in it, and the pool visuals reuse the same descriptor so they can't drift apart.
+- Terrain resolution **200 → 300 segments** (2.5 → 1.67 units/vertex): the hole is only ~22 across, so at the
+  old resolution the bowl was ~9 quads wide and read as a faceted funnel. 90,601 verts, still one static draw.
+
+### Visuals (no shader, no extra draw calls)
+Wet **bank** ring whose vertices hug the carved ground, a **rippling surface** (two crossed sines walking
+across the existing disc vertices in `updateWater`, `depthWrite:false` so you can see through it and it reads
+as a lit ceiling from below), and a darker **silt floor** so the pool has a bed instead of showing savanna
+sand. Plus a DOM `#underwater` blue-green wash while the head is submerged.
+
+### Swimming + oxygen
+- In the pool: **⅓ move speed**, gravity **replaced** (not merely reduced) with a gentle sink, and **Space
+  swims you up** — so you can dive to the bottom and climb out.
+- Oxygen drains only when the **HEAD** is under (camera at eyeHeight), so wading chest-deep is free and only a
+  real dive costs air. `OXY_DRAIN 9/s` → **~11 s of breath**; refill 34/s; `DROWN_DPS 9`.
+- Oxygen bar appears under the health/stamina/hunger bars **only while it matters** (submerged or refilling).
+
+### The ⅓-speed rule — 9 call sites, one helper
+`waterSpeedMul(x,z)` is applied in `dogStep`, `snakeStep`, `secretaryStep`, `gorillaMoveToward`, `rhinoStep`,
+both prey movement branches, the lion's inline speed, and the player. One rule, uniform.
+
+### Verified
+| check | result |
+|---|---|
+| hole is real in `terrainY` | configured depth 4.2 → **measured 4.20**; rim discontinuity **0.000**; water **4.56 deep** at centre |
+| terrain **mesh** deformed | lowest vertex in the bowl **−4.99** vs undug ground −0.76 |
+| dive → drown | breath held **11.3 s** (expected 11.1), overlay shows, HP then falls |
+| **can you get out?** | from the bottom with **0 oxygen**: head above water at **0.6 s**, clear of the pool at **1.9 s**, oxygen back to 100, survived |
+| refill on land | 0 → 100, overlay hidden |
+| ⅓ speed, player | 1.000 dry vs **0.333** in the pool |
+| ⅓ speed, a real lion | measured **19.42 → 6.47 units/s = ratio 0.33** |
+- 0 console errors.
+
+### ⚠ Method note for future sessions
+An earlier edit batch silently lost three changes: the python helper wrote the file **once at the end**, so an
+assertion failure on the last substitution discarded every earlier substitution in that batch — including a
+whole function — while still printing "ok" for them. `updateOxygen` was simply absent and only surfaced as a
+`ReferenceError` under test. **Write after every substitution**, not once per batch.
+
 Each phase is an independent commit so it can be iterated in isolation.
