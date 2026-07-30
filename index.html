@@ -5556,7 +5556,13 @@ const COBRA_COLORS = [
     mm:'#7a3fc0', mmHot:'#c48cff', venom:0xc48cff },
   // ⚠ THE RARE ONE — 5%. Warm brass scales, bright gilt belly, and the only morph
   // that is genuinely bright rather than a dark animal with a coloured belly.
-  { id:'gold',     label:'GOLD',         weight:5,
+  // ⚠ …and the only one that is not purely cosmetic: `hp` overrides the variant's
+  // baseline, so a gold cobra is a 1500-HP BOSS (2026-07-30g, Steven's call) against
+  // everyone else's 700. Nothing else about it differs — bite, venom, speed,
+  // territory, night hunt, siesta, turret threshold are all the shared cobra values.
+  // A morph without an `hp` field falls through to SNAKE_VARIANTS.cobra.HEALTH, so
+  // retuning the ordinary cobra still moves the other four together.
+  { id:'gold',     label:'GOLD',         weight:5, hp:1500,
     texBase:'#1a1204', texLit:'#c79a1e', texMid:'#6e4e08', rim:'190,150,40',
     tint:0xd8b45c, belly:0x8a6408, spot:0x4a3402, emis:0x120c02, spec:0x9a7a28,
     mm:'#d8a81e', mmHot:'#ffe066', venom:0xffe066 },
@@ -5663,6 +5669,11 @@ function makeSnake(x, z, variantKey){
   const tongueM = new THREE.MeshLambertMaterial({color:cobra?0x0d0508:0x8a2b2b, transparent:true, opacity:1});
 
   const ty = terrainY(x,z);
+  // Starting HP: the colour morph may OVERRIDE the variant baseline (only the gold
+  // cobra does, at 1500 vs 700). Falls back to v.HEALTH rather than a literal, so
+  // SNAKE_VARIANTS stays the single source of truth for every un-overridden morph
+  // and for python/worm. Growth never touches this — see the note on `growth`.
+  const hp0 = (pal && pal.hp != null) ? pal.hp : v.HEALTH;
   const S = {
     mesh:group, segs:[], v, matA, matB, matBlot,
     // Colour morph, rolled once above and fixed for life (null on python/worm).
@@ -5671,7 +5682,7 @@ function makeSnake(x, z, variantKey){
     colour: pal, mm: pal ? pal.mm : null, mmHot: pal ? pal.mmHot : null,
     mats:[matA, matB, matBlot, dark, tongueM, eyeM, spotM, fangM].filter(Boolean),   // every one is faded by the death collapse
     pos:new THREE.Vector3(x, ty+0.5, z),        // o.pos = HEAD (drives hitbox/aim/minimap)
-    health:v.HEALTH, maxHealth:v.HEALTH, _prevHealth:v.HEALTH,
+    health:hp0, maxHealth:hp0, _prevHealth:hp0,   // morph-driven (gold = 1500); see hp0 above
     heading:rand(0,Math.PI*2), biteCd:rand(0,v.BITE_CD), flashTimer:0, stunTimer:0,
     target:null, targetKind:null, aggroTimer:0, _preyTarget:null,
     wanderDir:new THREE.Vector3(rand(-1,1),0,rand(-1,1)).normalize(), wanderTimer:rand(2,5),
@@ -6128,7 +6139,9 @@ function spawnVenomSpit(S, tgt){
   venomSpits.push({ mesh:m, mat:m.material, pos:from.clone(),
                     vel:dir.multiplyScalar(SNAKE.SPIT_SPEED),
                     dmg:SNAKE.SPIT_DMG,          // flat — growth scales BITES (snakeBiteDmg), not the spray
-                    src:S, icon:S.v.icon, dist:0 });
+                    // srcKey is carried separately from src so the "don't poison your
+                    // own kind" rule below survives the shooter dying mid-flight.
+                    src:S, srcKey:S.v.key, icon:S.v.icon, dist:0 });
   S._spitFlare = SNAKE.SPIT_FLARE;               // the hood is already up; hold it there so the spit reads
 }
 
@@ -6172,7 +6185,13 @@ function updateVenomSpits(dt){
       done = tryHit(lionMeshes) || tryHit(dogMeshes) || tryHit(preyMeshes) || tryHit(rhinoMeshes)
           || tryHit(gorillaMeshes, G=>G.state==='perched')
           || tryHit(secretaryMeshes, B=>!secretaryGrounded(B))
-          || tryHit(snakeMeshes, O=>O.state==='AMBUSH_COIL');
+          // …and never its OWN species. pickSpitTarget already refuses to AIM at one,
+          // so a blob clipping a same-variant bystander in flight was the two paths
+          // disagreeing, not a design choice — and it mattered: the venom floors any
+          // maxHealth to 1 HP in 60 s, so one stray blob from an ordinary cobra
+          // reduced a 1500-HP GOLD cobra to a husk. Keyed off srcKey, not src, so it
+          // still holds after the shooter dies mid-flight.
+          || tryHit(snakeMeshes, O=>O.state==='AMBUSH_COIL' || O.v.key===p.srcKey);
     }
     // Splashed on the dirt, or out of range.
     if(!done && (p.pos.y <= terrainY(p.pos.x,p.pos.z)+0.06 || p.dist > SNAKE.SPIT_R*1.6)) done = true;

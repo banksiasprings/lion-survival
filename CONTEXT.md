@@ -1401,4 +1401,49 @@ light, gamma-matched. Two problems were visible on the first pass and fixed by l
   (d) no gameplay numbers touched — a gold cobra is exactly as dangerous as a black one, the morph is purely
   cosmetic plus identification.
 
+
+## Gold cobra = 1500 HP boss (2026-07-30g)
+Steven: *"keep everything else the same, but just the gold cobra, make it have one thousand five hundred health."*
+
+- **Where the HP init reads from — morph-driven, not inlined.** `COBRA_COLORS`' gold entry gained an optional
+  **`hp:1500`**; `makeSnake` computes `const hp0 = (pal && pal.hp != null) ? pal.hp : v.HEALTH;` and the S
+  literal is now `health:hp0, maxHealth:hp0, _prevHealth:hp0`. There is **no `health:v.HEALTH` left in the
+  file** (grep-verified).
+  - **Falls back to `v.HEALTH`, not to a literal 700** as the brief sketched. Same reason the territory lives
+    on the instance: `SNAKE_VARIANTS.cobra.HEALTH` stays the single source of truth, so retuning the ordinary
+    cobra later still moves the other four morphs together instead of silently diverging from a hard-coded 700.
+- **Verified per morph** (forced spawn of each): gold **1500/1500**, acid / black / crimson / violet all
+  **700/700**, python **1000** and worm **500** untouched. Bite 20, `BITE_CD` 0.5, speed 14 and
+  `RETREAT_HP` 100 identical across all five — only the pool differs.
+  - Kill counts for gold: **19 spears** (`SPEAR_DMG` 80) / 30 bolts / 15 boomerangs / ~100 rocks, and it must
+    shed **1400 HP** before the turret threshold. Reheal restores the full 1500; the turret still converts at
+    95 HP (verified → `AMBUSH_COIL` + `turret`, height 4.28).
+  - **Gold is now the tankiest animal in the game**, above the sand python's 1000 (was: python). Flagged, not
+    tuned — it is the boss framing Steven asked for.
+- **⚠ THE GROWTH-CAP ANSWER (Steven asked directly): growth never touches HP for ANY serpent.**
+  `addSnakeSegment` contains no reference to `health`/`maxHealth` — growth adds a segment and `snakeBiteDmg`
+  adds +1 per growth to the BITE. Drove a gold cobra to the `SEG_MAX 50` cap: segments **14 → 50**, bite
+  **20 → 56**, `maxHealth` **1500 → 1500** (`HP_NEVER_GREW: true`), with 54 further adds rejected by the cap.
+  So it ends up the **longest and hardest-hitting** serpent, exactly like any other morph's growth curve, but
+  its health advantage is a **flat +800 that never compounds** — which is a slightly different thing from the
+  brief's "would end up biggest and toughest", and worth knowing before tuning further.
+- **⚠ Real hole found and closed — a stray venom blob trivialised the boss.** `pickSpitTarget` already refuses
+  to AIM at the same variant, but `updateVenomSpits`' creature hit-test did **not** exclude it, so a blob
+  already in flight from an ordinary cobra could clip a gold one — and `applyCreatureVenom` scales to the
+  victim's own maxHealth, flooring **1500 HP to 1 in 60 s** (measured `venomDps` 24.98). One stray blob would
+  have reduced the new boss to a husk. The two paths disagreeing was an inconsistency, not a design choice, so
+  the in-flight test now skips `O.v.key===p.srcKey`. **`srcKey` is carried on the blob separately from `src`**
+  so the rule still holds after the shooter dies mid-flight.
+  - Verified: cobra→cobra blob **passes through** (1500 → 1500, unpoisoned); cobra→**python** still lands
+    (1000 → 992 + venom); **player** still hit (100 → 92 + venom).
+  - ⚠ Test-artifact note for future sessions: a first "player not hit" reading was **my test's fault**, not a
+    regression — a python left standing on the player's exact coordinates absorbed the blob one frame earlier,
+    because the creature radius is `(hitR||1.2) + SPIT_HIT_R*0.6` while the player's is a flat `SPIT_HIT_R`
+    1.5. Re-run in isolation, the player is hit normally.
+- **Verified live:** 180 s ecosystem soak with a gold + a black cobra + python + worm — **0 errors, 0 NaN,
+  0 console errors**; the gold one held **1500/1500**, grew **14 → 20 segments**, `maxHealth` never moved, and
+  ran the normal `CRUISE → NIGHT_HUNT` cycle. **0 scene / 0 geometries / 0 textures** leaked across 3
+  gold-specific spawn → grow → death-collapse cycles. The floating HP bar is the unchanged 256×44 canvas and
+  `"1500/1500"` is the same 9 characters the python's `"1000/1000"` has always rendered.
+
 Each phase is an independent commit so it can be iterated in isolation.

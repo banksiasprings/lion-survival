@@ -365,6 +365,17 @@ bite** as any other kill, so a serpent that wins a civil war comes out of it big
   | **dark-violet** | deep purple with an ochre spectacle | 23.75% |
   | **✨ GOLD** | brass scales, bright gilt belly — announces itself in the killfeed | **5% — rare** |
 
+  **⚠ THE GOLD ONE IS A BOSS: 1500 HP, not 700.** It is the only morph that isn't purely cosmetic, and at
+  1500 it is now the **single tankiest animal in the game** — above the sand python's 1000. That's
+  **19 spears / 30 bolts / 15 boomerangs / ~100 rocks** to bring down, and it has to lose **1400 HP** before
+  the low-HP tree-turret ever triggers. Everything else about it is an ordinary cobra: same bite 20 on a 0.5 s
+  cooldown, same venom, same speed 14, same territory, night hunt, siesta and drop-ambush. If a gold one
+  claims the quarter of the map you live in, move.
+
+  **Growth does not make any serpent tankier** — it adds length and **+1 damage to every bite** (capped at 50
+  segments / bite 56), and never touches HP. So a gold cobra ends up the **longest and hardest-hitting**
+  serpent on the map, but its health advantage is a flat +800 that never compounds.
+
 - **Near-black scaled body over a blue ventral stripe** *(the `black` morph — see the table above)*, amber
   eyes, a flat wedge of a head, and a **hood
   that FLARES** — a spade-shaped blue membrane, black-rimmed, with two ochre spectacle spots and a dark
