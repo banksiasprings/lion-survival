@@ -502,6 +502,8 @@ const SHOP_ITEMS = [
     desc:'Hurl a flint spear — heavy damage at range, no crafting needed. 3s cooldown.', cd:3 },
   { id:'kit_wall',    type:'ability', icon:'🪵', name:'Palisade Wall',
     desc:'Drop a permanent wooden barrier in front of you for cover (up to 50 up at once). Costs 2 wood. Walkable on top. No cooldown.', cd:0 },
+  { id:'kit_roof',    type:'ability', icon:'🏠', name:'Roof',
+    desc:'Raise a flat platform over your head. Shelter under it — it turns away eagle and vulture dives from directly above — or climb on top and walk it like a wall. Must be standing on something solid: no mid-air bases. Costs 6 wood. No cooldown.', cd:0 },
   { id:'kit_bramble', type:'ability', icon:'🌿', name:'Bramble Fence',
     desc:'Plant a tangle of thorns. Anything crossing it — you included — is slowed to HALF speed and torn for 20. It does NOT block, it punishes. Costs 2 bramble: chop a berry bush with the axe. No cooldown.', cd:0 },
   { id:'kit_gate',    type:'ability', icon:'🚪', name:'Palisade Gate',
@@ -548,7 +550,8 @@ let kitWalls  = [];                 // { mesh } permanent Palisade Wall chunks (
 let kitGates  = [];                 // { mesh, swing, open } hinged Palisade Gates — see the gate module
 let berryBushes = [];               // 🫐 { mesh, pos, berries[], picked } — see the berry module
 let cheetahMeshes = [];             // 🐆 the fastest thing alive — see the cheetah module
-let kitBrambles = [];               // 🌿 { mesh } bramble fences (mesh also lives in wallMeshes? NO — see module)
+let kitBrambles = [];               // 🌿 bramble fences — NOT in wallMeshes (they slow, they don't block)
+let kitRoofs   = [];                // 🏠 { mesh, aabb } flat walkable roofs — see the roof module
 let kitSwings = [];                 // { mesh, t } transient Hand Axe swing arcs — self-dispose
 let skyHammers = [];                // { grp,... } Hammer "from the sky" VFX — fall, impact, fade
 let _impactFlashes = [];            // { mesh,mat,life } bright ground bursts under a landing sky hammer
@@ -825,8 +828,11 @@ const WALL_STEP_UP      = 0.7;
 // idea as the wild-dog / snake anti-tunnel checks.)
 function wallSupportY(x, z, feetY, prevFeetY, vy){
   let top = -Infinity;
-  for(let i=0;i<wallAABBs.length;i++){
-    const a = wallAABBs[i];
+  // ⚠ Walls AND roofs. Roof tops are walkable via the very same rules — step-up,
+  // swept catch, everything — so they are simply appended to the list this walks.
+  const boxes = wallAABBs.concat(kitRoofs.map(r=>r.aabb));
+  for(let i=0;i<boxes.length;i++){
+    const a = boxes[i];
     if(x < a.min.x-WALL_STAND_MARGIN || x > a.max.x+WALL_STAND_MARGIN) continue;
     if(z < a.min.z-WALL_STAND_MARGIN || z > a.max.z+WALL_STAND_MARGIN) continue;
     const standing = a.max.y <= feetY + WALL_STEP_UP;
@@ -847,8 +853,9 @@ function wallSupportY(x, z, feetY, prevFeetY, vy){
 // (2) near a wall's end-cap the nearest-point vector points DIAGONALLY, so it shoved
 // you into the neighbouring wall, which shoved back — the pinball Steven hit.
 function pushPlayerOutOfWalls(){
-  for(let i=0;i<wallAABBs.length;i++){
-    const a = wallAABBs[i];
+  const boxes = wallAABBs.concat(kitRoofs.map(r=>r.aabb));   // ⚠ roofs are solid to walk into, too
+  for(let i=0;i<boxes.length;i++){
+    const a = boxes[i];
     if(player.pos.y >= a.max.y - WALL_STEP_UP) continue;       // on top, or a step up → it's a floor
     pushOutOfAABB(player.pos, a, PLAYER_WALL_R);                // the one shared MTV primitive
   }
@@ -5264,9 +5271,19 @@ function vulturePickLanding(V){
 }
 
 // Land a dive strike on whatever the bird was targeting, then it climbs straight back.
+// ⚠ ROOF = OVERHEAD COVER (design call, 2026-07-31). A dive from directly above is
+// refused if a roof is between the diver and the target. Chosen over "roofs do nothing
+// to birds" because overhead cover is the whole point of a roof, and over "birds can
+// never see you" because you are still exposed the moment you step out from under it —
+// the roof protects the tile you are standing on, not you.
+function roofBlocksDive(T){
+  const p = T === player ? player.pos : T.pos;
+  return roofOverhead(p.x, p.z, p.y + 0.5);
+}
 function vultureStrike(V, T){
   const kind=V.targetKind;
   if(!T || T.health<=0) return;
+  if(roofBlocksDive(T)){ showKillfeed('🏠 The roof turns the dive away'); return; }
   T.flashTimer=0.25;
   if(kind==='player'){
     if(playerOffGround()) return;
@@ -5565,6 +5582,7 @@ function eagleTargetValid(E){
 function eagleStrike(E, T){
   const kind=E.targetKind;
   if(!T) return false;
+  if(roofBlocksDive(T)){ showKillfeed('🏠 The roof turns the stoop away'); return false; }
   if(kind==='player'){
     if(playerOffGround()) return false;
     player.health -= EAGLE.STRIKE_DMG;
@@ -8591,6 +8609,7 @@ const COIN_PRICES = {
   kit_grapple:    12,    // the tree escape — genuinely strong
   kit_gate:       12,
   kit_bramble:     8,    // cheap to unlock; the real cost is chopping bushes for bramble
+  kit_roof:       16,    // vertical building — shelter + a vantage point
   swift_boots:    14,
   bone_talisman:  14,
   kit_spear:      15,
@@ -8733,6 +8752,7 @@ function useActiveAbility(){
   else if(id==='kit_stonewall'){ did = kitPlaceStoneWall();quiet = true; }
   else if(id==='kit_gate'){      did = placeKitGate();     quiet = true; }
   else if(id==='kit_bramble'){   did = kitPlaceBramble();  quiet = true; }
+  else if(id==='kit_roof'){      did = kitPlaceRoof();     quiet = true; }
   else if(id==='kit_fire'){      did = kitPlaceCampfire();  quiet = true; }
   else if(id==='kit_axe'){       did = kitAxe();            quiet = true; }
   else if(id==='kit_hammer'){    did = kitHammer();         quiet = true; }
@@ -9108,6 +9128,76 @@ function updateBrambles(dt){
   });
 }
 function kitPlaceBramble(){ return placeKitBramble(); }
+
+// =====================================================================
+//  🏠 ROOF  (2026-07-31) — a flat walkable platform placed over your feet
+// =====================================================================
+// Steven: "add roofs — when you activate it and click it, it spawns right under your
+// feet… make sure you can't just jump in the air and click it to make a floating base,
+// because that'd be cheating." Then on the scoped version: "Do B. But make sure I can
+// still walk on the roof."
+//
+// SCOPE (his call): standalone roofs. Walls CANNOT be placed on a roof yet — that
+// stacked-collision refactor is a future session. What IS here: placed over your feet,
+// WALKABLE on top, blocks dive attacks from directly above, and impossible to place
+// in mid-air.
+//
+// ⚠ WALKABILITY IS FREE. Roofs carry their own AABB, and `wallSupportY` /
+// `pushPlayerOutOfWalls` were generalised to iterate walls AND roofs — so a roof top
+// uses the exact same walkable-surface primitive as a wall top (c57e684): the same
+// 0.7 step-up, the same swept anti-fall-through guard, the same MTV ejection.
+const ROOF = {
+  SIZE: 4.4, THICK: 0.28, MAX: 30,
+  COST: { wood: 6 },
+  CLEARANCE: 2.3,   // headroom: it sits this far above your feet, so you can stand under it
+};
+// ⚠ THE ANTI-CHEAT GUARD, and it is one flag. A roof may only go up while you are
+// STANDING on something — ground, a wall top, or another roof. `player.onGround` is
+// exactly that signal: the ground snap sets it only when the feet rest on the resolved
+// floor, and it is false for every frame of a jump or a fall. Same flag that already
+// decides whether you may jump, so "no floating bases" can't drift out of sync with it.
+function roofPlacementBlocked(){
+  if(!player.onGround) return 'You must be standing on something solid — no roofs in mid-air';
+  if(player.inTree)    return 'Not while up a tree';
+  if(grapple.active)   return 'Not while grappling';
+  if(player.swimming)  return 'Not while swimming';
+  return null;
+}
+function placeKitRoof(){
+  const blocked = roofPlacementBlocked();
+  if(blocked){ showKillfeed('🏠 '+blocked); return false; }
+  if(kitRoofs.length >= ROOF.MAX){ showKillfeed('🏠 Roof limit ('+ROOF.MAX+') reached'); return false; }
+  if(woodCount < ROOF.COST.wood){
+    showKillfeed('🏠 Need '+ROOF.COST.wood+' wood (have '+woodCount+')'); return false; }
+  const y = player.pos.y + ROOF.CLEARANCE;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(ROOF.SIZE, ROOF.THICK, ROOF.SIZE),
+              new THREE.MeshLambertMaterial({color:0x8a6a44}));
+  m.position.set(player.pos.x, y, player.pos.z);
+  m.castShadow = true; m.receiveShadow = true; m.name = 'roof';
+  m.userData.roof = true; m.userData.maxHp = WALL_HP.wood; m.userData.hp = WALL_HP.wood;
+  const plankM = new THREE.MeshLambertMaterial({color:0x6f5334});
+  for(let i=-1;i<=1;i++){
+    const pk = new THREE.Mesh(new THREE.BoxGeometry(ROOF.SIZE*0.98, ROOF.THICK*0.35, 0.1), plankM);
+    pk.position.set(0, ROOF.THICK*0.52, i*ROOF.SIZE*0.3); m.add(pk);
+  }
+  scene.add(m);
+  kitRoofs.push({ mesh:m, aabb:new THREE.Box3().setFromObject(m) });
+  woodCount -= ROOF.COST.wood; updateWoodHUD();
+  playSound('place');
+  showKillfeed('🏠 Roof up — shelter under it, or climb on top');
+  return true;
+}
+function kitPlaceRoof(){ return placeKitRoof(); }
+// Is a roof directly overhead? The aerial-cover test.
+function roofOverhead(x, z, y){
+  for(let i=0;i<kitRoofs.length;i++){
+    const a = kitRoofs[i].aabb;
+    if(x < a.min.x || x > a.max.x || z < a.min.z || z > a.max.z) continue;
+    if(a.min.y > y) return true;
+  }
+  return false;
+}
+function clearKitRoofs(){ kitRoofs.forEach(r=>killObj(r.mesh)); kitRoofs.length = 0; }
 
 function kitPlaceWall(){      return placeKitWall(false); }
 function kitPlaceStoneWall(){ return placeKitWall(true);  }
@@ -10486,6 +10576,7 @@ function resetGame(){
   // 🫐 berry bushes are SCENERY (like trees, which resetGame also leaves alone) — they
   // survive a run. Only the player-built brambles come down.
   [...kitBrambles].forEach(b=>killObj(b.mesh));
+  clearKitRoofs();
   [...skyVultureMeshes].forEach(V=>killObj(V.mesh));
   [...eagleMeshes].forEach(E=>killObj(E.mesh));
   [...secretaryMeshes].forEach(B=>killObj(B.mesh));

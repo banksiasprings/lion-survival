@@ -2122,4 +2122,45 @@ the **exact slab test** (no sampling), so no speed can slip between samples.
 | sprints per day | exactly **2**, then `sprintsLeft` 0; dawn reset gives 1–2 |
 - 0 console errors.
 
+
+## 🏠 ROOFS — walkable platforms, no floating bases (2026-07-31)
+Steven: *"add roofs — when you activate it and click it, it spawns right under your feet… make sure you can't
+just jump in the air and click it to make a floating base, because that'd be cheating."* Then, on the
+scoped-down option: **"Do B. But make sure I can still walk on the roof."**
+
+### Scope (his call)
+Standalone roofs. **Walls CANNOT be placed on a roof** — that stacked-collision refactor is a future session.
+What IS here: placed over your feet, **walkable on top**, **blocks dives from directly above**, and impossible
+to place in mid-air. **Roof-on-roof IS allowed** (you're standing on something solid when you place it), so you
+can still climb — verified stacking to a second deck at 5.29.
+
+### Walkability came free
+Roofs carry their own AABB, and `wallSupportY` / `pushPlayerOutOfWalls` were **generalised to iterate walls AND
+roofs**. A roof top therefore uses the *exact* walkable-surface primitive built for wall tops in `c57e684` —
+same 0.7 step-up, same swept anti-fall-through catch, same MTV ejection. No new physics, and the wall path is
+provably unchanged (regression-tested below).
+
+### ⚠ The anti-cheat guard is ONE flag
+`player.onGround`. The ground snap sets it only when the feet rest on the resolved floor (terrain **or** a
+wall/roof top) and it is false for every frame of a jump or a fall — so "no floating bases" is the same flag
+that already decides whether you may jump, and the two can never drift apart. Also refused while up a tree,
+grappling, or swimming.
+
+### ⚠ DESIGN CALL — roofs are overhead cover against aerial predators
+Chosen over "roofs do nothing to birds" (which makes a roof pointless — the only thing it could shelter you
+from is the one threat that comes from above) and over "birds can never see you" (too strong). A roof
+**refuses an eagle stoop or a vulture dive when it is between the diver and the target** — but you are exposed
+the instant you step out from under it. **The roof protects the tile, not the player.** Both `eagleStrike` and
+`vultureStrike` gate on `roofBlocksDive`.
+
+### Verified
+| pin | result |
+|---|---|
+| anti-cheat | mid-air placement **rejected** ("You must be standing on something solid"); grounded accepted; also blocked up a tree / grappling / swimming |
+| walkable top | lands at exactly `top+0.1`, **60/60 grounded frames**, walks across without falling through |
+| roof-on-roof | allowed, second deck at 5.29 |
+| aerial cover | under a roof → dive **blocked**; six units clear → dive **allowed** |
+| wall regression | walls still place and are still walkable — the generalisation didn't disturb them |
+- 0 console errors.
+
 Each phase is an independent commit so it can be iterated in isolation.
