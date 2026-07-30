@@ -83,6 +83,13 @@ lion **5** · gorilla **10** · rhino **14** · **elephant 15**.
 
 ## Your kit — the Shop (abilities & accessories)
 
+**🪙 EVERYTHING COSTS COINS NOW (2026-07-31).** A fresh install starts with the **Fire Torch and nothing
+else**. You earn **1 coin for surviving day 1, 2 for day 2, 3 for day 3** and so on — so ten days banks **55**,
+twenty days banks **210**. Coins and everything you buy are **saved permanently**: they survive dying, and they
+survive closing the app. Cheap first buys are the **Healing Herb (4)**, **Smoke Screen (5)** and **Camo Cloak
+(6)**; the **Rhino Crossbow is 80 coins AND a rhino horn**. The 🦷/🦴/🦏 craft materials are separate and still
+reset every run — coins are the thing that lasts.
+
 Your whole toolset. **(The old bottom tool hotbar was removed 2026-07-16 — the kit on the left replaced it;
 the bottom of the screen now shows only your health/stamina/hunger bars.)** Use the active ability with
 **LMB** or **`Z`**. Open the **🛒 SHOP** from the menu, or press **Tab** in-game (pauses) to manage your **loadout**.

@@ -480,8 +480,10 @@ const SHOP_ITEMS = [
   // ---- Abilities (activated with [Z]; one is 'active', switch with [R]) ----
   { id:'fire_torch',   type:'ability', icon:'🔥', name:'Fire Torch',
     desc:'Toggle a blazing torch that lights the dark around you. Wards nothing — the flame is a beacon lions can spot.', starter:true },
+  // ⚠ starter:true REMOVED from Healing Herb and Camo Cloak (2026-07-31) — Steven:
+  // "you only start off with, like, the torch". They are now the two cheapest buys.
   { id:'healing_herb', type:'ability', icon:'🌿', name:'Healing Herb',
-    desc:'Chew a medicinal herb to restore 40 health. 20s between uses.', starter:true, cd:20 },
+    desc:'Chew a medicinal herb to restore 40 health. 20s between uses.', cd:20 },
   { id:'adrenaline',   type:'ability', icon:'💨', name:'Adrenaline',
     desc:'Surge of energy: refill stamina and run 40% faster for 5s. 25s cooldown.', cd:25 },
   { id:'smoke_screen', type:'ability', icon:'🌀', name:'Smoke Screen',
@@ -492,7 +494,7 @@ const SHOP_ITEMS = [
   { id:'kit_spear',   type:'ability', icon:'🗡️', name:'Spear',
     desc:'Hurl a flint spear — heavy damage at range, no crafting needed. 3s cooldown.', cd:3 },
   { id:'kit_wall',    type:'ability', icon:'🪵', name:'Palisade Wall',
-    desc:'Drop a permanent wooden barrier in front of you for cover (up to 10 up at once). Costs 2 wood. No cooldown.', cd:0 },
+    desc:'Drop a permanent wooden barrier in front of you for cover (up to 50 up at once). Costs 2 wood. Walkable on top. No cooldown.', cd:0 },
   { id:'kit_gate',    type:'ability', icon:'🚪', name:'Palisade Gate',
     desc:'Drop a hinged gate (up to 20). Face it and press [E] to swing it open, walk through, then turn round and press [E] to shut it behind you. Shut, it is a wall — collision and a walkable top. Left open, anything can follow you in. Costs 2 wood. No cooldown.', cd:0 },
   { id:'kit_grapple', type:'ability', icon:'🪝', name:'Grappling Hook',
@@ -502,7 +504,7 @@ const SHOP_ITEMS = [
   { id:'kit_fire',    type:'ability', icon:'🏕️', name:'Campfire',
     desc:'Build a campfire — a wide, long-lived ring of light and warmth that lions flee. 12s cooldown.', cd:12 },
   { id:'kit_stonewall', type:'ability', icon:'🧱', name:'Stone Wall',
-    desc:'Drop a permanent STONE barrier — elephants and gorillas CANNOT smash it (only a Hammer brings it down). Up to 10 walls total. Costs 5 rocks. No cooldown.', cd:0 },
+    desc:'Drop a permanent STONE barrier — elephants and gorillas CANNOT smash it (only a Hammer brings it down). Counts toward the same 50-wall cap. Costs 5 rocks. Walkable on top. No cooldown.', cd:0 },
   { id:'kit_hammer',  type:'ability', icon:'🔨', name:'Hammer',
     desc:'Swing a heavy maul: smash a stone OR wood wall, or land a crushing blow (67) on the animal in front. 1.4s cooldown.', cd:1.4 },
   { id:'kit_boomerang', type:'ability', icon:'🪃', name:'Tusk Boomerang',
@@ -516,7 +518,7 @@ const SHOP_ITEMS = [
     desc:'Strung from a lion\'s fang. While worn you can POUNCE ([Q] / pounce button) — without it, no pounce. Craft: 1 lion tooth.',
     craft:{ tooth:1 } },
   { id:'camo_cloak',    type:'accessory', icon:'🧥', name:'Camo Cloak',
-    desc:'Muted hides break your outline — 30% harder for anything to see you.', starter:true },
+    desc:'Muted hides break your outline — 30% harder for anything to see you.' },
   { id:'swift_boots',   type:'accessory', icon:'👟', name:'Swift Boots',
     desc:'Light footwear: 15% faster on foot, walking and sprinting.' },
   { id:'bone_talisman', type:'accessory', icon:'🦴', name:'Bone Talisman',
@@ -528,7 +530,8 @@ const SHOP_BY_ID = {}; SHOP_ITEMS.forEach(it=>SHOP_BY_ID[it.id]=it);
 const ABILITY_SLOTS = 5, ACCESSORY_SLOTS = 2;
 
 // Runtime kit state (loaded/saved by loadProgress/saveProgress).
-let progress = { unlocked:new Set(), abilities:[null,null,null,null,null], accessories:[null,null], activeAbility:0 };
+let progress = { unlocked:new Set(), abilities:[null,null,null,null,null], accessories:[null,null],
+                 activeAbility:0, coins:0 };   // coins = the persistent currency (see COIN_PRICES)
 let abilityCd = {};                 // id -> seconds of cooldown remaining
 let buffs = { adrenaline:0, smoke:0, eagleEye:0 };   // seconds remaining on timed ability effects
 let abilityFX = { fireTorch:null }; // { group, light, flame, on } — a disposable Three object
@@ -7984,16 +7987,81 @@ function updateThrownRocks(dt){
 // =====================================================================
 //  SHOP / ABILITIES — persistence, activation, passive mods, FX
 // =====================================================================
-const KIT_KEY = 'lionSurvivalKit';
+// =====================================================================
+//  🪙 COINS — the persistent currency (2026-07-31)
+// =====================================================================
+// Steven: "every day survived you get one for the number of the day… day 100 you get
+// 100 coins… you have to buy all the abilities… you only start off with the torch…
+// and if you quit and open it again you still have that thing."
+//
+// ⚠ NAMED "coin", not "snake tooth", despite Steven floating that. The game ALREADY
+// has a 🦷 LION TOOTH as a craft material (plus 🦴 tusk and 🦏 horn), all three spent
+// on crafting and all three run-scoped. A second tooth that is spent in a shop and
+// persists forever would be the most confusing thing in the HUD. Renaming is one
+// constant if he prefers the flavour.
+const COIN = '🪙';
+// ONE TUNABLE TABLE — deliberately not scattered across the 20 SHOP_ITEMS entries, so
+// Steven can re-price the whole game from a single block. Anything absent is free.
+// Calibration: surviving to day 10 yields 55 coins total, day 15 → 120, day 20 → 210.
+const COIN_PRICES = {
+  fire_torch:      0,    // the starter — free forever
+  healing_herb:    4,    // was a starter; now the cheapest buy
+  smoke_screen:    5,    // Steven: "not really useful"
+  camo_cloak:      6,    // was a starter
+  kit_axe:         6,
+  kit_fire:        6,
+  adrenaline:      8,
+  eagle_eye:      10,    // Steven: "standard utility"
+  forager_satchel:10,
+  kit_wall:       10,
+  kit_grapple:    12,    // the tree escape — genuinely strong
+  kit_gate:       12,
+  swift_boots:    14,
+  bone_talisman:  14,
+  kit_spear:      15,
+  kit_hammer:     18,
+  lion_necklace:  20,    // …and still costs 1 lion tooth to craft
+  kit_stonewall:  20,
+  kit_boomerang:  40,    // …and still costs 1 elephant tusk
+  kit_crossbow:   80,    // Steven: "super expensive". Also still costs 1 rhino horn.
+};
+function itemPrice(id){ const p = COIN_PRICES[id]; return (p == null) ? 0 : p; }
+function canAffordCoins(id){ return progress.coins >= itemPrice(id); }
+// Granted at the DAWN THAT ENDS a day, for the day just survived: finish day 1 → +1,
+// finish day 2 → +2. So a player standing in day N has banked sum(1..N-1).
+function grantDailyCoins(daySurvived){
+  if(!(daySurvived >= 1)) return;
+  progress.coins += daySurvived;
+  saveProgress();
+  showKillfeed(COIN+' +'+daySurvived+' coin'+(daySurvived===1?'':'s')+
+               ' — survived day '+daySurvived+' · balance '+progress.coins);
+}
+
+const SAVE_VERSION = 1;
+// ⚠ The key changed on 2026-07-31. The OLD key still holds real progress for anyone
+// who has played, so it is read once and migrated rather than abandoned — orphaning it
+// would be exactly the "lose everything every time" Steven asked us to prevent.
+const KIT_KEY        = 'mcn_savannah_progress';
+const KIT_KEY_LEGACY = 'lionSurvivalKit';
 
 function loadProgress(){
-  let saved = null;
+  let saved = null, fromLegacy = false;
   try { saved = JSON.parse(localStorage.getItem(KIT_KEY)||'null'); } catch(e){ saved = null; }
+  if(!saved){                                    // nothing under the new key — try the old one
+    try { saved = JSON.parse(localStorage.getItem(KIT_KEY_LEGACY)||'null'); } catch(e){ saved = null; }
+    if(saved) fromLegacy = true;
+  }
   if(saved && saved.unlocked){
     progress.unlocked   = new Set(saved.unlocked.filter(id=>SHOP_BY_ID[id]));
     progress.abilities  = normalizeSlots(saved.abilities,  ABILITY_SLOTS,   'ability');
     progress.accessories= normalizeSlots(saved.accessories,ACCESSORY_SLOTS, 'accessory');
     progress.activeAbility = Math.min(ABILITY_SLOTS-1, Math.max(0, saved.activeAbility|0));
+    progress.coins = Math.max(0, saved.coins|0);
+    // MIGRATION v0 → v1. A legacy save predates coins, and back then every unlock was
+    // FREE — so the player KEEPS everything they already own and simply starts on a 0
+    // balance. Retroactively locking their kit would be the exact "lose everything"
+    // this feature exists to prevent.
+    if(fromLegacy || (saved.saveVersion|0) < SAVE_VERSION) saveProgress();
   } else {
     // Fresh save: unlock + equip the starter kit.
     progress.unlocked = new Set(SHOP_ITEMS.filter(it=>it.starter).map(it=>it.id));
@@ -8005,6 +8073,7 @@ function loadProgress(){
       if(it.type==='accessory' && ci<ACCESSORY_SLOTS) progress.accessories[ci++] = it.id;
     });
     progress.activeAbility = 0;
+    progress.coins = 0;                          // fresh install: torch only, empty purse
     saveProgress();
   }
 }
@@ -8022,6 +8091,8 @@ function normalizeSlots(arr, len, type){
 function saveProgress(){
   try {
     localStorage.setItem(KIT_KEY, JSON.stringify({
+      saveVersion: SAVE_VERSION,                 // present from v1 on, for future migrations
+      coins: progress.coins,
       unlocked:[...progress.unlocked], abilities:progress.abilities,
       accessories:progress.accessories, activeAbility:progress.activeAbility
     }));
@@ -8957,6 +9028,10 @@ function renderShop(){
   lab.textContent='ACCESSORIES — up to '+ACCESSORY_SLOTS+' (optional) · passive'; row.appendChild(lab);
   for(let i=0;i<ACCESSORY_SLOTS;i++) row.appendChild(makeLoadoutSlot('accessory', i));
   // Crafting materials readout (the shop is fullscreen, so the HUD counters aren't visible here).
+  const purse=document.createElement('div'); purse.className='lo-lab'; purse.style.marginTop='6px';
+  purse.style.color='#f1c40f'; purse.style.fontSize='15px';
+  purse.textContent=COIN+' COINS: '+progress.coins+'   — earn 1 per day survived on day 1, 2 on day 2, and so on';
+  row.appendChild(purse);
   const mats=document.createElement('div'); mats.className='lo-lab'; mats.style.marginTop='6px';
   mats.textContent='CRAFTING MATERIALS — 🦷 '+toothCount+' lion '+(toothCount===1?'tooth':'teeth')+
                    ' · 🦴 '+tuskCount+' elephant '+(tuskCount===1?'tusk':'tusks')+
@@ -8973,9 +9048,15 @@ function renderShop(){
     card.className='sc-card'+(equipped?' equipped':'');
     let btns='';
     if(!unlocked){
+      const price = itemPrice(it.id);
+      const rich  = canAffordCoins(it.id);
       if(it.craft){
-        const ok=canCraft(it);
-        btns=`<button class="sc-btn ${ok?'unlock':'locked'}" data-act="unlock" data-id="${it.id}">Craft (${craftCostStr(it)})</button>`;
+        // Double-gated: coins to BUY it, materials to CRAFT it. Both shown on the button.
+        const ok = rich && canCraft(it);
+        const label = (price>0 ? `${COIN}${price} + ` : '') + craftCostStr(it);
+        btns=`<button class="sc-btn ${ok?'unlock':'locked'}" data-act="unlock" data-id="${it.id}">Buy (${label})</button>`;
+      } else if(price>0){
+        btns=`<button class="sc-btn ${rich?'unlock':'locked'}" data-act="unlock" data-id="${it.id}">Buy (${COIN}${price})</button>`;
       } else {
         btns=`<button class="sc-btn unlock" data-act="unlock" data-id="${it.id}">Unlock (free)</button>`;
       }
@@ -9058,7 +9139,14 @@ function craftCostStr(it){
 function unlockItem(id){
   if(progress.unlocked.has(id)) return;
   const it=SHOP_BY_ID[id];
-  if(it.craft){                                   // craftable — must pay materials
+  const price = itemPrice(id);
+  // ⚠ BOTH gates are checked before EITHER is charged, so a purchase that fails on
+  // materials can never silently eat the coins (or vice versa).
+  if(price > 0 && progress.coins < price){
+    flashShopMsg(COIN+' '+it.name+' costs '+price+' — you have '+progress.coins);
+    return;
+  }
+  if(it.craft){                                   // craftable — must pay materials TOO
     if(!canCraft(it)){
       const need=[];
       if(it.craft.tooth && toothCount<it.craft.tooth) need.push(it.craft.tooth+' lion tooth (have '+toothCount+')');
@@ -9071,6 +9159,10 @@ function unlockItem(id){
     if(it.craft.tusk)  tuskCount  -= it.craft.tusk;
     if(it.craft.horn)  hornCount  -= it.craft.horn;
     showKillfeed(it.icon+' Crafted the '+it.name+'!');
+  }
+  if(price > 0){
+    progress.coins -= price;
+    showKillfeed(COIN+' Bought '+it.name+' for '+price+' — balance '+progress.coins);
   }
   progress.unlocked.add(id);
   // Auto-equip only into a genuinely FREE slot — never displaces what you chose.
@@ -9261,6 +9353,7 @@ function updateDayNight(dt){
   dn.isDay = dn.time < HALF_CYCLE;
   if(dn.isDay !== wasDay){ healAllAnimals(); }     // day↔night turn → every animal reheals
   if(dn.isDay && !wasDay){                          // DAWN → a new day
+    grantDailyCoins(dn.day);                        // paid for the day that JUST ENDED
     dn.day++;
     spawnDailyWave();                               // 3 lions, 2 gorillas, 2 rhinos
     showKillfeed('🌅 Day '+dn.day+' — fresh predators move in');
@@ -9386,6 +9479,7 @@ function updateHUD(){
     (venomed?`<span style="color:#7ce05a">☠️ POISONED ${Math.ceil(player.poisonT)}s</span> <span style="opacity:0.6;font-size:11px">— water cures</span><br>`:'')+
     (weather.intensity>0.15?`⛈️ STORM<br>`:'')+
     `🦁 Lions: ${lionMeshes.length}<br>`+
+    `<span style="color:#f1c40f">${COIN} Coins: ${progress.coins}</span><br>`+
     `🪨 Rocks: ${rockCount} &nbsp; 🪵 Wood: ${woodCount}`+mats;
 
   // Vignette

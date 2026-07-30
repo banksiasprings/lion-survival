@@ -1876,4 +1876,92 @@ is a slow, invisible difficulty ramp — worth Steven's call.
   children rise transiently from the dust puffs, which self-dispose.)
 - 240 s full-day ecosystem soak with 4 cobras: **0 errors, 0 console errors**.
 
+
+## 🪙 COINS — currency + progression, and the first real persistence contract (2026-07-31)
+Steven: *"Could we put a currency in the game?… every day survived you get one for the number of the day…
+you have to buy all the abilities… you only start off with, like, the torch… and if you quit and open it
+again you still have that thing, so it saves your progress."*
+
+### Currency name: **coin 🪙**, not "snake tooth"
+Steven floated both. Picked coin because the game **already has a 🦷 LION TOOTH** as a craft material (with
+🦴 tusk and 🦏 horn) — all three spent on crafting, all three run-scoped and reset on death. A second "tooth"
+that is spent in a shop and persists forever would be the single most confusing thing in the HUD. Renaming is
+one constant (`COIN`) plus the price-table key if he prefers the flavour.
+
+### Earn rate — and the exact semantics
+`grantDailyCoins(dn.day)` fires at the **dawn that ENDS a day**, for the day just survived: finish day 1 → +1,
+finish day 2 → +2. So a player standing in day N has banked **sum(1..N-1)**, and surviving ten full days leaves
+them on **day 11 with 55 coins** — which is the 1+2+…+10 = 55 the brief asked for. Verified against the live
+day-advance site.
+
+### Price table (one tunable block, `COIN_PRICES`)
+Deliberately NOT scattered across the 20 `SHOP_ITEMS` entries, so the whole economy re-prices from one place.
+| Ability / accessory | 🪙 | note |
+|---|---|---|
+| Fire Torch | **0** | the starter — free forever |
+| Healing Herb | 4 | *was* a starter |
+| Smoke Screen | 5 | Steven: "not really useful" |
+| Camo Cloak · Hand Axe · Campfire | 6 | *cloak was a starter* |
+| Adrenaline | 8 | |
+| Eagle Eye · Forager's Satchel · Palisade Wall | 10 | Steven named 10 for Eagle Eye |
+| Grappling Hook · Palisade Gate | 12 | grapple is the tree escape — genuinely strong |
+| Swift Boots · Bone Talisman | 14 | |
+| Spear | 15 | |
+| Hammer | 18 | |
+| Lion Tooth Necklace · Stone Wall | 20 | necklace **also** costs 1 🦷 |
+| Tusk Boomerang | 40 | **also** 1 🦴 |
+| **Rhino Crossbow** | **80** | Steven: "super expensive". **Also** 1 🦏, and still 1 🦏 per shot |
+Calibration: day 10 → 55 coins, day 15 → 120, day 20 → 210. So the crossbow is roughly a day-13 goal.
+
+### Judgment calls (flagged, not silent)
+- **Craft items are DOUBLE-gated** — coins to buy, materials to craft. Both are shown on one button
+  (`Buy (🪙40 + 1 🦴)`), and **both gates are checked before either is charged**, so a purchase that fails on
+  materials can never silently eat the coins.
+- **Walls / gate: coins unlock the ABILITY, wood/rock still pays per placement.** Exactly the rule the brief
+  suggested. Unlocking Palisade Wall costs 🪙10 once; every wall after that is still 2 wood.
+- **Shop UI: no new screen.** The existing fullscreen 🛒 Survival Kit (menu button, or **Tab** in-game) already
+  had the catalogue, the loadout row and a materials readout — coins slot in as a gold line above it and a
+  price on every card. In-game balance sits in `#topright` with the other counters. Adding a second shop would
+  have split the loadout UI in half.
+- **Starter kit shrank from 3 items to 1** (`starter:true` removed from Healing Herb and Camo Cloak) — Steven:
+  "you only start off with, like, the torch". Fresh installs are meaningfully harder now.
+
+### Persistence — the load-bearing requirement
+- **Key changed to `mcn_savannah_progress`** with `saveVersion: 1`. ⚠ The old key `lionSurvivalKit` holds real
+  progress for anyone who has played, so it is **read once and migrated**, not abandoned — orphaning it would
+  be precisely the "lose everything every time you restart" this feature exists to prevent.
+- **v0 → v1 migration keeps everything.** Legacy saves predate coins, and back then every unlock was FREE, so
+  the player **keeps every item they already own** and simply starts on a 0 balance. Retroactively locking
+  their kit would be indefensible. Verified: a 7-item legacy save came through with all 7 intact, loadout
+  preserved, 0 coins, written through to the new key with `saveVersion:1`.
+- Saved on every coin grant, every purchase, and every equip change.
+
+### Verified — all pins, with two REAL page reloads
+| pin | result |
+|---|---|
+| fresh install → torch only, 0 coins | unlocked `['fire_torch']`, coins 0 |
+| daily reward = day number | 1,2,3…10 granted exactly; total **55**, ends on day 11 |
+| purchase deducts + unlocks | 12 → 7 on a 🪙5 buy, auto-equipped into a free slot |
+| cannot buy when short | 3 coins vs 🪙5 → refused, **coins untouched**, still locked |
+| purchases persist across quit/reopen | **real reload**: 28 coins + 4 unlocks came back identical |
+| coin balance persists | same reload |
+| death + restart preserves both | coins 28→28, unlocks 4→4, in-run state (day) reset to 1 |
+| `saveVersion` present | `{saveVersion:1, coins, unlocked, abilities, accessories, activeAbility}` |
+- **Full soak:** fresh install → 10 in-game days → **55 coins** → buy Smoke Screen (−5) → **50** → **real page
+  reload** → still owns Smoke Screen, still 50. (Day 1→2 ran through the complete `animate()` pipeline to prove
+  the reward fires from the live site; the remaining days were driven through `updateDayNight`, which is the
+  function that owns the reward, because a full day is 4800 frames.)
+- **Regression sweep, all green:** walls place, gate places and is a wall when shut, wall-top walkable, wild dog
+  cannot tunnel, cobra chase speed 18, gold cobra 1500 HP, cobra fells a tree in 6 bites, no growth from trees.
+- **0 console errors.**
+
+### Also fixed in passing — user-facing doc rot
+Both wall shop cards still advertised **"up to 10"** after the cap became 50 on 2026-07-30i. Corrected to 50,
+and both now mention the walkable top.
+
+### Shop render
+`dossiers/shop_ui.png` — the REAL `renderShop()` DOM and the real stylesheet, captured offline with headless
+Chrome (the Browser pane's compositor still returns black; see the verify memory). Shows the gold coins line,
+green `Buy (🪙N)` buttons, greyed-out unaffordable buys, and the double-gated `Buy (🪙40 + 1 🦴)` labels.
+
 Each phase is an independent commit so it can be iterated in isolation.
