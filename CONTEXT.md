@@ -1339,4 +1339,66 @@ nearest tree. **0 errors, 0 NaN, 0 console errors**; **0 scene / 0 geometries / 
   trees/walls, the 30 m break-off, the `NIGHT_GIVEUP` rule, and cobra speed 14 vs your sprint 16. Nothing else
   was rebalanced.
 
+
+## Cobra colour morphs — five, rolled at spawn (2026-07-30f)
+Steven: *"I want that to be like multiple different colours… acid green, the current dark blue, red, dark
+purple, and then like 5% chance it's kinda rare, it's like a gold."*
+
+- **`COBRA_COLORS` + `pickCobraColor()`** — the table and a weighted roll, kept as a **named helper rather
+  than inlined at the spawn site** (per the brief) so the python and worm can be given morph tables the same
+  way later; a new variant needs nothing but its own weighted array. Weights **23.75 × 4 + 5 = exactly 100**.
+- **Which spawn function was touched: `makeSnake`** — the single constructor every serpent goes through
+  (`spawnSnake` → `makeSnake`; `rollSnakeSpawns` is just the per-variant coin flip above it). The roll happens
+  once there, before the materials are built, and the result is stored as **`S.colour` on the instance** —
+  same discipline as `S.territory`, never on the shared `S.v`.
+- **A morph drives the whole animal, not one material**, because the cobra's colour lives in four places:
+  - `cobraScaleTex(pal)` — **parameterised** (was hard-coded): `texBase`/`texLit`/`texMid`/`rim` are the mass
+    of the body. Tinting alone would not have worked — the original texture is near-black, so multiplying it
+    by a colour just gives black; the texture itself had to become palette-driven.
+  - `matB.color` ← `tint` — the second body tone, which is what makes the segment banding read.
+  - `matBlot.color` ← `belly` — belly + hood membrane, the single biggest visual signature.
+  - `spotM.color` ← `spot` — the hood's spectacle marking. `emis`/`spec` keep a dark animal from dissolving
+    into the night.
+- **Minimap is per-morph.** `S.mm`/`S.mmHot` shadow the variant's shared pair and the minimap now reads
+  `S.mm || S.v.mm`, so a gold cobra is a gold dot and an acid one is green — python/worm fall back unchanged.
+- **Venom spit MATCHED, no refactor needed.** The blob material was already built **per blob**, so it just
+  reads `S.colour.venom`. Verified all five: acid `#b6ff3c`, black `#9be34a`, crimson `#ff5a68`, violet
+  `#c48cff`, gold `#ffe066`. **The `black` morph keeps the original GREEN venom on purpose** — it is "the
+  current cobra, unchanged", and a dark-blue blob off a near-black snake would be nearly invisible, which
+  matters for a projectile you are meant to dodge.
+- **The rare morph announces itself** — `✨ A GOLD cobra has moved onto the savannah — rare` in the killfeed.
+  At 5% it should feel like an event; the other four arrive on the ordinary "serpents move in" line.
+
+**Visual iteration — this is what the offline projector is for.** `dossiers/render_cobra.py` was made
+palette-aware (`PALETTES` + `set_palette()`; the pose sheet still renders from `midnight`) and now emits a
+**second sheet, `dossiers/cobra_morphs.png`** — all five morphs × (flared hood, reared body), same mesh, same
+light, gamma-matched. Two problems were visible on the first pass and fixed by looking at it:
+- **acid** and **violet** had washed-out hood spectacle markings (the spot was too close to their own belly
+  value). Fixed: the spectacle now **contrasts with its own hood** rather than being a fixed hue — bright
+  bellies (acid) get a **dark** marking, dark/cool bellies (violet) get a **warm ochre**, which is the same
+  complementary trick that makes the original blue morph's marking the clearest of the five.
+- The offline `SKIN_A`/`SKIN_B` are **derived** (`texMid × ½`, then × the tint) the same way the original
+  hand-tuned constants were, so the sheet keeps matching the engine as the palette changes.
+
+**Verified live:**
+- **RNG sanity (what Steven asked for, plus tighter stats):** 20 000 pure rolls → **gold 4.91 %**, others
+  23.30 / 23.66 / 23.78 / 24.36 %. 100 pure rolls → gold 3. **100 real `makeSnake` spawns → gold 7** (binomial
+  sd at n=100 is 2.2, so 3–7 is ordinary noise, and it is neither 0 nor 50).
+- **Persistence:** a forced gold cobra grown **14 → 20 segments** through the real `addSnakeSegment` path kept
+  its exact belly/tint/minimap hex through a hit-flash, a tree ambush, a night hunt, a **turret conversion**, a
+  `healAllAnimals` and dawn — `colourNeverChanged: true`, `grewWhileGold: true`.
+- All five morphs **live simultaneously** for a 150 s soak: **0 errors, 0 NaN, 0 console errors**, four distinct
+  venom-blob colours caught in flight, every survivor still carrying its morph, and they grew normally
+  (`midnight` reached 22 segments).
+- **Disposal unchanged:** **0 scene / 0 geometries / 0 textures** across 3 spawn → grow → death-collapse
+  cycles. The scale texture is still built per snake (never cached at module scope) precisely because
+  `disposeObject3D` frees every texture hanging off a material — now doubly true, since two cobras genuinely
+  have different textures.
+- **⚠ Interpretive calls (report, not silently tuned):** (a) equal 23.75 % split for the four commons, as the
+  brief defaulted; (b) `black`'s venom stays green (readability + "unchanged"); (c) the **amber eyes and ivory
+  fangs are shared by all five** — they are the cobra's signature and the emissive eye-glow is what reads at
+  night; only gold has slightly low eye contrast in daylight, judged not worth a per-morph eye colour;
+  (d) no gameplay numbers touched — a gold cobra is exactly as dangerous as a black one, the morph is purely
+  cosmetic plus identification.
+
 Each phase is an independent commit so it can be iterated in isolation.

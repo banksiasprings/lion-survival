@@ -5503,19 +5503,89 @@ function snakeSegRadius(S, i){
 // gamma-lifted on the way out and renders ~2× lighter than the literal — the same
 // convention every other colour in this file is authored against. A #1c1e2b body
 // came out steel-grey. Judge these on screen, never on the hex.
-function cobraScaleTex(){
+// ---- COBRA COLOUR MORPHS (2026-07-30f) -------------------------------
+// Steven: "I want that to be like multiple different colours… acid green, the
+// current dark blue, red, dark purple, and then like 5% chance it's kinda rare,
+// it's like a gold."
+//
+// One morph is rolled per cobra AT SPAWN and kept for life — it never changes on
+// growth, damage, state or the day/night flip. A gold cobra that kills things stays
+// gold and just gets longer.
+//
+// Each entry drives the WHOLE animal, not just one material, because the cobra's
+// colour lives in four places: the procedural scale texture (texBase/texLit/texMid
+// are the mass of the body), the second body tone (`tint` on matB, which is what
+// makes the segment banding read), the belly + hood membrane (`belly` — the single
+// biggest visual signature), and the hood's spectacle marking (`spot`). `emis` and
+// `spec` keep a dark animal from dissolving into the night. `mm`/`mmHot` colour its
+// minimap dot and `venom` its spit blob, so a morph is identifiable at a glance and
+// at range.
+//
+// ⚠ AUTHORING NOTE: renderer.outputEncoding is sRGBEncoding while colours and
+// textures go in un-decoded, so everything is gamma-lifted on the way out and
+// renders ~2× LIGHTER than the literal hex. These were all iterated through
+// dossiers/render_cobra.py, which reproduces that lift — judge them on the rendered
+// sheet, never on the hex.
+const COBRA_COLORS = [
+  // Fluorescent, poison-dart green — the loudest of the five.
+  { id:'acid',     label:'acid-green',   weight:23.75,
+    texBase:'#071502', texLit:'#63ad12', texMid:'#2d6106', rim:'62,150,20',
+    // spot is deliberately DARK here: acid's belly is the brightest of the five, so a
+    // dark marking is what reads on it. The dark-bellied morphs get a light ochre
+    // instead — the spectacle has to contrast with its OWN hood, not match a fixed hue.
+    tint:0x7fae52, belly:0x2c5c04, spot:0x081204, emis:0x040a01, spec:0x4a7a18,
+    mm:'#6cc41e', mmHot:'#b6ff3c', venom:0xb6ff3c },
+  // THE ORIGINAL — near-black scales over a deep blue belly. Byte-for-byte the
+  // pre-morph cobra, so the animal Steven already knows is still in the pool.
+  { id:'midnight', label:'black',        weight:23.75,
+    texBase:'#010102', texLit:'#141728', texMid:'#0a0b13', rim:'38,52,102',
+    tint:0x8790a8, belly:0x020b46, spot:0x44290a, emis:0x020309, spec:0x121728,
+    mm:'#5b2f8a', mmHot:'#b07bff', venom:0x9be34a },
+  // Oxblood — dark red scales, a brighter arterial belly.
+  { id:'crimson',  label:'crimson',      weight:23.75,
+    texBase:'#100203', texLit:'#6b1016', texMid:'#33060a', rim:'128,26,32',
+    tint:0xa8707a, belly:0x520208, spot:0x3a1204, emis:0x0a0102, spec:0x5a1a22,
+    mm:'#b0303a', mmHot:'#ff5a68', venom:0xff5a68 },
+  // Deep violet with a plum belly.
+  { id:'violet',   label:'dark-violet',  weight:23.75,
+    texBase:'#08030f', texLit:'#43206b', texMid:'#200d38', rim:'92,52,150',
+    // Warm ochre spectacle on a cool purple hood — the same complementary trick that
+    // makes the original blue morph's marking the clearest of the five. A violet spot
+    // on a violet belly rendered as a washed-out smudge.
+    tint:0x9682b8, belly:0x300650, spot:0x46280c, emis:0x050210, spec:0x321a5a,
+    mm:'#7a3fc0', mmHot:'#c48cff', venom:0xc48cff },
+  // ⚠ THE RARE ONE — 5%. Warm brass scales, bright gilt belly, and the only morph
+  // that is genuinely bright rather than a dark animal with a coloured belly.
+  { id:'gold',     label:'GOLD',         weight:5,
+    texBase:'#1a1204', texLit:'#c79a1e', texMid:'#6e4e08', rim:'190,150,40',
+    tint:0xd8b45c, belly:0x8a6408, spot:0x4a3402, emis:0x120c02, spec:0x9a7a28,
+    mm:'#d8a81e', mmHot:'#ffe066', venom:0xffe066 },
+];
+// Weighted roll. Kept as its own helper (rather than inlined at the spawn site) so
+// the python and worm can be given morph tables the same way later — the only thing
+// a new variant needs is its own weighted array.
+function pickCobraColor(){
+  let total = 0;
+  for(const c of COBRA_COLORS) total += c.weight;
+  let r = Math.random()*total;
+  for(const c of COBRA_COLORS){ r -= c.weight; if(r < 0) return c; }
+  return COBRA_COLORS[COBRA_COLORS.length-1];   // float-rounding backstop
+}
+
+function cobraScaleTex(pal){
+  const p = pal || COBRA_COLORS[1];                      // 'midnight' = the original palette
   const N=64, cv=document.createElement('canvas'); cv.width=cv.height=N;
   const g=cv.getContext('2d');
-  g.fillStyle='#010102'; g.fillRect(0,0,N,N);
+  g.fillStyle=p.texBase; g.fillRect(0,0,N,N);
   const rows=9, cols=8, w=N/cols, h=N/rows;
   for(let r=-1;r<=rows;r++) for(let c=-1;c<=cols;c++){
     const x=c*w+((r&1)?w*0.5:0)+w*0.5, y=r*h+h*0.5, t=Math.random();
     const grd=g.createLinearGradient(x, y-h*0.6, x, y+h*0.6);
-    grd.addColorStop(0, t<0.12 ? '#141728' : '#0a0b13');   // the odd lighter scale breaks up the mass
+    grd.addColorStop(0, t<0.12 ? p.texLit : p.texMid);   // the odd lighter scale breaks up the mass
     grd.addColorStop(1, '#000000');
     g.fillStyle=grd;
     g.beginPath(); g.ellipse(x, y, w*0.58, h*0.64, 0, 0, 6.2832); g.fill();
-    g.strokeStyle='rgba(38,52,102,'+(0.30+t*0.30).toFixed(2)+')';    // iridescent rim
+    g.strokeStyle='rgba('+p.rim+','+(0.30+t*0.30).toFixed(2)+')';    // iridescent rim
     g.lineWidth=0.8;
     g.beginPath(); g.ellipse(x, y-h*0.05, w*0.52, h*0.52, 0, 3.34, 6.08); g.stroke();
   }
@@ -5568,15 +5638,19 @@ function makeSnake(x, z, variantKey){
   // two body tones are the same skin at two brightnesses so the segment banding
   // actually shows, and a whisper of blue emissive keeps a black animal from
   // dissolving into the night. matBlot carries its BLUE BELLY + hood membrane.
-  const skin = cobra ? cobraScaleTex() : null;
+  // Roll this cobra's colour morph ONCE, here. Everything downstream (scale texture,
+  // second body tone, belly/hood, spectacle spot, minimap dot, venom spit) reads it,
+  // and it is stored on the instance as S.colour so it can never drift.
+  const pal = cobra ? pickCobraColor() : null;
+  const skin = cobra ? cobraScaleTex(pal) : null;
   const matA = worm  ? new THREE.MeshPhongMaterial({color:0xf49ab4, shininess:70, specular:0x996070, transparent:true, opacity:0.9})
-             : cobra ? new THREE.MeshPhongMaterial({map:skin, color:0xffffff, emissive:0x020309, shininess:55, specular:0x121728, transparent:true, opacity:1})
+             : cobra ? new THREE.MeshPhongMaterial({map:skin, color:0xffffff, emissive:pal.emis, shininess:55, specular:pal.spec, transparent:true, opacity:1})
                      : new THREE.MeshLambertMaterial({color:0xc2a878, transparent:true, opacity:1});
   const matB = worm  ? new THREE.MeshPhongMaterial({color:0xe8849f, shininess:70, specular:0x996070, transparent:true, opacity:0.9})
-             : cobra ? new THREE.MeshPhongMaterial({map:skin, color:0x8790a8, emissive:0x010207, shininess:55, specular:0x0d1120, transparent:true, opacity:1})
+             : cobra ? new THREE.MeshPhongMaterial({map:skin, color:pal.tint, emissive:pal.emis, shininess:55, specular:pal.spec, transparent:true, opacity:1})
                      : new THREE.MeshLambertMaterial({color:0xb0966a, transparent:true, opacity:1});
   const matBlot = worm  ? new THREE.MeshPhongMaterial({color:0xd97490, shininess:50, transparent:true, opacity:0.9})
-                : cobra ? new THREE.MeshPhongMaterial({color:0x020b46, emissive:0x01030f, shininess:70, specular:0x1a2c56, side:THREE.DoubleSide, transparent:true, opacity:1})   // blue belly + hood membrane
+                : cobra ? new THREE.MeshPhongMaterial({color:pal.belly, emissive:pal.emis, shininess:70, specular:pal.spec, side:THREE.DoubleSide, transparent:true, opacity:1})   // belly + hood membrane
                         : new THREE.MeshLambertMaterial({color:0x6e5636, transparent:true, opacity:1});
   const dark    = new THREE.MeshLambertMaterial({color:worm?0x3a2028:0x0a0a0a, transparent:true, opacity:1});
   // Cobra: burning amber eyes (emissive so they still read at night, like the
@@ -5584,13 +5658,17 @@ function makeSnake(x, z, variantKey){
   // painted skin rather than a second pair of headlights, ivory fangs, and a
   // near-black tongue — not the old yellow plank. Python/worm keep the dull red.
   const eyeM    = cobra ? new THREE.MeshPhongMaterial({color:0x7d4402, emissive:0x2a1600, shininess:140, specular:0xd8c070, transparent:true, opacity:1}) : null;
-  const spotM   = cobra ? new THREE.MeshLambertMaterial({color:0x44290a, transparent:true, opacity:1}) : null;
+  const spotM   = cobra ? new THREE.MeshLambertMaterial({color:pal.spot, transparent:true, opacity:1}) : null;
   const fangM   = cobra ? new THREE.MeshPhongMaterial({color:0x6b6352, shininess:90, specular:0x8a8a8a, transparent:true, opacity:1}) : null;
   const tongueM = new THREE.MeshLambertMaterial({color:cobra?0x0d0508:0x8a2b2b, transparent:true, opacity:1});
 
   const ty = terrainY(x,z);
   const S = {
     mesh:group, segs:[], v, matA, matB, matBlot,
+    // Colour morph, rolled once above and fixed for life (null on python/worm).
+    // mm/mmHot shadow the variant's minimap colours so each morph reads as its own
+    // dot; the minimap falls back to S.v.* when these are absent.
+    colour: pal, mm: pal ? pal.mm : null, mmHot: pal ? pal.mmHot : null,
     mats:[matA, matB, matBlot, dark, tongueM, eyeM, spotM, fangM].filter(Boolean),   // every one is faded by the death collapse
     pos:new THREE.Vector3(x, ty+0.5, z),        // o.pos = HEAD (drives hitbox/aim/minimap)
     health:v.HEALTH, maxHealth:v.HEALTH, _prevHealth:v.HEALTH,
@@ -5769,6 +5847,9 @@ function makeSnake(x, z, variantKey){
   // snake's own (still null) territory — the O!==S guard covers it either way.
   if(v.night) S.territory = claimNightTerritory(S);
   snakeMeshes.push(S);
+  // The rare morph announces itself — at 5% it deserves to feel like an event.
+  // The other four arrive on the ordinary "serpents move in" line from rollSnakeSpawns.
+  if(pal && pal.id==='gold') showKillfeed('✨ A GOLD cobra has moved onto the savannah — rare');
   return S;
 }
 
@@ -6038,8 +6119,11 @@ function spawnVenomSpit(S, tgt){
   const dir = aim.sub(from);
   if(dir.lengthSq() < 1e-6) return;
   dir.normalize();
+  // Blob colour follows the firing cobra's morph — gold venom off a gold cobra. Cheap
+  // because the material is already built PER BLOB (see the disposal note above), so
+  // there was nothing shared to refactor.
   const m = new THREE.Mesh(new THREE.SphereGeometry(0.17,7,6),
-    new THREE.MeshBasicMaterial({color:0x9be34a, transparent:true, opacity:0.92, depthWrite:false}));
+    new THREE.MeshBasicMaterial({color:(S.colour ? S.colour.venom : 0x9be34a), transparent:true, opacity:0.92, depthWrite:false}));
   m.position.copy(from); m.name='venomSpit'; scene.add(m);
   venomSpits.push({ mesh:m, mat:m.material, pos:from.clone(),
                     vel:dir.multiplyScalar(SNAKE.SPIT_SPEED),
@@ -9064,17 +9148,21 @@ function drawMinimap(){
     mmCtx.beginPath(); mmCtx.arc(px,py,3.5,0,Math.PI*2); mmCtx.fill();
   });
 
-  // Giant serpents — python green / worm pink / cobra violet at the head; brighter
-  // when locked onto you. A cobra lying up in an ambush tree shows as a hollow ring:
-  // you can see WHERE it is, but the fact it's overhead is the thing you have to read.
+  // Giant serpents — python green / worm pink / cobra in its own COLOUR MORPH at the
+  // head; brighter when locked onto you. S.mm/S.mmHot are the per-cobra morph colours
+  // (see COBRA_COLORS) and fall back to the variant's shared pair for python/worm, so
+  // a gold cobra reads gold on the radar and an acid one reads green.
+  // A cobra lying up in an ambush tree shows as a hollow ring: you can see WHERE it
+  // is, but the fact it's overhead is the thing you have to read.
   snakeMeshes.forEach(S=>{
     const [px,py]=toMM(S.pos.x-player.pos.x, S.pos.z-player.pos.z);
+    const mmC = S.mm || S.v.mm, mmH = S.mmHot || S.v.mmHot;
     if(S.state==='AMBUSH_COIL'){
-      mmCtx.strokeStyle = S.v.mmHot; mmCtx.lineWidth = 1.5;
+      mmCtx.strokeStyle = mmH; mmCtx.lineWidth = 1.5;
       mmCtx.beginPath(); mmCtx.arc(px,py,4.5,0,Math.PI*2); mmCtx.stroke();
       return;
     }
-    mmCtx.fillStyle = (S.targetKind==='player' && S.aggroTimer>0) ? S.v.mmHot : S.v.mm;
+    mmCtx.fillStyle = (S.targetKind==='player' && S.aggroTimer>0) ? mmH : mmC;
     mmCtx.beginPath(); mmCtx.arc(px,py,4,0,Math.PI*2); mmCtx.fill();
   });
 

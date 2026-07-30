@@ -351,7 +351,22 @@ bite** as any other kill, so a serpent that wins a civil war comes out of it big
   feed on a herd all run will be biting for 70+ by the time you meet it.
 
 #### ☠️ Black cobra — ambush by day, hunter by night
-- **Near-black scaled body over a blue ventral stripe**, amber eyes, a flat wedge of a head, and a **hood
+- **🎨 FIVE COLOUR MORPHS — rolled at spawn, kept for life.** Every cobra rolls one of five colours when it
+  arrives and keeps it forever: it never changes on growth, damage, state or the day/night flip. A gold cobra
+  that eats its way to 40 segments is still gold, just enormous. The morph colours its **scales, its belly and
+  hood, its hood spectacle marking, its minimap dot and its venom spit**, so you can tell them apart across
+  the map and on the radar. Offline render of all five: [`cobra_morphs.png`](cobra_morphs.png).
+
+  | Morph | Look | Chance |
+  |---|---|---|
+  | **acid-green** | fluorescent poison-dart green, dark spectacle | 23.75% |
+  | **black** | the original — near-black scales, deep blue belly | 23.75% |
+  | **crimson** | oxblood scales, arterial red belly | 23.75% |
+  | **dark-violet** | deep purple with an ochre spectacle | 23.75% |
+  | **✨ GOLD** | brass scales, bright gilt belly — announces itself in the killfeed | **5% — rare** |
+
+- **Near-black scaled body over a blue ventral stripe** *(the `black` morph — see the table above)*, amber
+  eyes, a flat wedge of a head, and a **hood
   that FLARES** — a spade-shaped blue membrane, black-rimmed, with two ochre spectacle spots and a dark
   throat band, that snaps open the moment it commits to a strike. When it flares it also **rears up** off
   the ground, spreads its neck flat, gapes its jaw and drops its **fangs** into view — every one of those

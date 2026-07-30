@@ -105,13 +105,37 @@ def place(faces,pos=(0,0,0),rx=0.0,ry=0.0,rz=0.0,sc=None):
     def R(n): return norm(rotz(roty(rotx((n[0]*inv[0],n[1]*inv[1],n[2]*inv[2]),rx),ry),rz))
     return [([T(v) for v in vs],R(n),c) for vs,n,c in faces]
 
-# ==================== BLACK COBRA — colours straight from makeSnake() ====================
-# cobraScaleTex()'s MEAN tone (most of the canvas is the near-black bottom of each
-# scale gradient — using the light stop 0x0a0b13 flat makes the animal look twice
-# as pale as it does in engine), x the matA / matB tints.
-SKIN_A, SKIN_B = 0x05060b, 0x030406
-BELLY = 0x020b46                          # matBlot — belly + hood membrane
-EYE, SPOT, FANG, MOUTH = 0x7d4402, 0x44290a, 0x6b6352, 0x0a0a0a
+# ==================== COBRA COLOURS — straight from COBRA_COLORS in index.html ====================
+# One entry per colour morph (2026-07-30f). texMid/tint/belly/spot are copied verbatim
+# from the JS table; SKIN_A/SKIN_B are DERIVED the same way the original constants were:
+# cobraScaleTex()'s MEAN tone is about HALF its texMid stop, because most of the canvas
+# is the near-black bottom of each scale gradient (using texMid flat makes the animal
+# look twice as pale as it does in engine), then x the matA / matB tints.
+PALETTES = [
+    # id,         texMid,     tint,     belly,    spot
+    ('acid',     0x2d6106, 0x7fae52, 0x2c5c04, 0x081204),
+    ('midnight', 0x0a0b13, 0x8790a8, 0x020b46, 0x44290a),
+    ('crimson',  0x33060a, 0xa8707a, 0x520208, 0x3a1204),
+    ('violet',   0x200d38, 0x9682b8, 0x300650, 0x46280c),
+    ('gold',     0x6e4e08, 0xd8b45c, 0x8a6408, 0x4a3402),
+]
+def _mul(col, tint):
+    r=((col>>16)&255)*((tint>>16)&255)//255; g=((col>>8)&255)*((tint>>8)&255)//255
+    b=(col&255)*(tint&255)//255; return (r<<16)|(g<<8)|b
+def _half(col):
+    return (((col>>16)&255)//2<<16) | (((col>>8)&255)//2<<8) | ((col&255)//2)
+
+# Live palette globals — cobra_head()/cobra_body() read these at CALL time, so
+# set_palette() before building each panel is all the parameterisation needed.
+SKIN_A, SKIN_B, BELLY, SPOT = 0, 0, 0, 0
+EYE, FANG, MOUTH = 0x7d4402, 0x6b6352, 0x0a0a0a      # shared by every morph
+def set_palette(entry):
+    global SKIN_A, SKIN_B, BELLY, SPOT
+    _id, tex_mid, tint, belly, spot = entry
+    SKIN_A = _half(tex_mid)
+    SKIN_B = _mul(SKIN_A, tint)
+    BELLY, SPOT = belly, spot
+set_palette(PALETTES[1])                             # default = 'midnight', the original
 SEGS, SPACING = 14, 0.72
 
 def seg_radius(i):                        # snakeSegRadius() cobra branch
@@ -253,3 +277,30 @@ for i,(label,parts,yaw,pitch,bg,fit) in enumerate(panels):
     sheet.paste(panel,(i*PW,th))
 out='/Users/openclaw/Documents/lion-survival/dossiers/cobra_render.png'
 sheet.save(out); print('wrote',out,sheet.size)
+
+# ==================== SHEET 2: the five COLOUR MORPHS ====================
+# Same mesh, same pose, same light — only the palette changes. Two rows: the flared
+# head (where the hood membrane and the spectacle marking carry the colour) and the
+# reared body (where the scale mass and the ventral scutes do).
+MW,MH=430,400; mth=58
+rows=[('HOOD FLARED', lambda: place(cobra_head(1.0)), 0.10, 0.08, 0.80),
+      ('REARED BODY', lambda: cobra_body(0.85),       0.62, 0.40, 0.86)]
+msheet=Image.new('RGB',(MW*len(PALETTES), mth+MH*len(rows)),(24,24,28))
+md=ImageDraw.Draw(msheet)
+md.text((20,10),'Survive the Savannah — BLACK COBRA colour morphs (offline render, gamma-matched to the app)',
+        font=font(19),fill=(241,196,15))
+md.text((20,34),'acid-green 23.75%   ·   black 23.75%   ·   crimson 23.75%   ·   dark-violet 23.75%   ·   GOLD 5%',
+        font=font(15),fill=(170,170,178))
+for ri,(rlabel,build,yaw,pitch,fit) in enumerate(rows):
+    for ci,entry in enumerate(PALETTES):
+        set_palette(entry)
+        bg=(198,190,172) if ri==0 else (194,182,156)
+        panel=project(build(),MW,MH,yaw,pitch,bg,tuple(int(c*0.8) for c in bg),fit)
+        dd=ImageDraw.Draw(panel)
+        dd.rectangle([0,0,MW-1,MH-1],outline=(60,60,66),width=2)
+        dd.rectangle([12,12,26,34],fill=hexrgb(entry[3]))          # belly swatch
+        dd.rectangle([28,12,42,34],fill=hexrgb(_half(entry[1])))   # skin swatch
+        dd.text((50,14),entry[0].upper()+'  ·  '+rlabel,font=font(15),fill=(20,20,20))
+        msheet.paste(panel,(ci*MW, mth+ri*MH))
+out2='/Users/openclaw/Documents/lion-survival/dossiers/cobra_morphs.png'
+msheet.save(out2); print('wrote',out2,msheet.size)
