@@ -2022,4 +2022,44 @@ assertion failure on the last substitution discarded every earlier substitution 
 whole function — while still printing "ok" for them. `updateOxygen` was simply absent and only surfaced as a
 `ReferenceError` under test. **Write after every substitution**, not once per batch.
 
+
+## 🌳 TREES — axe fells them, they topple, they regrow at dawn (2026-07-31)
+Steven: *"with the axe, when it says axe fell the tree, the trees don't disappear — can you make them fall
+over? Instead of getting one wood can you get like three to four… you can still press E to collect wood but it
+doesn't cut the tree down, you get one. If you cut it down you get like three to four. And however many trees I
+cut down, they respawn the next day."*
+
+### What the axe used to do
+`kitAxe` on a tree was a **free renewable harvest node**: 8 s cooldown, +1 wood, tree untouched forever. It
+never felled anything — the killfeed said "Chopped wood", and Steven read that as felling.
+
+### Now
+- **[E] on a standing tree — unchanged**: +1 wood, 30 s cooldown, tree stands. (`doCollect`, untouched.)
+- **Axe — actually fells**: 42 damage a swing into the tree HP added on 2026-07-30m, so **3 swings** for a
+  normal tree and 6 for a big one, then **3–4 wood** (`TREE_FELL_WOOD`). Between swings it reports how many
+  are left.
+- **Trees TOPPLE.** `fellTree` pulls the tree out of `treeObjects` **immediately** — every holder polls that
+  array, so the perch / ambush / siesta / gorilla guards all fire on the same frame — but the **mesh lives on**
+  in `fallingTrees[]` and rotates to flat over `TREE_FALL_TIME` 1.15 s on a smoothstep, then disposes. It
+  leans in a random compass direction and is lifted by `sin(lean)` as it goes over, which approximates
+  pivoting on the stump without re-rigging all nine tree builders.
+- **Dawn regrowth**: `treesFelledToday` is counted by every fell, and `regrowTrees()` at dawn plants exactly
+  that many via the extracted `plantTree()` — the same placement rules as world-build (spacing, never in the
+  watering hole, LOD wrap for big trees), so there is no second drifting copy of that logic.
+
+### ⚠ This closes a risk flagged on 2026-07-30m
+Cobras fell ~**2.6 % of the map's trees per day** and **nothing regrew**, so the forest thinned monotonically —
+about a quarter gone by day 10, quietly removing the player's escape routes. The forest is now **stable by
+construction**: whatever comes down goes back up at dawn, whether the axe or a cobra took it.
+
+### Verified
+| pin | result |
+|---|---|
+| [E] on a standing tree | +1 wood, **tree still standing**, 30 s cooldown |
+| axe fells | HP 120 → 78 → 36 → **FELLED in 3 swings**, **+4 wood**, out of `treeObjects`, mesh alive for the topple |
+| topple animation | lean reaches **1.57 rad = π/2 exactly** (flat) over 1.15 s, then the mesh disposes; 0 left in `fallingTrees` |
+| dawn regrowth | 767 → **768**, counter reset to 0 |
+| cobra felling still works | 6 bites, **0 wood** (destruction, not harvest) — and it **counts toward regrowth** |
+- 0 console errors.
+
 Each phase is an independent commit so it can be iterated in isolation.

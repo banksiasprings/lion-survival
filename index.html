@@ -1563,30 +1563,38 @@ function createTrees(){
   // shuffle
   for(let i=bag.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; [bag[i],bag[j]]=[bag[j],bag[i]]; }
 
+  TREE_BAG = bag;                       // kept for the dawn respawn (see regrowTrees)
   const placed=[];
-  bag.forEach(item=>{
-    let x,z,ok=false,att=0;
-    const spacing=item.big?6:3.8;
-    while(att++<40 && !ok){
-      x=rand(-MAPR,MAPR); z=rand(-MAPR,MAPR);
-      ok = !placed.some(p=>Math.hypot(p[0]-x,p[1]-z)<spacing)
-        && !(wateringHole && Math.hypot(x-wateringHole.x,z-wateringHole.z)<wateringHole.r+2);
-    }
-    if(!ok) return;
-    placed.push([x,z]);
-    const built=item.fn();
-    const y=terrainY(x,z);
-    let obj;
-    if(item.big){ obj=lodWrap(built); } else { obj=built.group; }
-    obj.position.set(x,y,z);
-    obj.rotation.y=rand(0,Math.PI*2);
-    obj.name='tree';
-    obj.userData.isTree=true;
-    scene.add(obj);
-    treeObjects.push({ mesh:obj, pos:new THREE.Vector3(x,y,z), cooldown:0,
-      type:item.name, big:!!item.big, climbable:built.climbable, perchY:built.perchY,
-      canopyR:built.canopyR, trunkR:built.trunkR, thorn:!!built.group.userData.thorn });
-  });
+  bag.forEach(item=>{ plantTree(item, placed); });
+}
+// Plant ONE tree. Extracted from createTrees so the dawn regrowth can reuse the exact
+// same placement rules (spacing, no spawning in the watering hole, LOD wrap for big
+// trees) rather than a second, drifting copy.
+let TREE_BAG = null;
+function plantTree(item, placed){
+  let x,z,ok=false,att=0;
+  const spacing=item.big?6:3.8;
+  while(att++<40 && !ok){
+    x=rand(-MAPR,MAPR); z=rand(-MAPR,MAPR);
+    ok = (!placed || !placed.some(p=>Math.hypot(p[0]-x,p[1]-z)<spacing))
+      && !(wateringHole && Math.hypot(x-wateringHole.x,z-wateringHole.z)<wateringHole.r+2);
+  }
+  if(!ok) return null;
+  if(placed) placed.push([x,z]);
+  const built=item.fn();
+  const y=terrainY(x,z);
+  let obj;
+  if(item.big){ obj=lodWrap(built); } else { obj=built.group; }
+  obj.position.set(x,y,z);
+  obj.rotation.y=rand(0,Math.PI*2);
+  obj.name='tree';
+  obj.userData.isTree=true;
+  scene.add(obj);
+  const t = { mesh:obj, pos:new THREE.Vector3(x,y,z), cooldown:0,
+              type:item.name, big:!!item.big, climbable:built.climbable, perchY:built.perchY,
+              canopyR:built.canopyR, trunkR:built.trunkR, thorn:!!built.group.userData.thorn };
+  treeObjects.push(t);
+  return t;
 }
 
 // =====================================================================
@@ -3584,16 +3592,17 @@ function nearestClimbableTree(pos, maxD){
 // player's wood harvesting destroy their own climbing trees is a change Steven did not
 // ask for and would quietly remove his escape spots.
 const TREE_HP = { normal:120, big:240 };
+const TREE_FELL_WOOD = [3, 4];   // Steven: felling gives 3–4 wood; [E] on a standing tree still gives 1
 const TREE_ATTACK_R = 20;      // how far a cobra will go out of its way for a tree (< the 26 it will go for a creature)
 
 function treeMaxHp(t){ return t.big ? TREE_HP.big : TREE_HP.normal; }
 // Damage a tree. Returns true if this blow felled it.
-function damageTree(t, dmg, icon){
+function damageTree(t, dmg, icon, woodYield){
   if(!t || treeObjects.indexOf(t) < 0) return false;
   if(t.hp == null){ t.maxHp = treeMaxHp(t); t.hp = t.maxHp; }   // lazy init — trees are placed at world build
   t.hp -= dmg;
   if(t.hp > 0) return false;
-  fellTree(t, icon);
+  fellTree(t, icon, woodYield || 0);   // cobras pass no yield — only the axe harvests
   return true;
 }
 // Bring a tree down and free it. Everything that can be HOLDING this tree is released
@@ -3604,16 +3613,67 @@ function damageTree(t, dmg, icon){
 //     tree-siesta and turret work), so removing it from the array is enough
 //   • the gorilla's perch → `updateGorillas` already guards with
 //     `treeObjects.includes(G.perchTree)` and re-picks
-function fellTree(t, icon){
+// Trees TOPPLE now rather than vanishing (2026-07-31, Steven: "when it says axe fell
+// the tree, the trees don't disappear — can you make them fall over?"). The tree comes
+// out of `treeObjects` IMMEDIATELY (every holder polls that array, so all the perch /
+// ambush / siesta guards fire on the same frame), but the MESH lives on in
+// `fallingTrees[]` for the topple, then disposes.
+const TREE_FALL_TIME = 1.15;    // seconds from upright to flat
+let fallingTrees = [];
+let treesFelledToday = 0;       // dawn regrows exactly this many — see regrowTrees()
+function fellTree(t, icon, woodYield){
   const i = treeObjects.indexOf(t);
   if(i < 0) return;
   if(player.inTree && (grapple.tree === t || playerShelterTree() === t)) dropFromTree();
   treeObjects.splice(i, 1);                       // out of the array FIRST — every holder polls this
   for(let k=0;k<5;k++)
     spawnDustPuff(new THREE.Vector3(t.pos.x+rand(-1.6,1.6), t.pos.y, t.pos.z+rand(-1.6,1.6)));
-  killObj(t.mesh);
+  // Topple about the BASE: pivot around the trunk foot, in a random compass direction.
+  fallingTrees.push({ mesh:t.mesh, t:0, dir:rand(0,Math.PI*2), baseY:t.pos.y, big:!!t.big });
+  treesFelledToday++;
   shakeTime = Math.max(shakeTime, 0.25); shakeAmt = 0.005;
-  showKillfeed((icon||'🌳')+' A tree comes crashing down!');
+  if(woodYield > 0){
+    woodCount += woodYield; updateWoodHUD();
+    showKillfeed((icon||'🪓')+' Timber! +'+woodYield+' wood ('+woodCount+')');
+  } else {
+    showKillfeed((icon||'🌳')+' A tree comes crashing down!');
+  }
+}
+// Animate the topple, then free the mesh. Rotating the GROUP about its own origin
+// would spin it around its middle and sink the canopy through the ground, so the mesh
+// is lifted by half its lean as it goes over — a cheap approximation of pivoting on
+// the stump that reads correctly without re-rigging every tree builder.
+function updateFallingTrees(dt){
+  for(let i=fallingTrees.length-1;i>=0;i--){
+    const f = fallingTrees[i];
+    f.t += dt;
+    const k = Math.min(1, f.t/TREE_FALL_TIME);
+    const ease = k*k*(3-2*k);                        // smoothstep — slow start, hard landing
+    const lean = ease * Math.PI/2;
+    f.mesh.rotation.z = Math.cos(f.dir) * lean;
+    f.mesh.rotation.x = Math.sin(f.dir) * lean;
+    f.mesh.position.y = f.baseY + Math.sin(lean) * (f.big ? 1.6 : 0.7);
+    if(k >= 1){
+      f.mesh.traverse(o=>{ if(o.material && o.material.transparent !== undefined){} });
+      killObj(f.mesh);
+      fallingTrees.splice(i,1);
+    }
+  }
+}
+// Dawn regrowth. Steven: "however many trees I cut down, they respawn the next day."
+// ⚠ This also closes the attrition risk flagged on 2026-07-30m: cobras fell ~2.6% of
+// the map's trees per day and NOTHING regrew, so the map thinned monotonically. Now the
+// forest is stable by construction — whatever came down goes back up at dawn.
+function regrowTrees(){
+  if(treesFelledToday <= 0 || !TREE_BAG || !TREE_BAG.length) return;
+  const n = treesFelledToday;
+  treesFelledToday = 0;
+  let grown = 0;
+  for(let k=0;k<n;k++){
+    const item = TREE_BAG[(Math.random()*TREE_BAG.length)|0];
+    if(plantTree(item, null)) grown++;
+  }
+  if(grown > 0) showKillfeed('🌱 '+grown+' new tree'+(grown===1?'':'s')+' have grown overnight');
 }
 
 function playerShelterTree(){
@@ -8897,11 +8957,23 @@ function dealKitMelee(hit, dmg, tool){
 function kitAxe(){
   spawnAxeSwing();
   // Priority 1: chop the nearest ready tree for wood (quicker than the 30s hand-collect).
+  // ⚠ The axe FELLS now (2026-07-31). It used to be a free renewable harvest node
+  // (8 s cooldown, +1 wood, tree untouched). Steven: "instead of getting one wood can
+  // you get like three to four… you can still press E to collect wood but it doesn't
+  // cut the tree down, you get one. If you cut it down you get like three to four."
+  // So: [E] = 1 wood, tree stands (doCollect, unchanged). AXE = damage → topple →
+  // TREE_FELL_WOOD. At 42 damage a swing that is 3 swings for a normal tree, 6 for a big one.
   let tree=null, td=4.2;
-  treeObjects.forEach(t=>{ const d=t.pos.distanceTo(player.pos); if(d<td && (t.cooldown||0)<=0){ td=d; tree=t; } });
+  treeObjects.forEach(t=>{ const d=t.pos.distanceTo(player.pos); if(d<td){ td=d; tree=t; } });
   if(tree){
-    tree.cooldown = 8; woodCount++; updateWoodHUD();
-    showKillfeed('🪓 Chopped wood ('+woodCount+')'); playSound('collect');
+    const yield_ = TREE_FELL_WOOD[0] + ((Math.random()*(TREE_FELL_WOOD[1]-TREE_FELL_WOOD[0]+1))|0);
+    if(damageTree(tree, 42, '🪓', yield_)){
+      shakeTime = Math.max(shakeTime, 0.16); shakeAmt = 0.005;
+    } else {
+      const hp = tree.hp, mx = tree.maxHp;
+      showKillfeed('🪓 Chopping — '+Math.max(0,Math.ceil(hp/42))+' more swing'+(Math.ceil(hp/42)===1?'':'s'));
+    }
+    playSound('throw');
     return true;
   }
   // Priority 2: heavy melee on an animal in front. Reach 6.0 — mid-screen, longer than
@@ -9526,6 +9598,7 @@ function updateDayNight(dt){
   if(dn.isDay !== wasDay){ healAllAnimals(); }     // day↔night turn → every animal reheals
   if(dn.isDay && !wasDay){                          // DAWN → a new day
     grantDailyCoins(dn.day);                        // paid for the day that JUST ENDED
+    regrowTrees();                                  // 🌱 whatever was felled yesterday comes back
     dn.day++;
     spawnDailyWave();                               // 3 lions, 2 gorillas, 2 rhinos
     showKillfeed('🌅 Day '+dn.day+' — fresh predators move in');
@@ -9960,6 +10033,7 @@ function resetGame(){
   [...carcasses].forEach(c=>{ removeVultures(c); killObj(c.mesh); });
   [..._dustPuffs].forEach(d=>killObj(d.mesh));
   if(grapple.line){ killObj(grapple.line); }
+  [...fallingTrees].forEach(f=>killObj(f.mesh)); fallingTrees.length=0; treesFelledToday=0;
   clearVenomSpits();                                         // dispose any venom blobs still in flight from a canopy cobra
   clearFireTorch();                                          // dispose any lit Fire Torch ability FX (light + flame mesh)
   clearKitFX();                                              // dispose transient axe swings + drop kit-wall refs (wall meshes freed below)
@@ -10047,6 +10121,7 @@ function animate(){
   updateDayNight(dt);
   updateWeather(dt);          // storm (after day/night — scales its lighting)
   updateWater(dt);            // 💧 ripple the pool surface
+  updateFallingTrees(dt);     // 🌳 topple animation for felled trees
   updateAbilities(dt);        // kit: cooldowns, timed buffs, EQUIP mods, fire-torch FX (before player/stealth read them)
   updatePlayer(dt);
   updateStealth(dt);
