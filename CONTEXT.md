@@ -1178,4 +1178,74 @@ Steven: *"Is that the cobra still sleeps in grass? What is this? Grass. Grass. I
   `state!=='AMBUSH_COIL'` creature-AI unreachability guards: the 3-D `FIGHT_R` distance already protects it,
   and a **secretary bird** — the cobra's dedicated predator — finding it asleep is a fight worth having.
 
+
+## Serpent civil war — all three variants fight each other (2026-07-30c)
+Steven: *"if there's one of all of them — so worm, python, and cobra — I want them to be able to battle each
+other. If there's multiple in the game."*
+
+- **Diagnosis first: it was half-wired, and the missing half was the cobra.** `snakeCruiseTarget` already
+  scanned rival serpents (added 2026-07-29), so the **python and worm were already fighting each other**.
+  But **`snakeNightTarget` — the cobra's night-hunt picker — had no snake scan at all.** It listed lion, dog,
+  gorilla, rhino, secretary, eagle and prey, and stopped. So the one time all three are on the ground together
+  (after dark) the cobra was the only one not joining in, which is exactly why "they don't fight each other"
+  read as true. **That missing scan is the headline fix.**
+- **Functions extended** (no new state, no new combat path — everything rides `snakeBite`'s existing
+  `kind==='snake'` branch, which already wounds, staggers, tags `lastHitBy`, applies venom and calls
+  `snakeCredit`):
+  - **`snakeNightTarget`** — gained `scan(snakeMeshes, 'snake', O=>snakeRivalSkip(S,O))`. **The fix.**
+  - **`snakeCruiseTarget`** — its hand-rolled skip replaced with the shared `snakeRivalSkip`.
+  - **`snakeFoeValid`** — the `k==='snake'` grudge test now uses reachability instead of a blanket
+    `state!=='AMBUSH_COIL'`.
+  - **`pickSpitTarget`** — same shared skip, so a canopy cobra sprays rivals it can see but not into another canopy.
+- **Three small shared predicates** replace four copies of `state==='AMBUSH_COIL'`:
+  - `snakeInCanopy(T)` — `AMBUSH_COIL` **or** a tree `SIESTA_SLEEP`. **This closes a hole today's tree-siesta
+    commit opened:** the old checks only knew about `AMBUSH_COIL`, so once the cobra started sleeping 3 m up a
+    tree, a worm could bite it through thin air. Now it can't.
+  - `snakeTreedOutOfReach(S,T)` — `snakeInCanopy(T) && !S.v.tree`. **Only the python climbs** (`v.tree`, the
+    same capability behind its tree-grab), so it is the one serpent that can fight in a canopy. Deliberately
+    NOT "a treed snake is safe": per Steven, sleepers are not shielded — the cobra is reachable by the animal
+    that can actually get to it, and answers with venom or a spray of it.
+  - `snakeRivalSkip(S,T)` — `T===S || T.dying || same variant || out of reach`. (The `T===S` guard matters:
+    `snakeNightTarget`'s scan has no self-check of its own.)
+- **`_climb` reused for the python's trunk rear.** When a python bites a serpent that is `snakeInCanopy`, it
+  ramps `_climb` toward 1 (decays at 3.0/s otherwise, and in the no-target branch). `layoutSnake` already
+  lifts the head render up to 3.4 and tips it down from that field — **purely visual, `S.pos` stays on the
+  deck**, so no new geometry, no new state, no hitbox change. Without it the python's head sat at ankle height
+  while it bit something three metres up. Verified it reaches 1.0 in a turret fight and decays to 0 in 4 s.
+- **Hierarchy is EMERGENT — no table anywhere.** It falls out of the existing HP/damage/venom numbers.
+  Isolated duels (other animals cleared, 40 s, day and night both):
+  | Fight | Winner | Kill at | Winner's end state |
+  |---|---|---|---|
+  | python vs cobra | **python** | 13.6 s day / 14.2 s night | 331 HP → poisoned → ground to **1 HP** by t=34 |
+  | cobra vs worm | **cobra** | 11.5 s / 11.3 s | 260 HP, clean (the worm carries no venom) |
+  | python vs worm | **python** | 9.2 s | 600 HP, barely scratched |
+  **python > cobra > worm**, which is the python-beats-cobra outcome Steven called "more interesting" and it
+  needed no tuning at all. Growth fired on every win (14→15 segments, `growth:1`).
+- **⚠ THE EMERGENT BEHAVIOUR WORTH FLAGGING: the cobra loses and wins anyway.** One bite lands the venom, and
+  `applyCreatureVenom` scales to the victim's own maxHealth — it bleeds *anything* to 1 HP in 60 s. So the
+  python wins the exchange on raw dps and then bleeds out to 1 HP regardless. **A python that has just killed
+  a cobra is the softest target on the map** — for a worm, a lion, or the player. Against a low-HP **turret**
+  it is even starker: the turret dies in ~2 python bites but gets one spit away first, and that single spit
+  still drags the python from 1000 to ~600 and falling. A dying cobra is never a free kill.
+- **Other emergent notes:**
+  - A cobra wounded below `RETREAT_HP` *during* a serpent fight breaks off, climbs, and dies as a turret — the
+    turret mechanic composes with the civil war without a special case (observed unprompted in a duel).
+  - **No runaway chase.** A speed-14 cobra can never catch a speed-32 worm, but instrumenting a 60 s isolated
+    pair showed only **19 % lock time** in both `NIGHT_HUNT` *and* `CRUISE`, because the targeting is **mutual**
+    — the worm closes the distance itself instead of fleeing — and the venom finishes it even after it breaks
+    away (max gap 105 m, worm still died). `NIGHT_GIVEUP` never had to carry it.
+  - A **worm** facing a treed cobra wanders off to find a reachable target (tree distance 7 → 80 m) rather
+    than milling at the trunk. **No stalemate.**
+- **Verified:** targeting matrix correct in all six directions, grounded and treed; `CANOPY_VIOLATIONS` (a
+  non-climber locked onto a canopy serpent) held at **0** across a 190 s full-ecosystem soak with 4–5 serpents;
+  live snake-vs-snake lock counts in that soak `cobra→worm`, `worm→cobra`, `python→cobra`, `cobra→python` all
+  non-zero; growth observed on all three variants (worm reached 23 segments); **0 errors, 0 NaN, 0 console
+  errors**; **0 scene / 0 geometries / 0 textures** leaked across 3 full kill-collapse-respawn cycles;
+  `_climb` never stuck on; `resetGame` clean.
+- **⚠ Interpretive calls (report, not silently tuned):** (a) **same-species serpents still don't fight** —
+  pre-existing, and Steven's ask was explicitly worm-vs-python-vs-cobra; (b) **no numbers were touched** —
+  the hierarchy is whatever the existing HP/damage produce, so re-tuning any serpent's HP or bite silently
+  re-orders it; (c) the **python's canopy reach** uses the existing 2-D `MELEE_R` bite check with `_climb` as
+  the visual justification, rather than a new climb state — cheapest honest way to let the one climber climb.
+
 Each phase is an independent commit so it can be iterated in isolation.

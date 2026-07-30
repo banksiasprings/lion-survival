@@ -295,6 +295,37 @@ two exceptions are the **elephant and the rhino**, which they won't start on —
 serpents' predation clean off the herds: **prey survivors more than doubled** while the gorilla population
 roughly halved.
 
+### 🐍🪱☠️ SERPENT CIVIL WAR — all three fight each other
+If more than one **species** of serpent is on the map, they go for each other. Each uses its own weapon (the
+python's bite, the worm's bite, the cobra's bite + venom + canopy spit) — there is no special "snake duel"
+code and no winner table, so the outcome falls straight out of their HP and damage. They never attack their
+**own** species.
+
+**Who wins, measured in isolated duels:**
+
+| Fight | Winner | Over in | …and the winner is left |
+|---|---|---|---|
+| 🐍 python vs ☠️ cobra | **python** | ~14 s | **on 1 HP** — poisoned, and the venom grinds it down from 331 |
+| ☠️ cobra vs 🪱 worm | **cobra** | ~11 s | on 260 HP, unharmed by poison (the worm has none) |
+| 🐍 python vs 🪱 worm | **python** | ~9 s | on 600 HP, barely scratched |
+
+So the pecking order is **python > cobra > worm** — but read the last column, because that's the real story.
+**The cobra loses to the python and ruins it anyway.** A single bite lands the venom, and the venom doesn't
+care how big you are: it bleeds *anything* to 1 HP in 60 seconds. The python walks away from the fight and
+then bleeds out to 1 HP regardless. **A python that has just killed a cobra is the easiest kill on the map** —
+for a worm, for a lion, or for you. Watch for the fight, then take the winner.
+
+**A canopy cobra can only be fought by the python.** Only the python **climbs** (the same ability behind its
+tree-grab), so it is the one serpent that can rear up a trunk and take the fight into the branches — against
+a coiled ambush, a low-HP turret, *or* a sleeping cobra (sleepers get no protection; it's a fight worth
+having). A **worm can't climb**: it ignores a treed cobra entirely and goes looking for something it can
+actually reach, so it never stands under the tree looking useless — it just eats a face full of venom spit on
+its way past. A **non-turret** cobra that gets bitten in its canopy is knocked out of the tree and the fight
+finishes on the ground; a **turret** stays up and defends by spitting.
+
+**Every kill counts for growth.** Killing a rival serpent grants the same **+1 segment / +1 damage to every
+bite** as any other kill, so a serpent that wins a civil war comes out of it bigger *and* hitting harder.
+
 #### 🐍 Sand python — the tanky constrictor
 - **Sandy tan** with darker **carpet-python brown blotches**. HP **1000** (**by far the tankiest thing in
   the game** — ~13 spears / 20 bolts / 10 boomerangs). **Bites for 50** on a **1 s cooldown**.

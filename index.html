@@ -6000,7 +6000,7 @@ function pickSpitTarget(S){
   scan(secretaryMeshes, 'secretary', B=>!secretaryGrounded(B));       // its own predator — the fight cuts both ways
   scan(eagleMeshes, 'eagle', E=>!eagleGrounded(E));
   scan(preyMeshes, 'prey');
-  scan(snakeMeshes, 'snake', O=>O.v.key===S.v.key || O.state==='AMBUSH_COIL');   // not its own kind, not one up a tree
+  scan(snakeMeshes, 'snake', O=>snakeRivalSkip(S, O));   // a rival species it can actually reach (see snakeTreedOutOfReach)
   return best;
 }
 
@@ -6368,9 +6368,46 @@ function snakeNightTarget(S){
   // fight cuts both ways. A bird in the air is skipped (nothing to strike at).
   scan(secretaryMeshes, 'secretary', B=>!secretaryGrounded(B));
   scan(eagleMeshes, 'eagle', E=>E.dying || !eagleGrounded(E));
+  // RIVAL SERPENTS (2026-07-30c). This scan was simply MISSING: the cobra's night
+  // hunt listed every other predator on the map but not the other two serpents, so
+  // the one time all three are on the ground together — after dark — the cobra was
+  // the only one not joining in. It is the whole reason "they don't fight each
+  // other" read as true even though snakeCruiseTarget already had the python and
+  // worm going for each other.
+  scan(snakeMeshes, 'snake', O=>snakeRivalSkip(S, O));
   scan(preyMeshes, 'prey');
   return best;
 }
+// ---- SERPENT vs SERPENT: who can reach whom (2026-07-30c) ------------
+// Steven: "if there's one of all of them — worm, python and cobra — I want them to
+// be able to battle each other."
+//
+// Is this serpent up in a canopy? Two ways in: the cobra's day drop-ambush /
+// low-HP turret (AMBUSH_COIL) and its midday TREE siesta. Both put S.pos at
+// terrainY + perchY, so anything judging reach in 2-D would otherwise happily bite
+// a snake three metres over its head. (That second case is a hole the tree siesta
+// opened earlier today — before it, a sleeping cobra was on the ground and every
+// 2-D reach check was honest.)
+function snakeInCanopy(T){
+  return T.state==='AMBUSH_COIL'
+      || (T.state==='SIESTA_SLEEP' && !!(T.siestaSpot && T.siestaSpot.tree));
+}
+// Can serpent S get at serpent T? ONLY THE SAND PYTHON CLIMBS — `v.tree` is the
+// same capability that lets it coil up a trunk and tree-grab a sheltered player —
+// so it is the one serpent that can take a fight INTO a canopy. The worm has no
+// business up there and skips a treed target for something it can actually reach.
+// Deliberately NOT a blanket "a treed snake is safe" rule: per Steven, a sleeping
+// cobra is a fight worth having, exactly like the secretary bird's. The cobra is
+// not shielded — it is simply only reachable by the animal that can climb, and it
+// answers with the hood, the venom or a spray of it (see cobraSpitTick).
+function snakeTreedOutOfReach(S, T){
+  return snakeInCanopy(T) && !S.v.tree;
+}
+// One predicate for "is that rival serpent a legal target for me right now".
+function snakeRivalSkip(S, T){
+  return T===S || T.dying || T.v.key===S.v.key || snakeTreedOutOfReach(S, T);
+}
+
 // Who a CRUISING serpent goes after — the 🪱 pink worm and 🐍 sand python (and a
 // cobra that has no ambush tree). Steven, 2026-07-29: the worm "went through a
 // lion and a gorilla" because its hunt list was PREY ONLY. Both serpents now hunt
@@ -6398,7 +6435,7 @@ function snakeCruiseTarget(S){
   scan(gorillaMeshes, 'gorilla', G=>G.state==='perched');                  // one up a tree is out of reach
   scan(secretaryMeshes, 'secretary', B=>!secretaryGrounded(B));            // its own predator — the fight cuts both ways
   scan(eagleMeshes, 'eagle', E=>E.dying || !eagleGrounded(E));
-  scan(snakeMeshes, 'snake', O=>O.dying || O.v.key===S.v.key || O.state==='AMBUSH_COIL');
+  scan(snakeMeshes, 'snake', O=>snakeRivalSkip(S, O));   // rival species only, and only one it can physically reach
   scan(preyMeshes, 'prey', P=>P.species==='elephant');                     // the bull is not on the menu
   return best;
 }
@@ -6431,7 +6468,9 @@ function snakeFoeValid(S){
                : (k==='secretary'||k==='eagle') ? groundBirdValid(t, k)
                // Serpent vs serpent (2026-07-29): a worm and a python will fight.
                // One collapsing, or a cobra up an ambush tree, is not a live foe.
-               : k==='snake' ? (snakeMeshes.includes(t) && !t.dying && t.state!=='AMBUSH_COIL') : false;
+               // Serpent vs serpent: hold the grudge as long as it is still something
+               // we can physically get at (a canopy is python-only — snakeTreedOutOfReach).
+               : k==='snake' ? (snakeMeshes.includes(t) && !t.dying && !snakeTreedOutOfReach(S, t)) : false;
   if(!inList) return false;
   return Math.hypot(t.pos.x-S.pos.x, t.pos.z-S.pos.z) < SNAKE.FOE_LEASH;
 }
@@ -6919,9 +6958,18 @@ function updateSnakes(dt){
 
     if(tgt){
       const dx=tgt.x-S.pos.x, dz=tgt.z-S.pos.z, d=Math.hypot(dx,dz);
+      // A python biting a serpent up a TREE rears up the trunk to reach it. _climb is
+      // purely a render lift (layoutSnake raises the head up to 3.4 and tips it down;
+      // S.pos, the hitbox/aim/minimap anchor, stays on the deck) — the same field the
+      // tree-grab already drives, so no new geometry, no new state and no hitbox
+      // change. Without it the python's head floated at ankle height while it bit
+      // something three metres up.
+      const climbing = biteKind==='snake' && S.target && snakeInCanopy(S.target) && d < SNAKE.MELEE_R*1.6;
+      S._climb = clamp((S._climb||0) + (climbing ? dt*2.2 : -dt*3.0), 0, 1);
       if(d>SNAKE.MELEE_R){ snakeStep(S, tgt.x, tgt.z, spd, dt); }
       else { faceSnake(S, dx, dz, dt); S.pos.y=terrainY(S.pos.x,S.pos.z)+0.5; if(S.biteCd<=0){ snakeBite(S, biteKind); S.biteCd=S.v.BITE_CD; } }
     } else {
+      S._climb = clamp((S._climb||0) - dt*3.0, 0, 1);      // nothing to rear at → come back down
       S.wanderTimer-=dt;
       if(S.wanderTimer<0){ S.wanderDir.set(rand(-1,1),0,rand(-1,1)).normalize(); S.wanderTimer=rand(3,6); }
       let tx=S.pos.x+S.wanderDir.x*10, tz=S.pos.z+S.wanderDir.z*10;
