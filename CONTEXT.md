@@ -2461,4 +2461,56 @@ therefore a faithful render of what the game actually draws, not a mock-up.
 - Panels: `minimap_markers.png` (real radar), `minimap_croc_choice.png` (why not blue),
   `minimap_yellow_band.png` (the four existing golds vs the concentric cheetah)
 
+
+## 🐊 CROC vs WALLS — and the bite that reached through them (2026-07-31)
+Steven, live-testing: *"crocodiles can walk through walls, which I want you to fix."*
+
+### Why it happened
+`crocStep` was written as **pure water movement** and never joined the ground-predator collision path. It had
+**no wall handling of any kind** — not a swept test, not a resting-contact pass, nothing. Every other ground
+mover (dog, cheetah, secretary bird, serpent) already had both.
+
+Fixed by giving it the identical two-stage treatment: the **exact swept slab test** (`segCrossesWall`) to stop
+tunnelling mid-step, then the shared **MTV** primitive (`collideWalls` + `collideStoneWalls`, both of which wrap
+`pushOutOfAABB`) for resting contact. `CROC.BODY_R = 0.6` — the body is 1.06 wide, so half-width plus margin.
+The croc is the **fifth animal** on that one implementation; it reaches `pushOutOfAABB` through the same two
+wrappers the wild dog uses rather than calling it directly.
+
+### ⚠ The leash can TELEPORT, and that had to be covered too
+The instant a lunge ends the limit shrinks from `LUNGE_RANGE 7.0` back to `BANK_MARGIN 3.0`, so a croc 5.5 out
+gets yanked 2.5 units toward the pond **in a single frame**. That is exactly the kind of jump that crosses a
+wall. The swept test therefore runs from the **true frame start** (`bx,bz`, captured before any movement) to
+the **post-clamp** position, so it covers the leash snap as well as the walking. A blocked croc consequently
+sits against the wall and may stay briefly outside its leash — which is correct: it cannot teleport home
+through solid timber either.
+
+### 🐛 SECOND BUG — stopping the body was only half the job
+With collision in, a croc pressed against a shut gate **still bit the prey straight through it**. `GRAB_R` is
+3.4 and a wall is 0.3 thick, so the target sat well inside reach even with the body correctly stopped.
+Measured: prey wounded through a gate the croc could not pass. Every croc attack — bite, player grab, and
+animal seize — is now gated on line of sight via `segHitsWall`, the same test that stops a rhino goring through
+a wall. **This is the bug that actually mattered for Steven's shelter**: without it, hiding behind a wall
+looked safe and wasn't.
+
+### Verified
+| pin | result |
+|---|---|
+| lunging croc vs closed **wall** | **blocked**, stops 0.80 short (= body radius + wall half-thickness) |
+| …vs **stone** | **blocked**, identical |
+| lunging croc vs closed **gate** | **blocked**, stops 0.87 short, **prey unharmed through it** |
+| lunging croc vs **open gate** | **passes through** — 0.33 past the barrier plane, reaches the prey |
+| gate **re-shut** | blocks again, prey safe again (via the game's own `updateGates` re-arm, after the swing) |
+| **basking** croc vs wall across the shore | blocked |
+| pond rim treated as a wall? | **no** — 0 AABBs with no walls placed, rim never blocks |
+| water behaviour | unchanged — 22.7 units of free swimming across the pond |
+| **60 s shelter soak** | player **2.03 away** across a wall: **never grabbed, never damaged**, croc never crossed |
+| cheetah-45 regression | **0/24** approach angles tunnel |
+- 0 console errors.
+
+⚠ Test-staging note for future sessions: walls are **2.5 long**, so a "doorway" must skip a span of at least
+±2.6 or the flanking walls close the gap themselves — an early run looked like a gate failure and was actually
+a 0.7-wide hole the croc legitimately could not fit through. And gate state must be driven the way the game
+does it: `open` disarms instantly, but **shutting re-arms only after the swing finishes**, so calling
+`registerGateCollision` directly captures the swung-open AABB and seals nothing.
+
 Each phase is an independent commit so it can be iterated in isolation.

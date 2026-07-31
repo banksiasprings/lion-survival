@@ -9400,6 +9400,7 @@ const CROC = {
   LUNGE_SPEED: 8.0,   // fast out of the water…
   LUNGE_TIME:  3.2,   // …but it can only sustain it for this long
   LUNGE_CD:    9.0,   // then it must go back and recover
+  BODY_R:      0.6,   // collision radius — the body is 1.06 wide, so this is half-width + margin
   // --- day rhythm (Steven: basking, bottom-lurking, cruising) ---
   BASK_MIN:  14, BASK_MAX: 30,
   LURK_MIN:  10, LURK_MAX: 24,
@@ -9608,8 +9609,16 @@ function crocPickTarget(C){
 
 
 // ---- movement: swim inside the bowl, waddle on the bank, always leashed ----
+// ⚠ WALLS. Steven, live-testing: "crocodiles can walk through walls, which I want you
+// to fix." They could — crocStep was written as pure water movement and never joined the
+// ground-predator collision path, so it had no wall handling of ANY kind.
+//
+// Now it uses the same two-stage treatment every other ground mover uses (dog, cheetah,
+// secretary bird, serpent): the EXACT swept slab test to stop tunnelling mid-step, then
+// the shared MTV primitive for resting contact. `pushOutOfAABB` now has five callers.
 function crocStep(C, tx, tz, speed, dt){
   const cl = crocClampToPond(C, tx, tz);
+  const bx = C.pos.x, bz = C.pos.z;                       // where it started this frame
   const dx = cl.x-C.pos.x, dz = cl.z-C.pos.z, d = Math.hypot(dx,dz);
   if(d > 0.05){
     const step = Math.min(speed*dt, d);
@@ -9620,9 +9629,22 @@ function crocStep(C, tx, tz, speed, dt){
     while(dd<-Math.PI) dd+=Math.PI*2;
     C.heading += dd*Math.min(1, 4.0*dt);
   }
-  // hard leash — belt and braces, in case anything moves C.pos directly
+  // Hard leash — belt and braces, in case anything moves C.pos directly.
+  // ⚠ This can be a JUMP, not a step: the instant a lunge ends the limit shrinks from
+  // LUNGE_RANGE back to BANK_MARGIN, so a croc 5.5 out gets yanked 2.5 units toward the
+  // pond in one frame. That is exactly the kind of teleport that crosses a wall, which
+  // is why the swept test below runs against `bx,bz` (the true frame start) and covers
+  // the clamp as well as the movement.
   const p2 = crocClampToPond(C, C.pos.x, C.pos.z);
   C.pos.x = p2.x; C.pos.z = p2.z;
+
+  // Swept anti-tunnel (exact slab, no sampling): if the whole frame's displacement
+  // crossed a wall, take none of it. A blocked croc therefore sits against the wall
+  // rather than popping through — and may sit briefly outside its leash, which is
+  // correct: it cannot teleport home through solid timber either.
+  if(segCrossesWall(bx, bz, C.pos.x, C.pos.z, CROC.BODY_R)){ C.pos.x = bx; C.pos.z = bz; }
+  collideWalls(C.pos, CROC.BODY_R);          // resting contact — wood AND stone
+  collideStoneWalls(C.pos, CROC.BODY_R);     // …and the stone-only pass, same as the dog
   C.mesh.rotation.y = C.heading;
 }
 // Vertical placement: rides at the waterline when cruising, flat on the bed when
@@ -9901,7 +9923,13 @@ function updateCrocodiles(dt){
         const tp = (t===player) ? player.pos : t.pos;
         const d = Math.hypot(tp.x-C.pos.x, tp.z-C.pos.z);
         const spd = (C.state==='LUNGE') ? CROC.LUNGE_SPEED : CROC.SPD_CHARGE;
-        if(d > CROC.GRAB_R){ crocStep(C, tp.x, tp.z, spd, dt); }
+        // ⚠ Stopping the BODY at a wall is only half the job. GRAB_R is 3.4 and a wall is
+        // 0.3 thick, so a croc pressed against a closed gate still had its target well
+        // inside reach and bit straight through it — measured: prey wounded through a
+        // shut gate the croc could not pass. Every attack below is now gated on line of
+        // sight, the same segHitsWall test that stops a rhino goring through a wall.
+        const blocked = segHitsWall(C.pos.x, C.pos.z, tp.x, tp.z);
+        if(d > CROC.GRAB_R || blocked){ crocStep(C, tp.x, tp.z, spd, dt); }
         else if(t===player){
           if(C.grabCd<=0 && !playerGrabbed() && crocGrab.graceT<=0){ crocBeginGrab(C); }
           else if(C.biteCd<=0){

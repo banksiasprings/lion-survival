@@ -97,6 +97,10 @@ croc **explodes out** and snatches it — that's how it takes animals drinking a
 up for ~3 seconds, then it must go back and recover for ~9. **Outrun it and you're safe for good** — it will
 never chase you across the map.
 
+**Walls stop it.** A crocodile cannot cross a wood or stone wall, or a **shut gate** — and it cannot bite you
+through one either. Leave a gate **open** and it will come straight through. (Both were broken until
+2026-07-31: crocs walked through walls, and even once stopped they could still bite through them.)
+
 **Animals fear it on land.** Prey bolt from a croc they can see: basking, cruising, charging or ashore. But a
 croc lying **motionless on the bottom is invisible to them** — that's the ambush, and it's why animals still
 come down to drink.
