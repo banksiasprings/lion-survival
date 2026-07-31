@@ -79,6 +79,19 @@
 **Spears-to-kill:** gazelle/impala/warthog/zebra/wildebeest **1** · kudu **2** · giraffe **3** ·
 lion **5** · gorilla **10** · rhino **14** · **elephant 15**.
 
+### 🌿 Your own bramble fence will cut you
+The fence is **symmetric**: **20 damage** to whatever walks into it and **half speed** while you're inside —
+**and that includes you**. Push back through your own line and it costs you 20 HP and slows you to a crawl, so
+where you put it matters. It re-pricks the same victim every 1.2 s, and stepping out stops it immediately.
+Thorns are on the **ground** — you're clear of them on a roof, on a wall, or up a tree.
+
+### 🏠 A roof is real overhead cover
+Stand **under** a roof and a **sky vulture dive (30)** or a **martial eagle stoop (25)** is turned away
+completely. Step out and you're fair game again — the roof protects the tile, not you. The **secretary bird**
+never dives; its 15-damage kick is a ground attack, and it can't reach you on a roof at all.
+**Standing on top of a roof is the reverse deal:** nothing on the ground can touch you, but the sky can see you
+perfectly. Want cover from birds up there? Build a second roof over the first.
+
 ### 🎒 Carrying things — [T] / the TAKE button
 You have **one hand and it holds one thing**. Press **[T]** (phone: the 🎒 **TAKE** button, which flips to
 **DROP** and lights up while your hand is full) to pick up the nearest thing you can carry, and press it again

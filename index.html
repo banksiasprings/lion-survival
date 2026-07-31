@@ -1706,7 +1706,7 @@ function spawnCheetah(){
 // because at 45 the cheetah covers 2.25 units per clamped frame and a wall is 0.3
 // thick. segCrossesWall is EXACT (slab method, no sampling), so speed cannot defeat it.
 function cheetahStep(C, tx, tz, speed, dt){
-  speed *= waterSpeedMul(C.pos.x, C.pos.z)*brambleSpeedMul(C.pos.x, C.pos.z) * brambleSpeedMul(C.pos.x, C.pos.z);
+  speed *= waterSpeedMul(C.pos.x, C.pos.z)*brambleSpeedMul(C.pos.x, C.pos.z);
   const bx=C.pos.x, bz=C.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
   if(d>0.001){ const step=Math.min(speed*dt,d); C.pos.x+=dx/d*step; C.pos.z+=dz/d*step; }
   C.pos.x=clamp(C.pos.x,-HALF+1,HALF-1); C.pos.z=clamp(C.pos.z,-HALF+1,HALF-1);
@@ -9127,6 +9127,14 @@ function updateBrambles(dt){
   if(gameState!=='playing' || !kitBrambles.length) return;
   const prick = (e, isPlayer)=>{
     if(!brambleAt(e.pos.x, e.pos.z)){ e._brambleCd = 0; return; }
+    // ⚠ brambleAt is XZ-only, so it says "yes" to anything in the COLUMN above the
+    // thorns. Thorns are on the GROUND: a player on a roof, on a wall or up a tree —
+    // and a secretary bird mid-flight — are metres clear of them and must not be
+    // scratched. playerOffGround() is the same predicate every other ground-only
+    // attack uses (it covers inTree / climbing / grappling / anything above 1.5).
+    // Ground animals all sit at exactly terrain height, so 0.5 is a safe airborne cut.
+    if(isPlayer ? playerOffGround()
+                : (e.pos.y - terrainY(e.pos.x, e.pos.z)) > 0.5){ e._brambleCd = 0; return; }
     e._brambleCd = (e._brambleCd||0) - dt;
     if(e._brambleCd > 0) return;
     e._brambleCd = BRAMBLE.RECHARGE;

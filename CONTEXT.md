@@ -2203,4 +2203,55 @@ silently keyboard-only. `doTouchAction('eat')` now mirrors the full `[E]` chain
 | soak | 1800 frames, **0 errors**, 1.26 ms/frame, held mesh tracking the camera at 1.05 |
 - 0 console errors.
 
+
+## ✅ LOCKED-IN: bramble hurts you, roofs stop aerial attacks (2026-07-31)
+Steven, verbatim: *"Make the bramble fence into you. hurt you. Make it do twenty damage to you as well.
+Roof, make it stop aerial attacks. I don't really care. As long as they can stop aerial attacks and you can
+walk on them."*
+
+Both were already shipped as specified in `92b3797` / `a34f6f0`. Re-verified rather than assumed — and the
+verification pass turned up **three bugs**, all mine, all from this session.
+
+### Bramble — symmetric, confirmed by measurement
+Player **20**, lion **20**, `0.5×` speed inside and `1.0` outside, `1.2 s` recharge so you're not shredded
+frame-by-frame, and stepping out stops it dead.
+
+### Roofs — every aerial attacker is covered
+There are exactly **three** places a bird damages the player, and all three now behave:
+| attacker | outside | under a roof |
+|---|---|---|
+| 🦅 sky vulture dive | 30 | **0** |
+| 🦅 martial eagle stoop | 25 | **0** |
+| 🦩 secretary bird | 15 | **0** (see below) |
+
+⚠ **The secretary bird has no aerial attack to block.** It's a ground bird — `secretaryKick` was always gated
+on `!playerOffGround()`. Standing on a roof already reads as off-ground, so the kick can't reach you there.
+Nothing needed gating; it's covered by a different mechanism than the other two.
+
+**Standing ON a roof is deliberately exposed to birds** (the roof is *below* you) but immune to ground
+attackers. Under the roof is the exact opposite. The roof top is a lookout that trades ground safety for sky
+exposure — which is what makes it a real choice rather than a free win.
+
+### 🐛 Bug 1 — brambles reached through solid floors
+`brambleAt` is **XZ-only**, so it answered "yes" for the entire *column* above the thorns. Measured: a player
+standing on a roof **3.59 m up took 20**, and a player **6 m up a tree took 20**. A flying secretary bird would
+have been pricked mid-air too (the other birds escaped only by not being in the prick list — luck, not design).
+Fixed with a grounded gate: `playerOffGround()` for the player (the same predicate every other ground-only
+attack uses, covering tree/climb/grapple/walls/roofs), and a `0.5` airborne cut for animals — safe because
+**every ground species sits at exactly terrain height**, verified across all eight lists.
+
+### 🐛 Bug 2 — the cheetah was double-slowed
+`cheetahStep` applied `brambleSpeedMul` **twice**, so the fastest animal in the game crawled at `0.25×` in
+thorns instead of `0.5×`. Typo in `92b3797`, now applied once.
+
+### 🐛 Bug 3 — see the carry commit
+The phone **EAT** button never got the gate/berry chain, making both keyboard-only on the device Steven
+actually plays on.
+
+### Verified
+- On a roof over thorns **0** (was 20) · up a tree over thorns **0** (was 20) · flying secretary **0**
+- Grounded player **20** · grounded lion **20** · grounded secretary **20** — spec untouched
+- Dive blocked under the roof, allowed 9 units clear
+- 1800-frame soak parked in thorns under a roof: **0 errors**, 0 console errors
+
 Each phase is an independent commit so it can be iterated in isolation.
