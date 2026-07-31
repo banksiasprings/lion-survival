@@ -2289,7 +2289,7 @@ clean minute: **BASK 38% · CRUISE 40% · LURK 15% · CHARGE 7%**. Day favours b
 ### The grab — and the counterplay
 | | |
 |---|---|
-| HP | **600** (~5 spears) |
+| HP | **600** (8 spears — corrected 2026-07-31; a spear is 80, not the ~120 I first assumed) |
 | Bite (grab on cooldown) | 26 |
 | **Death roll** | **20 per 1.35 s** |
 | **Oxygen** | **2.5× drain** — measured 22.5/s vs 9/s |
@@ -2337,5 +2337,83 @@ ecosystem constraint** rather than a local hazard. Flagging it now because that 
 - Territorial: **lion took 55 in the pond**, prey attacked, **another pond's animals ignored**, rhino ignored
 - Dawn restock: 0 crocs → **all 3 ponds** repopulated
 - 1800-frame soak **1.12 ms/frame**, 0 errors, 0 console errors
+
+
+## 🐊 CROC FIXES — weapons, fear, the lunge, and a real walk (2026-07-31)
+Steven, testing live: *"I cannot get the crocodile with the hammer or spear or any weapon… when they come out
+of the water, the animals don't run away from them… I want them, if they're close enough, they keep chasing
+something out of water… make their tails move when they're swimming. And when they're on land… a little bit up
+and then move the leg forward and then it goes down."*
+
+### 🐛 BUG 1 — the croc was targetable but unhittable, and so was the CHEETAH
+Not a hit-height gate and not a missing target-list entry: `nearestAnimalInFront` *did* return the croc, so the
+swing aimed at it correctly. The failure was one layer down. **`dealKitMelee` is an if/else-if chain on
+`hit.kind` with no `crocodile` branch and no trailing `else`** — so the chain fell off the end and did nothing.
+No damage, no message, no clue. The thrown-weapon path (`updateThrownRocks`) has the same shape: a run of
+`if(!hit) <list>.forEach(...)` blocks, with no croc block.
+
+⚠ **The same two gaps made the CHEETAH invulnerable to every weapon since it shipped in `92b3797`** — hammer,
+axe, spear, rock, bolt, all of them. Steven hadn't hit that yet. Both animals are now in both paths, **and
+`dealKitMelee` has a generic `else`**, so the next animal added is merely unpolished, never immune.
+
+Corrected while here: a croc is **8 spears**, not the ~5 first claimed — a spear does 80, not ~120.
+
+### 🐛 BUG 2 — nothing feared a croc on land (or a cheetah, anywhere)
+The prey threat scan listed lions, gorillas, dogs, snakes and the player. **Existing infrastructure, two
+predators simply never registered in it** — so prey grazed calmly beside a basking crocodile *and* beside the
+fastest predator in the game, which is why a cheetah sprint never read as a hunt.
+
+⚠ **Design nuance:** prey fear a croc they can SEE — basking, cruising, charging, lunging, on land. A croc
+lying motionless and submerged in `LURK` gives **no tell**. If prey sensed that, nothing would ever drink and
+the entire ambush state would be dead weight. Verified both ways: the lurker is not sensed, the basking one is.
+
+### 🐊 THE LUNGE — 7 units past the rim
+Steven: *"if they're close enough, they keep chasing something out of water."* A croc that can only touch things
+already floating in the pool can never take an animal **drinking at the edge**, which is the single most
+crocodile thing there is. So `LUNGE` widens the leash from `BANK_MARGIN 3.0` to **`LUNGE_RANGE 7.0`**, at speed
+8.0, for **3.2 s**, then a **9 s cooldown**. Deliberately short: this is a snatch, not a hunt — outrun it and
+you have won permanently. **The lunge is the only thing that ever widens the leash, and it is itself
+time-boxed, so there is no path to a croc roaming the map.** Breaking off explicitly steers it back to its own
+pond centre rather than merely stopping, because a croc that gave up on dry land would otherwise be stranded in
+a state with no land behaviour.
+
+### 🎨 Visuals — and a third bug
+Mesh rebuilt: tapered three-slab torso (narrowing to the hips), staggered scute rows plus a centre keel,
+mottled back, long flat snout with nostrils and a hinged jaw, interlocking teeth, gold slit eyes on raised brow
+mounds, a 5-segment tail whose twin crest merges into one fin, and jointed legs with toes.
+
+**Tail** — a *travelling* wave: each segment lags the last by 0.85 rad, so it visibly runs hips-to-tip, with
+amplitude and rate both scaled by real measured speed. The body counter-rotates slightly so the sway looks like
+it *drives* the croc rather than flapping on a static log.
+
+**Legs** — Steven's four phases exactly: **LIFT** (0–0.35, straight up) → **SWING** (0.35–0.5, carried forward
+while raised) → **PLANT** (0.5–0.6, set down ahead) → **STANCE** (0.6–1.0, dragging back under the body).
+**Diagonal pairs** (front-left+back-right, then front-right+back-left) — verified numerically: pairs match to
+1e-6 and are out of phase with each other.
+
+### 🐛 BUG 3 — the animation never ran at all
+`crocAnimate` read `C._tailSegs` / `C._legs` / `C._body`, but the rig lives on **`C.mesh`**. Every lookup was
+`undefined`, so the entire animation block silently no-opped and crocs slid around completely rigid. Found by
+asserting the rig actually moves rather than trusting that calling the function was enough. Now bound once at
+the top of the function. **Confirmed live: the tail moves on 100% of frames in every state; legs animate in
+BASK (14%) and LUNGE (22%) — the states where it is genuinely out of the water — and tuck otherwise.**
+
+### Verified
+| pin | result |
+|---|---|
+| hammer on croc | **67 damage** (was 0) |
+| spear on croc | **80 damage** (was 0) · 8 throws to kill |
+| hammer/spear on **cheetah** | both land (were 0 — invulnerable since `92b3797`) |
+| prey flees land croc | **yes**, state → `flee`, distance grows |
+| ambush preserved | submerged `LURK` croc **not** sensed |
+| lunge | fires, reached **3.33** past rim, seized pinned prey, never exceeded 7.0 |
+| returns to water | stranded **5.5** past the rim → back in the pool in **0.92 s** |
+| ignores prey beyond range | never chased, **0** past rim, prey untouched |
+| walk rig | stride range **0.275**, lift range **0.11**, diagonals match to 1e-6 |
+| swim rig | travelling wave (signs alternate down the tail), amplitude **0.23 → 0.35** with speed |
+| 60 s mixed soak | 0 errors, max **3.07** past rim, 3 crocs alive |
+- Renders: `dossiers/croc_render.png` (3 views), `croc_walk.png` (6 gait frames),
+  `croc_swim.png` (tail wave), `croc_gait.png` (the foot path plotted from `leg_phase()`).
+- 0 console errors.
 
 Each phase is an independent commit so it can be iterated in isolation.

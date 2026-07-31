@@ -3627,6 +3627,19 @@ function updatePrey(dt){
     gorillaMeshes.forEach(G=>{ if(G.state==='perched'||G.state==='sleeping') return; const d=G.pos.distanceTo(P.pos); if(d<td){td=d;threat=G.pos;} });
     dogMeshes.forEach(D=>{ const d=D.pos.distanceTo(P.pos); if(d<td){td=d;threat=D.pos;} });
     snakeMeshes.forEach(S=>{ if(S.dying) return; const d=S.pos.distanceTo(P.pos); if(d<td){td=d;threat=S.pos;} });
+    // 🐆 the cheetah was missing here too — prey grazed calmly beside the fastest
+    // predator in the game, which is why a sprint never looked like a hunt.
+    cheetahMeshes.forEach(C=>{ if(C.health<=0) return; const d=C.pos.distanceTo(P.pos); if(d<td){td=d;threat=C.pos;} });
+    // 🐊 Steven: "when they come out of the water, the animals don't run away from them."
+    // ⚠ But a croc lying motionless on the BOTTOM is an ambush predator — if prey sensed
+    // that, no animal would ever drink and the whole LURK state would be dead weight. So
+    // prey fear a croc they can actually SEE: basking, cruising, charging, lunging or on
+    // land. A submerged lurker stays invisible, and that's the ambush working as designed.
+    crocMeshes.forEach(C=>{
+      if(C.health<=0) return;
+      if(C.state==='LURK' && crocSubmerged(C)) return;      // hidden on the bed — no tell
+      const d=C.pos.distanceTo(P.pos); if(d<td){td=d;threat=C.pos;}
+    });
     const pd=player.pos.distanceTo(P.pos);
     // Grass/crouch (stealth.visMul) hide you from the herd too — creep up to ambush.
     if(pd<td && !player.inTree && pd < P.fleeDist*stealth.visMul){ td=pd; threat=player.pos; }
@@ -8669,6 +8682,30 @@ function updateThrownRocks(dt){
       }
     });
 
+    // 🐊 Crocodile — tanky (600). Same reason as the melee fallback: it was targetable
+    // but had no projectile block, so spears and bolts passed straight through.
+    if(!hit) crocMeshes.forEach(C=>{
+      if(C.health>0 && projHit(r, C)){
+        C.health -= r.crossbow ? 50 : r.spear ? 80 : 15*m;
+        C.flashTimer = 0.25;
+        C.target = player; C.targetKind = 'player';
+        C.lastHitBy = player; C.lastHitKind = 'player';
+        hit = true;
+        showKillfeed(C.health<=0 ? ic+' The crocodile is dead!' : ic+' '+wname+' bites into the crocodile!');
+      }
+    });
+    // 🐆 Cheetah — squishy (70): a spear or bolt puts it down.
+    if(!hit) cheetahMeshes.forEach(C=>{
+      if(C.health>0 && projHit(r, C)){
+        C.health -= r.crossbow ? 50 : r.spear ? C.maxHealth : 15*m;
+        C.flashTimer = 0.25;
+        C.lastHitBy = player; C.lastHitKind = 'player';
+        if(isRock) rockStun(C, 1.0);
+        hit = true;
+        showKillfeed(C.health<=0 ? ic+' The cheetah is down!' : ic+' '+wname+' hits the cheetah!');
+      }
+    });
+
     if(hit || r.dist > (r.crossbow ? CROSSBOW_RANGE : 50)){
       killObj(r.mesh);
       thrownRocks.splice(i,1);
@@ -9353,7 +9390,16 @@ const CROC = {
   SPD_CHARGE: 9.5,    // the lunge — faster than you can swim (player swim is ~1/3 speed)
   SPD_BANK:   1.5,    // the waddle up onto the bank; crocs are slow on land by design
   DETECT:      26,    // notices anything this close…
-  BANK_MARGIN: 3.0,   // …and will follow it up to this far past its own rim, no further
+  BANK_MARGIN: 3.0,   // …and normally will not go further than this past its own rim
+  // 🐊 THE LUNGE. Steven: "if they're close enough, they keep chasing something out of
+  // water." A croc that can only ever touch things floating in the pool can never take
+  // an animal DRINKING at the edge — which is the single most crocodile thing there is.
+  // So it may burst out to LUNGE_RANGE past the rim, and no further. Deliberately short:
+  // this is a snatch, not a hunt. Anything that outruns it wins, permanently.
+  LUNGE_RANGE: 7.0,   // max distance past the rim while lunging
+  LUNGE_SPEED: 8.0,   // fast out of the water…
+  LUNGE_TIME:  3.2,   // …but it can only sustain it for this long
+  LUNGE_CD:    9.0,   // then it must go back and recover
   // --- day rhythm (Steven: basking, bottom-lurking, cruising) ---
   BASK_MIN:  14, BASK_MAX: 30,
   LURK_MIN:  10, LURK_MAX: 24,
@@ -9366,69 +9412,121 @@ function playerGrabbed(){ return !!crocGrab.croc; }
 
 function makeCrocodile(x, z, pool){
   const g = new THREE.Group();
-  const dark  = lmat(0x2b3327);   // wet olive-black back
-  const mid   = lmat(0x3d4632);   // flank
-  const belly = lmat(0x7d7f5e);   // pale underside
-  const tooth = lmat(0xe8e2cf);
-  const eye   = lmat(0xc9a227);   // gold slit eye
+  // Palette: wet olive-black on top fading to a pale gravel belly, with the scutes and
+  // the jaw picked out lighter. Mottling comes from THREE tones on the back rather than
+  // one flat colour — a single-tone box is what made the first pass read as a brick.
+  const dark  = lmat(0x232a1e);   // wet near-black olive (dorsal)
+  const mid   = lmat(0x39432c);   // flank
+  const moss  = lmat(0x4a5433);   // mottle highlight
+  const belly = lmat(0x8b8a66);   // pale gravel underside
+  const tooth = lmat(0xeee7d2);
+  const eye   = lmat(0xd4a92a);   // gold slit eye
+  const pupil = lmat(0x0a0a06);
 
-  // Body: a long low wedge — 4.6 units nose to tail-tip, sitting barely above the waterline.
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.52, 2.1), dark);
-  torso.position.y = 0.34; torso.castShadow = true; g.add(torso);
-  const under = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.2, 2.0), belly);
-  under.position.y = 0.13; g.add(under);
-  // Scutes — the armoured ridges. Two rows, the visual cue that says "do not fight this".
-  for(let i=0;i<7;i++){
-    for(const sx of [-0.24, 0.24]){
-      const sc = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.17, 4), mid);
-      sc.position.set(sx, 0.6, -0.9 + i*0.3); g.add(sc);
+  // ---- BODY: tapered, low and long. Three stacked slabs instead of one box so the
+  // silhouette narrows toward the hips the way a real croc does. ----
+  const body = new THREE.Group(); g.add(body); g._body = body;
+  const seg = (w,h,d,z,mat,y)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
+    m.position.set(0,y,z); m.castShadow=true; body.add(m); return m; };
+  seg(1.02, 0.50, 0.9,  0.55, dark, 0.36);   // chest — widest
+  seg(0.94, 0.46, 0.9, -0.30, dark, 0.35);   // midriff
+  seg(0.78, 0.40, 0.8, -1.05, mid,  0.33);   // hips — narrower
+  seg(0.98, 0.17, 2.5, -0.15, belly, 0.12);  // pale underside running the length
+  // mottling: a few flat plates of the lighter moss tone scattered along the back
+  for(let i=0;i<9;i++){
+    const w=rand(0.16,0.3);
+    const m=new THREE.Mesh(new THREE.BoxGeometry(w,0.04,rand(0.16,0.34)), moss);
+    m.position.set(rand(-0.34,0.34), 0.60, rand(-1.35,0.95)); body.add(m);
+  }
+  // ---- SCUTES: the armoured ridges. Two staggered rows + a centre keel. ----
+  for(let i=0;i<9;i++){
+    const z = -1.4 + i*0.29;
+    for(const sx of [-0.26, 0.26]){
+      const sc = new THREE.Mesh(new THREE.ConeGeometry(0.095, 0.2, 4), mid);
+      sc.position.set(sx, 0.60, z); sc.rotation.y = Math.PI/4; body.add(sc);
+    }
+    if(i%2===0){
+      const k = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.14, 4), mid);
+      k.position.set(0, 0.63, z); k.rotation.y = Math.PI/4; body.add(k);
     }
   }
-  // Head: long flat snout, the silhouette that reads instantly at a distance.
-  const head = new THREE.Group(); head.position.set(0, 0.3, 1.42); g.add(head);
-  const skull = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.34, 0.7), dark);
-  skull.position.z = -0.1; head.add(skull);
-  const snout = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.22, 0.86), dark);
-  snout.position.set(0, -0.03, 0.6); head.add(snout);
-  const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.13, 0.84), belly);
-  jaw.position.set(0, -0.17, 0.58); head.add(jaw); head._jaw = jaw;
-  for(let i=0;i<7;i++){                       // the grin
-    const t1 = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.13, 4), tooth);
-    t1.position.set(-0.17 + (i%2)*0.34, -0.12, 0.25 + (i*0.09)); t1.rotation.x = Math.PI; head.add(t1);
+
+  // ---- HEAD: long flat snout, wider at the jaw hinge, nostrils on the tip. ----
+  const head = new THREE.Group(); head.position.set(0, 0.30, 1.05); g.add(head); g._head = head;
+  const skull = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.30, 0.62), dark);
+  skull.position.z = 0.16; skull.castShadow=true; head.add(skull);
+  const snout = new THREE.Mesh(new THREE.BoxGeometry(0.40, 0.20, 0.92), dark);
+  snout.position.set(0, -0.02, 0.92); head.add(snout);
+  const tip = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.16, 0.2), dark);
+  tip.position.set(0, -0.02, 1.44); head.add(tip);
+  for(const nx of [-0.08,0.08]){                       // nostrils
+    const n=new THREE.Mesh(new THREE.SphereGeometry(0.045,5,4), mid);
+    n.position.set(nx, 0.08, 1.5); head.add(n);
   }
-  for(const ex of [-0.19, 0.19]){             // eyes ON TOP — the periscope look
-    const e = new THREE.Mesh(new THREE.SphereGeometry(0.085, 6, 5), eye);
-    e.position.set(ex, 0.19, -0.05); head.add(e);
-    const b = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), dark);
-    b.position.set(ex, 0.13, -0.05); b.scale.set(1,0.7,1); head.add(b);
+  // lower jaw — hinged at the back so it opens properly
+  const jaw = new THREE.Group(); jaw.position.set(0, -0.11, 0.2); head.add(jaw); g._jaw = jaw;
+  const jawM = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.14, 1.14), belly);
+  jawM.position.z = 0.6; jaw.add(jawM);
+  // interlocking teeth, upper and lower
+  for(let i=0;i<9;i++){
+    const z = 0.34 + i*0.13, sx = (i%2? 0.15 : -0.15);
+    const tu = new THREE.Mesh(new THREE.ConeGeometry(0.032, 0.12, 4), tooth);
+    tu.position.set(sx, -0.12, z); tu.rotation.x = Math.PI; head.add(tu);
+    const tl = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.1, 4), tooth);
+    tl.position.set(-sx, 0.07, z-0.2+0.2); jaw.add(tl);
   }
-  // Tail: four tapering segments, so the swim animation has something to ripple.
-  const tail = new THREE.Group(); tail.position.set(0, 0.32, -1.05); g.add(tail); g._tail = tail;
-  let prev = tail;
-  const segs = [];
-  for(let i=0;i<4;i++){
-    const w = 0.62 - i*0.13, h = 0.4 - i*0.07;
-    const seg = new THREE.Group(); seg.position.z = i===0 ? 0 : -0.45;
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.5), i<2?dark:mid);
-    m.position.z = -0.22; seg.add(m);
-    if(i<3){ const fin = new THREE.Mesh(new THREE.ConeGeometry(0.08,0.2,4), mid);
-             fin.position.set(0, h*0.5+0.05, -0.22); seg.add(fin); }
-    prev.add(seg); prev = seg; segs.push(seg);
+  // eyes ON TOP, on raised brow mounds — the periscope silhouette when submerged
+  for(const ex of [-0.2, 0.2]){
+    const brow = new THREE.Mesh(new THREE.SphereGeometry(0.115, 7, 6), dark);
+    brow.position.set(ex, 0.15, 0.02); brow.scale.set(1,0.8,1.1); head.add(brow);
+    const e = new THREE.Mesh(new THREE.SphereGeometry(0.075, 7, 6), eye);
+    e.position.set(ex, 0.23, 0.03); head.add(e);
+    const pu = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.09, 0.05), pupil);
+    pu.position.set(ex, 0.28, 0.055); head.add(pu);       // vertical slit
+  }
+
+  // ---- TAIL: 5 tapering segments with a double crest that merges into one. ----
+  const tail = new THREE.Group(); tail.position.set(0, 0.32, -1.4); g.add(tail);
+  let prev = tail; const segs = [];
+  for(let i=0;i<5;i++){
+    const w = 0.6 - i*0.1, h = 0.42 - i*0.06;
+    const sg = new THREE.Group(); sg.position.z = i===0 ? 0 : -0.42;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.46), i<2?dark:mid);
+    m.position.z = -0.21; m.castShadow=true; sg.add(m);
+    // crest: two rows that converge to a single fin by the 3rd segment
+    if(i<2){ for(const cx of [-0.11,0.11]){
+        const f=new THREE.Mesh(new THREE.ConeGeometry(0.07,0.22,4), mid);
+        f.position.set(cx, h*0.5+0.07, -0.21); sg.add(f); } }
+    else { const f=new THREE.Mesh(new THREE.ConeGeometry(0.06,0.26,4), mid);
+           f.position.set(0, h*0.5+0.09, -0.21); sg.add(f); }
+    prev.add(sg); prev = sg; segs.push(sg);
   }
   g._tailSegs = segs;
-  // Legs — splayed, short. They matter only for the bank waddle.
+
+  // ---- LEGS: splayed, short, with a real upper/lower joint so the gait can bend
+  // them. Order is [front-left, front-right, back-left, back-right] — the walk cycle
+  // below depends on that index order for its diagonal pairs. ----
   const legs = [];
-  for(const [lx,lz] of [[-0.52,0.75],[0.52,0.75],[-0.55,-0.5],[0.55,-0.5]]){
-    const leg = new THREE.Group(); leg.position.set(lx, 0.22, lz);
-    const up = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.14,0.3), mid);
-    up.position.set(lx<0?-0.12:0.12, -0.02, 0); up.rotation.z = lx<0?0.5:-0.5; leg.add(up);
-    const ft = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.09,0.24), mid);
-    ft.position.set(lx<0?-0.24:0.24, -0.16, 0.02); leg.add(ft);
-    g.add(leg); legs.push(leg);
+  const legDef = [[-0.5,0.62,1],[0.5,0.62,-1],[-0.52,-0.95,1],[0.52,-0.95,-1]];
+  for(const [lx,lz,side] of legDef){
+    const hip = new THREE.Group(); hip.position.set(lx, 0.30, lz); g.add(hip);
+    const upper = new THREE.Mesh(new THREE.BoxGeometry(0.17,0.15,0.17), mid);
+    upper.position.set(side*0.13, -0.06, 0); upper.rotation.z = side*0.55; hip.add(upper);
+    const knee = new THREE.Group(); knee.position.set(side*0.26, -0.13, 0); hip.add(knee);
+    const lower = new THREE.Mesh(new THREE.BoxGeometry(0.13,0.2,0.13), mid);
+    lower.position.y = -0.09; knee.add(lower);
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.22,0.07,0.26), mid);
+    foot.position.set(side*0.03, -0.2, 0.03); knee.add(foot);
+    for(let t=0;t<3;t++){                                  // toes
+      const c=new THREE.Mesh(new THREE.ConeGeometry(0.028,0.09,4), belly);
+      c.position.set(side*0.03 + (t-1)*0.07, -0.22, 0.17); c.rotation.x=-Math.PI/2.2; knee.add(c);
+    }
+    legs.push({ hip, knee, side, restY: 0.30, restZ: lz });
   }
   g._legs = legs;
   g.name = 'crocodile';
   const gy = terrainY(x,z);
+
   g.position.set(x, gy, z);
   scene.add(g);
 
@@ -9437,6 +9535,7 @@ function makeCrocodile(x, z, pool){
     health:CROC.HEALTH, maxHealth:CROC.HEALTH,
     state:'LURK', stateT:rand(0,8), heading:rand(0,Math.PI*2),
     biteCd:0, grabCd:0, flashTimer:0, stunTimer:0,
+    lungeCd:0, lungeT:0, gait:0,
     target:null, targetKind:null, dest:null, swimY:0, bob:rand(0,6.28),
     label:'crocodile', species:'crocodile',
   };
@@ -9463,7 +9562,9 @@ function crocSubmerged(C){
 // why a croc physically cannot follow you across the map.
 function crocClampToPond(C, x, z){
   const w = C.pool, dx = x-w.x, dz = z-w.z, d = Math.hypot(dx,dz);
-  const lim = w.r + CROC.BANK_MARGIN;
+  // ⚠ the ONLY thing that ever widens the leash is an active lunge, and that is itself
+  // time-boxed by LUNGE_TIME. There is no path to a croc roaming the map.
+  const lim = w.r + (C.state==='LUNGE' ? CROC.LUNGE_RANGE : CROC.BANK_MARGIN);
   if(d <= lim) return {x, z};
   return { x: w.x + dx/d*lim, z: w.z + dz/d*lim };
 }
@@ -9471,17 +9572,25 @@ function crocInRange(C, x, z){
   const w = C.pool;
   return Math.hypot(x-w.x, z-w.z) <= w.r + CROC.BANK_MARGIN;
 }
+// Reachable if the croc commits to a lunge — the wider ring it will burst out to.
+function crocInLungeRange(C, x, z){
+  const w = C.pool;
+  return Math.hypot(x-w.x, z-w.z) <= w.r + CROC.LUNGE_RANGE;
+}
 // Everything that enters the water is prey. Steven: "attack everything that comes near
 // the waterhole" — so this scans PREDATORS as well as prey, and the player.
 function crocPickTarget(C){
   let best=null, bk=null, bd=CROC.DETECT;
   const consider=(e,kind)=>{
     if(!e || !(e.health>0) || e.dying) return;
-    if(!crocInRange(C, e.pos.x, e.pos.z)) return;      // not at MY pond → not my problem
+    // in the water/bank always; out on the shore only while a lunge is available
+    const reach = (C.lungeCd<=0 || C.state==='LUNGE') ? crocInLungeRange : crocInRange;
+    if(!reach(C, e.pos.x, e.pos.z)) return;            // not at MY pond → not my problem
     const d = Math.hypot(e.pos.x-C.pos.x, e.pos.z-C.pos.z);
     if(d < bd){ bd=d; best=e; bk=kind; }
   };
-  if(gameState==='playing' && crocGrab.graceT<=0 && crocInRange(C, player.pos.x, player.pos.z)){
+  const preach = (C.lungeCd<=0 || C.state==='LUNGE') ? crocInLungeRange : crocInRange;
+  if(gameState==='playing' && crocGrab.graceT<=0 && preach(C, player.pos.x, player.pos.z)){
     const d = Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z);
     if(d < bd){ bd=d; best=player; bk='player'; }
   }
@@ -9534,16 +9643,96 @@ function crocPlaceY(C, dt){
   C.bob += dt;
 }
 // Tail sway + jaw. Motionless while lurking — that's the ambush read.
-function crocAnimate(C, dt, moving){
-  const amp = C.state==='LURK' ? 0 : (C.state==='CHARGE' ? 0.42 : 0.2);
-  const rate = C.state==='CHARGE' ? 9 : 3.4;
-  if(C._tailSegs) C._tailSegs.forEach((sg,i)=>{
-    sg.rotation.y = Math.sin(C.bob*rate - i*0.7) * amp * (0.5 + i*0.2);
-  });
-  const jaw = C.mesh.children.find(o=>o.type==='Group' && o._jaw);
-  if(jaw && jaw._jaw){
-    const open = (C.state==='CHARGE' || C.state==='GRAB') ? 0.34 : 0.02;
-    jaw._jaw.rotation.x += (open - jaw._jaw.rotation.x) * Math.min(1, 8*dt);
+// Speed-driven animation. `spd` is how fast it actually moved this frame, so the tail
+// beats harder when it swims harder and the legs stride at the pace it walks — the
+// motion is never decoupled from the movement.
+function crocAnimate(C, dt, spd){
+  // ⚠ The rig lives on the GROUP (C.mesh), not on the record. Reading C._tailSegs /
+  // C._legs directly gave undefined and the whole animation block silently no-opped —
+  // crocs slid about completely rigid. Bind once, here, so there is one place to get
+  // this wrong instead of six.
+  const M = C.mesh;
+  const tailSegs = M._tailSegs, legs = M._legs, bodyG = M._body;
+  const swimming = crocSubmerged(C) || C.state==='CRUISE' || C.state==='CHARGE';
+
+  // ---------- TAIL ----------
+  // Steven: "make their tails move when they're swimming." A travelling wave down the
+  // segments (each one lags the last), amplitude scaled by speed so a drifting croc
+  // barely stirs and a charging one thrashes. On land the tail just drags, low and slow.
+  if(tailSegs){
+    const norm = Math.min(1, spd / CROC.SPD_CHARGE);
+    const amp  = C.state==='LURK' ? 0.02
+               : (swimming ? 0.12 + norm*0.5 : 0.05 + norm*0.16);
+    const rate = swimming ? (3.2 + norm*7.5) : (2.2 + norm*3);
+    tailSegs.forEach((sg,i)=>{
+      // i*0.85 phase lag = the wave visibly travels from hips to tail-tip
+      sg.rotation.y = Math.sin(C.bob*rate - i*0.85) * amp * (0.45 + i*0.22);
+    });
+    // the body counter-rotates a little, so the sway drives the croc rather than
+    // looking like a tail flapping on a static log
+    if(bodyG) bodyG.rotation.y = Math.sin(C.bob*rate + 0.6) * amp * 0.16;
+  }
+
+  // ---------- LEGS ----------
+  // Steven, verbatim: "a little bit up and then move the leg forward and then it goes
+  // down" — so this is a real four-phase gait, NOT an up/down bob:
+  //   phase 0.00–0.35  LIFT      foot rises off the ground
+  //   phase 0.35–0.50  SWING     …and travels FORWARD while up
+  //   phase 0.50–0.60  PLANT     it comes back down, ahead of where it started
+  //   phase 0.60–1.00  STANCE    planted, dragging back as the body moves over it
+  // Diagonal pairs move together (front-left + back-right, then front-right + back-left)
+  // which is how a real crocodile walks — that's what stops it looking like a toy.
+  if(legs){
+    const walking = !swimming && spd > 0.15;
+    C.gait = (C.gait||0) + (walking ? dt * (1.1 + spd*0.55) : dt*0.6);
+    legs.forEach((lg, idx)=>{
+      // idx 0=FL 1=FR 2=BL 3=BR → diagonals (0,3) and (1,2) share a phase
+      const diag = (idx===0 || idx===3) ? 0 : 0.5;
+      const ph = ((C.gait + diag) % 1 + 1) % 1;
+      let lift=0, fwd=0;
+      if(!walking){
+        lift = 0; fwd = 0;                       // swimming/still: legs tucked back
+        lg.hip.rotation.x += (0 - lg.hip.rotation.x) * Math.min(1, 6*dt);
+        lg.knee.rotation.x += ((swimming ? 0.5 : 0) - lg.knee.rotation.x) * Math.min(1, 6*dt);
+        lg.hip.position.y += (lg.restY - lg.hip.position.y) * Math.min(1, 8*dt);
+        lg.hip.position.z += (lg.restZ - lg.hip.position.z) * Math.min(1, 8*dt);
+        return;
+      }
+      if(ph < 0.35){                 // LIFT — straight up, barely moving forward
+        const k = ph/0.35;
+        lift = Math.sin(k*Math.PI*0.5) * 0.11;
+        fwd  = k * 0.05;
+      } else if(ph < 0.5){           // SWING — carried forward while still raised
+        const k = (ph-0.35)/0.15;
+        lift = 0.11;
+        fwd  = 0.05 + k * 0.23;
+      } else if(ph < 0.6){           // PLANT — set down ahead
+        const k = (ph-0.5)/0.1;
+        lift = 0.11 * (1-k);
+        fwd  = 0.28;
+      } else {                       // STANCE — planted, dragging back under the body
+        const k = (ph-0.6)/0.4;
+        lift = 0;
+        fwd  = 0.28 * (1-k) - 0.06*k;
+      }
+      lg.hip.position.y = lg.restY + lift;
+      lg.hip.position.z = lg.restZ + fwd;
+      lg.hip.rotation.x = -fwd * 0.9;            // the limb angles with the stride
+      lg.knee.rotation.x = lift * 2.6;           // and folds as it lifts
+    });
+    // body rocks slightly onto whichever diagonal is planted — the waddle
+    if(bodyG && walking){
+      bodyG.rotation.z = Math.sin(C.gait*Math.PI*2) * 0.055;
+      bodyG.position.y = Math.abs(Math.sin(C.gait*Math.PI*2)) * 0.02;
+    } else if(bodyG){
+      bodyG.rotation.z *= 0.9; bodyG.position.y *= 0.9;
+    }
+  }
+
+  // ---------- JAW ----------
+  if(C.mesh._jaw){
+    const open = (C.state==='CHARGE' || C.state==='LUNGE' || C.state==='GRAB') ? 0.5 : 0.03;
+    C.mesh._jaw.rotation.x += (open - C.mesh._jaw.rotation.x) * Math.min(1, 9*dt);
   }
 }
 
@@ -9656,13 +9845,15 @@ function updateCrocodiles(dt){
       showKillfeed('🐊 The crocodile is dead.');
       continue;
     }
+    C._px = C.pos.x; C._pz = C.pos.z;      // for the true per-frame speed below
     C.stateT += dt;
-    C.biteCd = Math.max(0, C.biteCd - dt);
-    C.grabCd = Math.max(0, C.grabCd - dt);
+    C.biteCd  = Math.max(0, C.biteCd  - dt);
+    C.grabCd  = Math.max(0, C.grabCd  - dt);
+    C.lungeCd = Math.max(0, C.lungeCd - dt);
     if(C.flashTimer>0) C.flashTimer -= dt;
 
     if(C.state === 'GRAB'){                 // held by updateCrocGrab
-      crocPlaceY(C, dt); crocAnimate(C, dt, false);
+      crocPlaceY(C, dt); crocAnimate(C, dt, 0);
       if(!playerGrabbed()) { C.state='CRUISE'; C.stateT=0; C.mesh.rotation.z=0; }
       continue;
     }
@@ -9673,14 +9864,44 @@ function updateCrocodiles(dt){
     if(tgt && C.state!=='CHARGE'){ C.state='CHARGE'; C.stateT=0; C.target=tgt.ent; C.targetKind=tgt.kind; }
 
     switch(C.state){
+      case 'LUNGE':
       case 'CHARGE': {
         const t = C.target;
-        const gone = !t || (t!==player && !(t.health>0)) ||
-                     !crocInRange(C, t===player?player.pos.x:t.pos.x, t===player?player.pos.z:t.pos.z);
-        if(gone){ C.state='CRUISE'; C.stateT=0; C.target=null; break; }
+        const tpx = (t===player)?player.pos.x:(t?t.pos.x:0);
+        const tpz = (t===player)?player.pos.z:(t?t.pos.z:0);
+        // Has it escaped? Beyond the lunge ring is out of reach, full stop.
+        const gone = !t || (t!==player && !(t.health>0)) || !crocInLungeRange(C, tpx, tpz);
+        if(gone){
+          // ⚠ RETURN TO WATER. Not merely "stop chasing" — a croc that broke off on dry
+          // land would be stranded in a state with no land behaviour. Head for the
+          // middle of its own pond explicitly.
+          C.state='CRUISE'; C.stateT=0; C.target=null;
+          C.dest = { x:C.pool.x, z:C.pool.z };
+          if(C.lungeT>0){ C.lungeCd = CROC.LUNGE_CD; C.lungeT = 0; }
+          break;
+        }
+        // Target is out past the normal bank margin → commit to a LUNGE if one is ready.
+        const beyondBank = !crocInRange(C, tpx, tpz);
+        if(beyondBank && C.state!=='LUNGE'){
+          if(C.lungeCd>0){ C.state='CRUISE'; C.stateT=0; C.target=null; C.dest=null; break; }
+          C.state='LUNGE'; C.lungeT = CROC.LUNGE_TIME;
+          if(Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z) < 40)
+            showKillfeed('🐊 The crocodile EXPLODES out of the water!');
+        }
+        if(C.state==='LUNGE'){
+          C.lungeT -= dt;
+          // out of puff → break off and go home, and it cannot try again for LUNGE_CD
+          if(C.lungeT <= 0){
+            C.state='CRUISE'; C.stateT=0; C.target=null;
+            C.dest = { x:C.pool.x, z:C.pool.z };
+            C.lungeCd = CROC.LUNGE_CD;
+            break;
+          }
+        }
         const tp = (t===player) ? player.pos : t.pos;
         const d = Math.hypot(tp.x-C.pos.x, tp.z-C.pos.z);
-        if(d > CROC.GRAB_R){ crocStep(C, tp.x, tp.z, CROC.SPD_CHARGE, dt); }
+        const spd = (C.state==='LUNGE') ? CROC.LUNGE_SPEED : CROC.SPD_CHARGE;
+        if(d > CROC.GRAB_R){ crocStep(C, tp.x, tp.z, spd, dt); }
         else if(t===player){
           if(C.grabCd<=0 && !playerGrabbed() && crocGrab.graceT<=0){ crocBeginGrab(C); }
           else if(C.biteCd<=0){
@@ -9690,7 +9911,12 @@ function updateCrocodiles(dt){
             showKillfeed('🐊 The crocodile snaps at you! (-'+CROC.BITE_DMG+')');
             shakeTime=Math.max(shakeTime,0.25); shakeAmt=0.014;
           }
-        } else if(C.grabCd<=0){ crocSeizeAnimal(C, t, C.targetKind); C.state='CRUISE'; C.stateT=0; C.target=null; }
+        } else if(C.grabCd<=0){
+          crocSeizeAnimal(C, t, C.targetKind);
+          C.state='CRUISE'; C.stateT=0; C.target=null;
+          C.dest = { x:C.pool.x, z:C.pool.z };          // drag the kill back to the water
+          if(C.lungeT>0){ C.lungeCd = CROC.LUNGE_CD; C.lungeT = 0; }
+        }
         break;
       }
       case 'BASK': {
@@ -9727,7 +9953,11 @@ function updateCrocodiles(dt){
       }
     }
     crocPlaceY(C, dt);
-    crocAnimate(C, dt, C.state!=='LURK');
+    // real ground speed this frame — drives BOTH the tail beat and the leg stride, so
+    // the animation can never drift out of sync with the actual movement
+    const spd = dt>0 ? Math.hypot(C.pos.x-C._px, C.pos.z-C._pz)/dt : 0;
+    C.spd = spd;
+    crocAnimate(C, dt, spd);
   
   }
 }
@@ -10134,6 +10364,27 @@ function dealKitMelee(hit, dmg, tool){
     o.target = player; o.targetKind = 'player'; o.aggroTimer = SNAKE.AGGRO_TIME;   // it whips around to bite you
     o.lastHitBy = player; o.lastHitKind = 'player';
     showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the '+o.v.label+'!');
+  } else if(hit.kind==='crocodile'){
+    t='crocodile';
+    o.health -= dmg;
+    o.target = player; o.targetKind = 'player';      // it turns on you — you're in its water now
+    o.lastHitBy = player; o.lastHitKind = 'player';
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the crocodile!');
+  } else if(hit.kind==='cheetah'){
+    t='cheetah';
+    o.health -= dmg;
+    o.lastHitBy = player; o.lastHitKind = 'player';
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the cheetah!');
+  } else {
+    // ⚠ FALLBACK — this branch is why Steven couldn't hit a crocodile, and why the
+    // CHEETAH had been invulnerable to every weapon since it shipped. Both were in
+    // nearestAnimalInFront (so the swing aimed at them) but had no branch here, so the
+    // chain fell off the end and silently did nothing: no damage, no message, no clue.
+    // A generic tail means the next animal added is merely UNPOLISHED, never immune.
+    t = o.label || hit.kind || 'animal';
+    o.health -= dmg;
+    o.lastHitBy = player; o.lastHitKind = 'player';
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the '+t+'!');
   }
 }
 function kitAxe(){

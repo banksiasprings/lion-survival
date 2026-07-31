@@ -89,6 +89,18 @@ that's the ambush), and **cruises just under the surface** with only its eye-rid
 basking, night favours lurking. It attacks **everything** that comes into its water: you, prey drinking,
 lions, dogs, cheetahs, snakes. **Rhinos and gorillas it leaves alone** — too big to hold.
 
+**Fighting one:** hammer **67**, spear **80** — about **8 spears** to kill. (Until 2026-07-31 no weapon
+could touch a croc at all, and the same fault made the **cheetah** invulnerable since it was added. Both fixed.)
+
+**It will come out of the water for you.** If something is within about **7 units of the water's edge**, the
+croc **explodes out** and snatches it — that's how it takes animals drinking at the bank. It can only keep that
+up for ~3 seconds, then it must go back and recover for ~9. **Outrun it and you're safe for good** — it will
+never chase you across the map.
+
+**Animals fear it on land.** Prey bolt from a croc they can see: basking, cruising, charging or ashore. But a
+croc lying **motionless on the bottom is invisible to them** — that's the ambush, and it's why animals still
+come down to drink.
+
 **If it gets you:** it **grabs you, drags you under**, and starts the **death roll — 20 damage every 1.35 s,
 and your air burns 2.5× faster**, turning ~11 seconds of breath into about 4. You can still look around but
 you **cannot swim away**.
