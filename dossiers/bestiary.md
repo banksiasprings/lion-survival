@@ -97,6 +97,15 @@ croc **explodes out** and snatches it — that's how it takes animals drinking a
 up for ~3 seconds, then it must go back and recover for ~9. **Outrun it and you're safe for good** — it will
 never chase you across the map.
 
+**It grows.** Every **5 kills** a crocodile gets visibly bigger — **+12% and +60 HP per tier**, up to
+**1.57× and 840 HP at 20 kills**. A huge croc is one that has been eating well for a long time, and it reaches
+and bites further to match. Kill it early or deal with it later.
+
+**Hurt it badly and it sinks.** Below **100 HP** a croc breaks off and lies on the **bottom of its pond**,
+healing about 2.5 HP a second until it is back to 300 and comes up hunting again. It won't lunge and won't
+leave the water while it's down there — **but it will still grab you if you dive onto it**, and your air is
+draining the whole time. Finishing a wounded croc is a choice, not a freebie.
+
 **Walls stop it.** A crocodile cannot cross a wood or stone wall, or a **shut gate** — and it cannot bite you
 through one either. Leave a gate **open** and it will come straight through. (Both were broken until
 2026-07-31: crocs walked through walls, and even once stopped they could still bite through them.)
@@ -120,6 +129,11 @@ Cobra venom sticks to a croc **basking on the bank** but can't reach one **under
 - 🐆 **Cheetah** — a **yellow dot with a black centre**. Four other things on the radar are gold (idle lions,
   gold cobras, the martial eagle) but every one of those is a *solid* dot — the cheetah is the only ring with a
   dark middle. It goes **white-hot** the moment it starts its sprint.
+
+### 🐆 A wounded cheetah runs and hides
+Drop a cheetah below **26 HP** and it breaks off — even mid-sprint — and **runs for tall grass** well away from
+whatever hurt it, where it lies up and heals back to 56 before hunting again. Let it go and you'll see it
+again; chase it down and you won't.
 
 ### 🌿 Your own bramble fence will cut you
 The fence is **symmetric**: **20 damage** to whatever walks into it and **half speed** while you're inside —

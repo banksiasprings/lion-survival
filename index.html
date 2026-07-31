@@ -1712,6 +1712,17 @@ const CHEETAH = {
   DETECT: 44,            // it can see a long way across open ground
   STALK_RANGE: 26,       // closes to here before opening the taps
   MELEE_R: 2.6,
+  // --- 🩸 LOW-HP RETREAT. Steven: "same with the cheetah, make it retreat when it's
+  // low on health."
+  // ⚠ NOT 15% of max like the croc. 15% of 70 is 10 HP, and the player's weapons do
+  // 15 (rock) to 80 (spear) — a cheetah would go from healthy to dead without ever
+  // passing through a 10-HP window, so the retreat would essentially never fire. 26
+  // (~37%) is the first threshold a rock-chipped cheetah actually lands in.
+  RETREAT_HP:  26,
+  RECOVER_HP:  56,       // back to hunting at 80% — it does not creep out on 27 HP
+  FLEE_SPEED:  22,       // fast, but well under SPRINT: this is a limp, not a hunt
+  FLEE_MIN:    70,       // …and it wants at least this much distance from the threat
+  REGEN:       1.6,      // HP/sec once it is lying up safe → ~19 s from 26 to 56
 };
 function makeCheetah(x, z){
   const g = new THREE.Group();
@@ -1759,6 +1770,7 @@ function makeCheetah(x, z){
     heading:rand(0,Math.PI*2), biteCd:0, stunTimer:0, flashTimer:0,
     target:null, targetKind:null,
     sprintsLeft:CHEETAH.SPRINTS_PER_DAY, sprintT:0, cooldown:0, restSpot:null, restT:0,
+    fleeSpot:null,                      // 🩸 where it is limping off to
     legPhase:Math.random()*6.28, _lastSpeed:0,
     lastHitBy:null, lastHitKind:null, _prevHealth:CHEETAH.HEALTH, _brambleCd:0 };
   setHitbox(C); attachHealthBar(C); cheetahMeshes.push(C);
@@ -1834,6 +1846,55 @@ function updateCheetahs(dt){
     C.biteCd = Math.max(0, C.biteCd-dt);
     C.cooldown = Math.max(0, C.cooldown-dt);
     if((C.stunTimer||0) > 0){ C.stunTimer-=dt; return; }
+
+    // ---- 🩸 RETREAT: wounded, it breaks off and hides. Checked BEFORE sprint so a
+    // cheetah that gets hurt mid-run abandons the chase rather than finishing it.
+    //
+    // ⚠ DESTINATION: tall grass, away from whatever hurt it. Chosen over "run to the
+    // map edge" (the edge is arbitrary and a wounded animal loitering on the border
+    // reads as a bug) and over a den spawn point (a whole new world object for one
+    // behaviour). Grass is the cheetah's OWN idiom — it already stalks from cover, and
+    // tallGrassClumps is the same hide mechanic the player and the lions use, so a
+    // wounded cheetah lying up in long grass is the animal doing more of what it
+    // already does. It regenerates there and comes back out at RECOVER_HP.
+    if(C.health > 0 && C.health < CHEETAH.RETREAT_HP && C.state !== 'FLEE'){
+      C.state='FLEE'; C.target=null; C.fleeSpot=null; C.restSpot=null;
+      if(Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z) < 55)
+        showKillfeed('🐆 The wounded cheetah breaks off and runs.');
+    }
+    if(C.state === 'FLEE'){
+      const threat = (C.lastHitKind==='player') ? player.pos : (C.lastHitBy ? C.lastHitBy.pos : player.pos);
+      const away = Math.hypot(C.pos.x-threat.x, C.pos.z-threat.z);
+      if(!C.fleeSpot){
+        // nearest tall grass that is ALREADY well clear of the threat — cover it can
+        // actually reach without running back past whatever wounded it
+        let best=null, bd=Infinity;
+        for(const g of tallGrassClumps){
+          if(Math.hypot(g.x-threat.x, g.z-threat.z) < CHEETAH.FLEE_MIN) continue;
+          const d = Math.hypot(g.x-C.pos.x, g.z-C.pos.z);
+          if(d<bd){ bd=d; best=g; }
+        }
+        // no grass far enough out → just run directly away and lie up wherever it lands
+        if(!best){
+          const dx=C.pos.x-threat.x, dz=C.pos.z-threat.z, l=Math.hypot(dx,dz)||1;
+          best = { x: clamp(C.pos.x + dx/l*CHEETAH.FLEE_MIN, -MAPR, MAPR),
+                   z: clamp(C.pos.z + dz/l*CHEETAH.FLEE_MIN, -MAPR, MAPR) };
+        }
+        C.fleeSpot = { x:best.x, z:best.z };
+      }
+      const fs = C.fleeSpot;
+      const atSpot = Math.hypot(fs.x-C.pos.x, fs.z-C.pos.z) < 2.5;
+      if(!atSpot) cheetahStep(C, fs.x, fs.z, CHEETAH.FLEE_SPEED, dt);
+      else { C._lastSpeed = 0; }
+      // it only heals once it is BOTH tucked up and genuinely clear of the threat
+      if(atSpot && away > CHEETAH.FLEE_MIN*0.6) C.health = Math.min(C.maxHealth, C.health + CHEETAH.REGEN*dt);
+      if(C.health >= CHEETAH.RECOVER_HP){
+        C.state='REST'; C.fleeSpot=null; C.restSpot=null; C.cooldown=0;
+        if(Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z) < 55)
+          showKillfeed('🐆 The cheetah is back on its feet.');
+      }
+      return;
+    }
 
     // ---- SPRINT: the whole point of the animal ----
     if(C.state==='SPRINT'){
@@ -9401,6 +9462,17 @@ const CROC = {
   LUNGE_TIME:  3.2,   // …but it can only sustain it for this long
   LUNGE_CD:    9.0,   // then it must go back and recover
   BODY_R:      0.6,   // collision radius — the body is 1.06 wide, so this is half-width + margin
+  // --- 🍖 GROWTH ON KILL. Steven: "make it grow bigger every five kills." TIERED, not
+  // per-kill: a croc that swells a little on every gazelle would be a kaiju by day three,
+  // and the point is that a big croc is a croc with a HISTORY you can read at a glance.
+  GROW_EVERY:  5,     // kills per tier
+  GROW_SCALE:  1.12,  // +12% linear per tier — visible at a glance, 1.57× by the cap
+  GROW_HP:     60,    // …and it gets tougher with size, granted as current HP too
+  GROW_TIERS:  4,     // cap at 20 kills / 1.57× / 840 HP
+  // --- 🩸 LOW-HP RETREAT to the pond floor ---
+  RETREAT_HP:  100,   // same number as the cobra's turret threshold
+  RESURFACE_HP:300,   // …and it only comes back up at half health — NOT a one-way door
+  SUNK_REGEN:  2.5,   // HP/sec resting on the bed → ~80 s from 100 back to 300
   // --- day rhythm (Steven: basking, bottom-lurking, cruising) ---
   BASK_MIN:  14, BASK_MAX: 30,
   LURK_MIN:  10, LURK_MAX: 24,
@@ -9410,6 +9482,7 @@ const CROC = {
 // croc. Exclusive by construction, so a second croc can never chain-grab you.
 let crocGrab = { croc:null, t:0, taps:0, rollT:0, graceT:0 };
 function playerGrabbed(){ return !!crocGrab.croc; }
+function playerHeldBy(C){ return crocGrab.croc === C; }
 
 function makeCrocodile(x, z, pool){
   const g = new THREE.Group();
@@ -9537,6 +9610,7 @@ function makeCrocodile(x, z, pool){
     state:'LURK', stateT:rand(0,8), heading:rand(0,Math.PI*2),
     biteCd:0, grabCd:0, flashTimer:0, stunTimer:0,
     lungeCd:0, lungeT:0, gait:0,
+    kills:0, growth:0, sizeMul:1,      // 🍖 growth-on-kill bookkeeping
     target:null, targetKind:null, dest:null, swimY:0, bob:rand(0,6.28),
     label:'crocodile', species:'crocodile',
   };
@@ -9642,9 +9716,10 @@ function crocStep(C, tx, tz, speed, dt){
   // crossed a wall, take none of it. A blocked croc therefore sits against the wall
   // rather than popping through — and may sit briefly outside its leash, which is
   // correct: it cannot teleport home through solid timber either.
-  if(segCrossesWall(bx, bz, C.pos.x, C.pos.z, CROC.BODY_R)){ C.pos.x = bx; C.pos.z = bz; }
-  collideWalls(C.pos, CROC.BODY_R);          // resting contact — wood AND stone
-  collideStoneWalls(C.pos, CROC.BODY_R);     // …and the stone-only pass, same as the dog
+  const BR = CROC.BODY_R * (C.sizeMul || 1);            // a grown croc is physically wider
+  if(segCrossesWall(bx, bz, C.pos.x, C.pos.z, BR)){ C.pos.x = bx; C.pos.z = bz; }
+  collideWalls(C.pos, BR);                   // resting contact — wood AND stone
+  collideStoneWalls(C.pos, BR);              // …and the stone-only pass, same as the dog
   C.mesh.rotation.y = C.heading;
 }
 // Vertical placement: rides at the waterline when cruising, flat on the bed when
@@ -9654,6 +9729,7 @@ function crocPlaceY(C, dt){
   const surf   = poolSurfaceY(C.pool);
   let want;
   if(C.state==='LURK')        want = ground;                       // flat on the bottom
+  else if(C.state==='SUNK')   want = ground;                       // …and so does a wounded one
   else if(C.state==='BASK')   want = ground;                       // hauled out on the mud
   else if(C.state==='GRAB')   want = Math.max(ground, C.pos.y);    // set by the drag
   else {
@@ -9683,7 +9759,7 @@ function crocAnimate(C, dt, spd){
   // barely stirs and a charging one thrashes. On land the tail just drags, low and slow.
   if(tailSegs){
     const norm = Math.min(1, spd / CROC.SPD_CHARGE);
-    const amp  = C.state==='LURK' ? 0.02
+    const amp  = (C.state==='LURK' || C.state==='SUNK') ? 0.02
                : (swimming ? 0.12 + norm*0.5 : 0.05 + norm*0.16);
     const rate = swimming ? (3.2 + norm*7.5) : (2.2 + norm*3);
     tailSegs.forEach((sg,i)=>{
@@ -9834,6 +9910,26 @@ function updateCrocGrab(dt){
   if(player.health <= 0) crocEndGrab(false);
 }
 
+// 🍖 Steven: "make it grow bigger every five kills." Called ONLY from the kill paths
+// below, so it counts ANIMALS it actually killed — never trees, never wounds, never a
+// kill something else finished. Scale is applied to the whole group, so the mesh, the
+// jaw, the tail wave and the leg gait all grow together for free.
+// ⚠ BODY_R and GRAB_R are scaled with it too: a croc twice the size that still collided
+// and bit at the original radius would visibly clip through walls and snap at thin air.
+function crocCreditKill(C){
+  C.kills++;
+  const tier = Math.floor(C.kills / CROC.GROW_EVERY);
+  if(tier <= C.growth || C.growth >= CROC.GROW_TIERS) return;
+  C.growth = tier;
+  C.sizeMul *= CROC.GROW_SCALE;
+  C.mesh.scale.setScalar(C.sizeMul);
+  C.maxHealth += CROC.GROW_HP;
+  C.health    += CROC.GROW_HP;           // the meal itself is the reward
+  setHitbox(C);                          // melee reach + health-bar width follow the body
+  if(Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z) < 60)
+    showKillfeed('🐊 The crocodile has grown — '+C.kills+' kills');
+}
+
 // ---- a croc taking an ANIMAL: grab, drown, eat. No mash for them. ----
 function crocSeizeAnimal(C, e, kind){
   const dmg = 55;
@@ -9842,6 +9938,7 @@ function crocSeizeAnimal(C, e, kind){
   if(typeof alertDogPack === 'function' && kind==='dog') alertDogPack(C, 'crocodile');
   if(e.health <= 0){
     const nm = e.label || e.species || kind;
+    crocCreditKill(C);                                  // 🍖 only a real kill counts
     showKillfeed('🐊 The crocodile drags the '+nm+' under!');
     if(typeof spawnCarcass === 'function' && kind==='prey'){
       // carcass on the BANK, not mid-pond — a floating carcass reads as a bug, and it
@@ -9874,6 +9971,40 @@ function updateCrocodiles(dt){
     C.lungeCd = Math.max(0, C.lungeCd - dt);
     if(C.flashTimer>0) C.flashTimer -= dt;
 
+    // ---- 🩸 LOW-HP RETREAT. Steven: "make it retreat down to the bottom of the pond
+    // when it's low on health." Below RETREAT_HP it breaks off whatever it was doing and
+    // sinks to the deepest part of its own pond.
+    // ⚠ Unlike the cobra's turret this is NOT a one-way door — Steven asked for it to
+    // recover, so it creeps back up and RESURFACES at RESURFACE_HP. A croc you drove off
+    // is therefore a croc you will meet again, healed, rather than one that quietly
+    // despawns or dies of its wounds somewhere you never see.
+    if(C.state !== 'SUNK' && C.health > 0 && C.health < CROC.RETREAT_HP && !playerHeldBy(C)){
+      C.state = 'SUNK'; C.stateT = 0; C.target = null; C.dest = null;
+      C.lungeT = 0; C.lungeCd = CROC.LUNGE_CD;
+      if(Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z) < 55)
+        showKillfeed('🐊 The wounded crocodile sinks to the bottom…');
+    }
+    if(C.state === 'SUNK'){
+      // crawl to the deepest water — the pond centre — and lie there
+      crocStep(C, C.pool.x, C.pool.z, CROC.SPD_CRUISE * 0.7, dt);
+      C.health = Math.min(C.maxHealth, C.health + CROC.SUNK_REGEN*dt);
+      // …but it is NOT harmless. Anything that comes within reach still gets seized:
+      // this is the water's answer to the cobra's tree turret.
+      const reachR = CROC.GRAB_R * (C.sizeMul || 1);
+      if(gameState==='playing' && crocGrab.graceT<=0 && !playerGrabbed() && C.grabCd<=0){
+        const dp = Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z);
+        if(dp <= reachR && !segHitsWall(C.pos.x,C.pos.z, player.pos.x,player.pos.z)) crocBeginGrab(C);
+      }
+      if(C.health >= CROC.RESURFACE_HP){
+        C.state='CRUISE'; C.stateT=0; C.dest=null;
+        if(Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z) < 55)
+          showKillfeed('🐊 The crocodile is back on the prowl.');
+      }
+      crocPlaceY(C, dt);
+      crocAnimate(C, dt, 0);
+      continue;
+    }
+
     if(C.state === 'GRAB'){                 // held by updateCrocGrab
       crocPlaceY(C, dt); crocAnimate(C, dt, 0);
       if(!playerGrabbed()) { C.state='CRUISE'; C.stateT=0; C.mesh.rotation.z=0; }
@@ -9884,6 +10015,7 @@ function updateCrocodiles(dt){
     // --- acquire ---
     const tgt = crocPickTarget(C);
     if(tgt && C.state!=='CHARGE'){ C.state='CHARGE'; C.stateT=0; C.target=tgt.ent; C.targetKind=tgt.kind; }
+    // (SUNK is handled above and `continue`s, so it can never be dragged into a chase.)
 
     switch(C.state){
       case 'LUNGE':
@@ -9929,7 +10061,8 @@ function updateCrocodiles(dt){
         // shut gate the croc could not pass. Every attack below is now gated on line of
         // sight, the same segHitsWall test that stops a rhino goring through a wall.
         const blocked = segHitsWall(C.pos.x, C.pos.z, tp.x, tp.z);
-        if(d > CROC.GRAB_R || blocked){ crocStep(C, tp.x, tp.z, spd, dt); }
+        const reachR = CROC.GRAB_R * (C.sizeMul || 1);       // a bigger croc reaches further
+        if(d > reachR || blocked){ crocStep(C, tp.x, tp.z, spd, dt); }
         else if(t===player){
           if(C.grabCd<=0 && !playerGrabbed() && crocGrab.graceT<=0){ crocBeginGrab(C); }
           else if(C.biteCd<=0){
@@ -11041,10 +11174,15 @@ function healAllAnimals(){
   // would make it effectively immortal — a permanent venom sprinkler. Leaving it
   // wounded is what keeps the counter-play honest: it stays out of your reach, you
   // stay able to finish it with a spear, bolt, rock or boomerang.
-  cheetahMeshes.forEach(C=>{ if(ok(C)) C.health=C.maxHealth; });
+  // 🐆 …and a cheetah lying up wounded does NOT get one either. Same reasoning as the
+  // cobra turret above: the retreat has its OWN slow regen, and a blanket top-up every
+  // two minutes would make that regen invisible and the retreat meaningless.
+  cheetahMeshes.forEach(C=>{ if(ok(C) && C.state!=='FLEE') C.health=C.maxHealth; });
   // A croc holding the player does NOT get a free top-up mid-grab — otherwise killing
   // your way out of the jaws could be undone by a day/night turn landing mid-roll.
-  crocMeshes.forEach(C=>{ if(ok(C) && crocGrab.croc!==C) C.health=C.maxHealth; });
+  // Nor does one sunk on the bed: driving a croc off should mean it is genuinely
+  // wounded and healing where you can still go and finish it.
+  crocMeshes.forEach(C=>{ if(ok(C) && crocGrab.croc!==C && C.state!=='SUNK') C.health=C.maxHealth; });
   snakeMeshes.forEach(S=>{ if(!S.dying && !S.turret && ok(S)) S.health=S.maxHealth; });
 }
 

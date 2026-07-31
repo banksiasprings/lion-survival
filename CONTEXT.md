@@ -2513,4 +2513,72 @@ a 0.7-wide hole the croc legitimately could not fit through. And gate state must
 does it: `open` disarms instantly, but **shutting re-arms only after the swing finishes**, so calling
 `registerGateCollision` directly captures the swung-open AABB and seals nothing.
 
+
+## 🐊🐆 GROWTH ON KILL + LOW-HP RETREATS (2026-07-31)
+Steven: *"The crocodile is good. Just make it grow bigger every five kills. And make it retreat down to the
+bottom of the pond when it's low on health. Same with the cheetah, make it retreat when it's low on health."*
+
+### 🍖 Croc growth — TIERED at every 5th kill
+| tier | at kill | scale | max HP |
+|---|---|---|---|
+| 1 | 5 | 1.12× | 660 |
+| 2 | 10 | 1.25× | 720 |
+| 3 | 15 | 1.40× | 780 |
+| 4 (cap) | 20 | **1.57×** | **840** |
+
+**+12% linear per tier, +60 max HP (granted as current HP too), capped at 4 tiers.** Tiered rather than
+per-kill because a croc that swells on every gazelle is a kaiju by day three — the point is that a big croc is
+a croc with a **history you can read at a glance**. Scale is applied to the whole group, so the mesh, jaw, tail
+wave and leg gait all grow together for free.
+
+⚠ **`BODY_R` and `GRAB_R` scale with it.** A croc at 1.57× that still collided and bit at the original radius
+would visibly clip through walls and snap at thin air. `setHitbox` is re-run too, so melee reach and the
+health-bar width follow the body.
+
+⚠ Credit comes **only** from the kill paths, so it counts animals it actually killed — never trees, never
+wounds, never a kill something else finished. Verified: felling a tree does not move the counter.
+
+### 🩸 Croc retreat — sinks to the pond floor below 100 HP
+Same threshold number as the cobra's turret. It breaks off, crawls to the deepest water (the pond centre) and
+lies on the bed regenerating **2.5 HP/s**.
+
+⚠ **NOT a one-way door, unlike the cobra turret.** Steven asked for it to *recover*, so it **resurfaces at
+300 HP** (half max) and goes back on the prowl. A croc you drove off is therefore a croc you will meet again,
+healed — not one that quietly despawns or bleeds out somewhere you never see. It is also excluded from
+`healAllAnimals`, because a blanket top-up every two minutes would make the regen invisible and the whole
+retreat meaningless. Same exclusion the cobra turret already had, for the same reason.
+
+**It is not harmless down there.** It will not lunge and will not leave the water — but anything that comes
+within reach still gets seized. That is the water's answer to the tree turret: you *can* dive down and finish
+it, but you are doing so on its terms, with your oxygen draining and its **2.5× grab drain** waiting.
+
+### 🐆 Cheetah retreat — tall grass, well clear of whatever hurt it
+⚠ **Threshold is 26 (~37%), NOT 15%.** 15% of 70 is 10 HP, and the player's weapons do 15 (rock) to 80 (spear)
+— a cheetah would go from healthy to dead without ever passing through a 10-HP window, so the retreat would
+essentially never fire. 26 is the first threshold a rock-chipped cheetah actually lands in. Recovers at **56**
+(80%) at **1.6 HP/s**, and flees at speed 22 — fast, but well under SPRINT: this is a limp, not a hunt.
+
+**Destination: tall grass at least 70 from the threat.** Chosen over the map edge (arbitrary, and a wounded
+animal loitering on the border reads as a bug) and over a new den object (a whole world feature for one
+behaviour). Grass is the cheetah's **own idiom** — it already stalks from cover, and `tallGrassClumps` is the
+same hide mechanic the player and the lions use, so a wounded cheetah lying up in long grass is the animal
+doing more of what it already does. If no clump is far enough out it simply runs directly away and lies up
+where it lands. Checked **before** the sprint branch, so a cheetah wounded mid-run abandons the chase.
+
+### Verified
+| pin | result |
+|---|---|
+| growth every 5 kills | tiers fire at **5/10/15/20**, never between; scale 1.0 → **1.574**, HP 600 → **840** |
+| growth persists | unchanged across 600 frames of simulation; mesh scale tracks exactly |
+| trees don't count | felling a tree leaves the kill counter untouched |
+| croc retreats < 100 | sinks; ends **0.03** from pond centre, **5.46** below the surface, flat on the bed |
+| …and stays | never lunged, **22.4 inside** the rim, prey on the bank untouched |
+| …still grabs | player diving onto it **is seized** from the bottom |
+| …resurfaces | back to `CRUISE` at exactly **300** HP |
+| cheetah retreats | enters `FLEE`, runs **6 → 90** from the player, settles **inside** a grass clump (2.15 from a 4.02-radius centre) **73** from the player |
+| …recovers | regenerates to 56 and resumes `REST`; a healthy cheetah **never** false-fires |
+| cobra turret regression | still goes turret, still picks a tree |
+| 60 s soak | 0 errors, no overheal, croc held its leash, reset clears all growth |
+- 0 console errors.
+
 Each phase is an independent commit so it can be iterated in isolation.
