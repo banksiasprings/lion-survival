@@ -2669,4 +2669,70 @@ everything else with *"🏷️ Bob the zebra is dead."*
 | soak | 3600 frames, 0 errors; reset clears the registry but **keeps the book** |
 - 0 console errors.
 
+
+## 🦒 GIRAFFES DOUBLED + name-tag polish (2026-07-31)
+Steven: *"Giraffes. Twice the size. Please."*
+
+### ⚠ THE GIRAFFE ALREADY EXISTED
+The brief that came with this asked to *add giraffes as a new prey species*, with kick defence, herd-alert
+propagation, tree-browsing and croc-grabs-drinking-giraffe. **The giraffe has been in the game the whole time**
+— `SPECIES.giraffe`, its own `makeGiraffe()` custom mesh, a procedural reticulated coat (`giraffeTex`), herds
+of 2–4, and its own "a spear takes three" rule. Steven's five words read as *make the existing ones twice as
+big*, which is what shipped here. The extra mechanics were **not** built: they are net-new systems he did not
+ask for, and building them off a mistaken premise would have been ten times the work he requested. Flagged
+back for a yes/no rather than assumed.
+
+### Scale: 2× — measured, not asserted
+| | height (world units) |
+|---|---|
+| **giraffe (new)** | **11.6** |
+| elephant (was tallest) | 7.2 |
+| gorilla | 6.2 |
+| kudu | 4.2 |
+| lion | 2.7 |
+
+**1.6× the elephant and ~4× a lion**, against a player eye height of 1.7. See `dossiers/giraffe_scale.png`.
+
+⚠ Applied as a **group scale** in `makeGiraffe`, NOT by raising `SPECIES.giraffe.size`. `size` is the LOCAL
+geometry basis and is *also* read by the leg-gait and hop maths in the prey loop — doubling it there would have
+scaled the stride in local space and then had the group scale double it again, giving a 4× stride. Scaling the
+finished group doubles everything exactly once. `setHitbox` runs after, so melee reach, the health bar and the
+nameplate all follow the new body for free.
+
+### Collision — the brief's concern was already handled
+It asked that the collision reference be leg-level, not head-level. It always was: `P.pos` **is the feet** (the
+ground point the terrain tracks), and the head is 13.8 above it. What *did* need fixing was the **radius** — a
+flat `0.7` barrel let a doubled giraffe's legs sit inside the timber. Now derived per animal from the measured
+hitbox (`max(0.7, hitR*0.55)`), so the giraffe gets **2.35** and every existing animal keeps ≥ its old value
+(zebra 0.82). Verified by dropping each dead-centre into a wall: giraffe ejects **2.5**, zebra **0.97**,
+neither left inside.
+
+### 🐛 Nameplate height was wrong on every scaled animal
+The Name Tag plate was positioned off `hitTop` in LOCAL space without dividing out the group scale — so an
+elephant (1.55) and the new giraffe (2.0) floated their names metres overhead. And `hitTop` itself
+under-reports any animal whose neck is posed by its own rig after spawn (giraffe: 10.38 vs a real 11.65). Now
+measured off the actual bounding box and divided by the scale: **every species sits exactly 0.90 above its own
+head** — giraffe, elephant, zebra, kudu, lion, crocodile.
+
+### 🏷️ Name Tag — the confirmed Option B details
+Already shipped in `9f342b1`; this batch closes the remaining spec points:
+- **empty input now falls back to "Bob"** rather than doing nothing (spec: *"reject empty names, silently keep
+  the Bob default"*) — the one path that could otherwise cost you a click for no result
+- 24-char cap (a 500-char paste clips to 24, so no screen-fill), spaces and punctuation kept
+  (*"William's Nemesis!!"* survives intact)
+
+### Verified
+| pin | result |
+|---|---|
+| giraffe scale | **2.0×**, 11.6 units — 1.6× the elephant, 4× a lion |
+| other species untouched | zebra scale 1.0, wall radius unchanged |
+| gait not double-scaled | legs animate via hip-pivot **rotation** 0.516 rad (giraffe/elephant use rotation, not translation — generic herbivores translate) |
+| collision reference | `pos` is the **feet**; head 13.8 above; ejected out of a wall, not through it |
+| nameplate | **0.90** above the head on all 6 species tested |
+| empty name | → **"Bob"**; 500 chars → 24; punctuation kept |
+| cobra venom | damages the giraffe (no armour path blocks it) |
+| croc at the pond | **takes a drinking giraffe** — 55 damage |
+| day/night soak | 0 errors, 1.47 ms/frame, herd survives (11 → 6 predated), **0** stuck on the map edge |
+- 0 console errors.
+
 Each phase is an independent commit so it can be iterated in isolation.

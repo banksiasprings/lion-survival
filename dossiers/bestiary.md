@@ -76,6 +76,11 @@
 - Crafting spends the material in the **🛒 SHOP** ("Craft" button, greyed if you can't afford it). The
   crafted item then **persists across runs** like the rest of your kit; the raw teeth/tusks do not.
 
+### 🦒 The giraffe is now TWICE the size
+**11.6 units tall — 1.6× an elephant and about four times a lion**, against your own eye height of 1.7. It is
+by a clear margin the tallest thing on the savanna. Everything else about it is unchanged: same herds, same
+speed, still three spears. It just towers now.
+
 **Spears-to-kill:** gazelle/impala/warthog/zebra/wildebeest **1** · kudu **2** · giraffe **3** ·
 lion **5** · gorilla **10** · rhino **14** · **elephant 15**.
 

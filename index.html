@@ -2434,9 +2434,23 @@ function attachNamePlate(o){
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:tex, transparent:true, depthTest:true }));
   sp.geometry.userData.keep = true;      // shared quad — never dispose
   sp.userData.noFlash = true;            // the damage-flash sweep must not restyle it
+  // ⚠ Both the size AND the height must divide out the group scale: hitTop is measured
+  // in WORLD units off the scaled bounding box, but position.y here is LOCAL. Without
+  // the divide, a scaled animal (elephant 1.55, giraffe 2.0) floats its nameplate at
+  // scale × the right height — metres above its own head.
   const gs = o.mesh.scale.x || 1;
   sp.scale.set(2.6/gs, 0.65/gs, 1);
-  sp.position.y = (o.hitTop || 1.6) + 0.95;
+  // ⚠ Measure the ACTUAL box rather than trusting hitTop. hitTop is captured at spawn
+  // and under-reports any animal whose neck/head is posed by its own rig afterwards —
+  // on the doubled giraffe it read 10.38 against a real 11.65, parking the nameplate
+  // below the animal's own head. Measured here, every species sits right.
+  let topLocal = (o.hitTop || 1.6) + 0.95;
+  try {
+    o.mesh.updateMatrixWorld(true);
+    const bb = new THREE.Box3().setFromObject(o.mesh);
+    if(isFinite(bb.max.y)) topLocal = (bb.max.y - o.mesh.position.y) + 0.9;
+  } catch(e){ /* fall back to hitTop */ }
+  sp.position.y = topLocal / gs;
   o.mesh.add(sp);
   o.nameSprite = sp; o.nameCtx = cv.getContext('2d'); o.nameTex = tex;
   return sp;
@@ -2459,8 +2473,11 @@ function drawNamePlate(o){
 // Editing a dozen per-species kill branches to add a name would have missed one.
 let namedAnimals = [];
 function nameAnimal(o, nm){
-  nm = String(nm||'').trim().slice(0, NAME_MAX_LEN);
-  if(!nm) return false;
+  // ⚠ Spec: "reject empty names (silently keep the Bob default)". Clearing the box and
+  // pressing OK therefore lands on NAME_DEFAULT rather than doing nothing — the one
+  // input that could otherwise leave you having spent a click for no result.
+  nm = String(nm==null ? '' : nm).trim().slice(0, NAME_MAX_LEN);
+  if(!nm) nm = NAME_DEFAULT;
   const wasNamed = !!o.givenName;
   o.givenName = nm;
   if(!wasNamed) namedAnimals.push(o);
@@ -3548,6 +3565,9 @@ function makeHerbivore(key){
 // Giraffe — too tall/long-necked for the generic herbivore builder, so it gets its
 // own mesh. Returns the same {group, legs, bodyY, legLen} contract so the prey loop
 // (leg gait, flee, etc.) drives it like any other herbivore.
+// 2× the giraffe that was already in the game. At this scale it stands ~1.6× the
+// elephant — comfortably the tallest thing on the savanna, which is the whole point.
+const GIRAFFE_SCALE = 2.0;
 function makeGiraffe(){
   const g=new THREE.Group();
   const coat = new THREE.MeshLambertMaterial({map:giraffeTex()});  // reticulated patches
@@ -3597,6 +3617,15 @@ function makeGiraffe(){
   const tail=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,0.8,4), pale); tail.position.set(0,bodyY-0.1,-bl*0.5-0.05); tail.rotation.x=0.6; g.add(tail);
   const tuft=new THREE.Mesh(new THREE.SphereGeometry(0.08,6,5), dark); tuft.position.set(0,bodyY-0.55,-bl*0.5-0.38); g.add(tuft);
   g.children.forEach(c2=>{ if(c2.isMesh) c2.userData.origMat=c2.material; });
+  // 🦒 Steven: "Giraffes. Twice the size. Please."
+  // ⚠ Applied as a GROUP scale rather than by bumping SPECIES.giraffe.size, because
+  // `size` is the LOCAL geometry basis and is also read by the leg-gait and hop maths
+  // (see the prey loop). Doubling it there would have scaled the gait amplitude in
+  // local space and then had the group scale double it again — a giraffe with a 4×
+  // stride. Scaling the finished group doubles everything exactly once.
+  // setHitbox() runs after this and measures the SCALED bounding box, so melee reach,
+  // the health bar and the nameplate all follow the new body for free.
+  g.scale.setScalar(GIRAFFE_SCALE);
   return { group:g, legs, bodyY, legLen };
 }
 
@@ -3683,7 +3712,11 @@ function makePrey(key,x,z,herdId){
     // Retaliation bookkeeping — only the elephant (SPECIES.fights) acts on these,
     // but every damage site tags them uniformly so the branch stays dumb.
     _prevHealth:s.hp, lastHitBy:null, lastHitKind:null, _foe:null, _foeKind:null, _foeT:0 };
-  setHitbox(P); attachHealthBar(P); preyMeshes.push(P);
+  setHitbox(P);
+  // wall radius follows the actual body: big animals get a big barrel, and nothing
+  // smaller than the old 0.7 default so existing prey behave exactly as before.
+  P.wallR = Math.max(0.7, (P.hitR || 0.7) * 0.55);
+  attachHealthBar(P); preyMeshes.push(P);
   return P;
 }
 
@@ -3891,7 +3924,11 @@ function updatePrey(dt){
 
     P.pos.addScaledVector(dir, speed*waterSpeedMul(P.pos.x, P.pos.z)*brambleSpeedMul(P.pos.x, P.pos.z)*dt);   // 💧
     P.pos.x=clamp(P.pos.x,-(HALF-1),HALF-1); P.pos.z=clamp(P.pos.z,-(HALF-1),HALF-1);
-    collideWalls(P.pos, 0.7);                       // don't run through walls
+    // ⚠ P.pos is the FEET (the ground point) — the reference is already leg-level, not
+    // head-level, so a giraffe's neck passing over a wall was never the question. What
+    // did need fixing is the RADIUS: at 2× scale a 0.7 barrel let its legs sit inside
+    // the timber. Scaled per species off the measured hitbox.
+    collideWalls(P.pos, P.wallR || 0.7);            // don't run through walls
     P.pos.y=terrainY(P.pos.x,P.pos.z);
     P.mesh.position.set(P.pos.x, P.pos.y+hopY, P.pos.z);
     if(dir.lengthSq()>0.001) P.mesh.rotation.y = Math.atan2(dir.x, dir.z);
