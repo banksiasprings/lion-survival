@@ -513,7 +513,10 @@ const SHOP_ITEMS = [
   { id:'kit_grapple', type:'ability', icon:'🪝', name:'Grappling Hook',
     desc:'Launch a hook — reel up into a climbable tree, or yank yourself to any surface in range.', cd:0 },
   { id:'kit_axe',     type:'ability', icon:'🪓', name:'Hand Axe',
-    desc:'Swing: chop a nearby tree for wood, or land a heavy melee blow on an animal in front. 1.2s cooldown.', cd:1.2 },
+    // Steven, 2026-07-31: "can you make the cooldown on the axe half." 1.2 → 0.6.
+    // ⚠ Damage per swing is UNTOUCHED at 42, so a normal tree is still 3 swings and a
+    // big one still 6 — you just get through them in half the wall-clock time.
+    desc:'Swing: chop a nearby tree for wood, or land a heavy melee blow on an animal in front. 0.6s cooldown.', cd:0.6 },
   { id:'kit_fire',    type:'ability', icon:'🏕️', name:'Campfire',
     desc:'Build a campfire — a wide, long-lived ring of light and warmth that lions flee. 12s cooldown.', cd:12 },
   { id:'kit_stonewall', type:'ability', icon:'🧱', name:'Stone Wall',

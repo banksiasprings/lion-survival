@@ -2581,4 +2581,29 @@ where it lands. Checked **before** the sprint branch, so a cheetah wounded mid-r
 | 60 s soak | 0 errors, no overheal, croc held its leash, reset clears all growth |
 - 0 console errors.
 
+
+## 🪓 AXE COOLDOWN HALVED (2026-07-31)
+Steven: *"Can you make the cooldown on the axe half."*
+
+**`kit_axe` cd: 1.2 s → 0.6 s.** One number, one source — the `SHOP_ITEMS` entry, consumed by
+`abilityCd[id] = A.cd`. Nothing else gates the swing rate, so there was no second place to change. The
+description string was updated with it so the shop no longer advertises 1.2 s.
+
+⚠ **Damage per swing is UNTOUCHED at 42.** Steven's 3-swings-to-fell math is a function of `TREE_HP.normal`
+(120) ÷ 42, not of the cooldown, so it is unchanged — you simply get through the same three swings in half the
+wall-clock time.
+
+**Nothing else moved:** hammer **1.4**, spear **3**, campfire **12** — all as they were. The axe was the only
+edit.
+
+### Verified
+| | before | after |
+|---|---|---|
+| declared cd | 1200 ms | **600 ms** |
+| **measured** swing rate | — | **600 ms** (20 swings in 12 s, driven through `useActiveAbility`) |
+| normal tree | 3 swings | **3 swings** |
+| big tree | 6 swings from full | **6 from full** (measured 5 from a 198-HP pre-damaged trunk — 198/42 → 5) |
+- Second press inside the window is still refused (the cooldown is enforced, not merely declared).
+- 0 console errors.
+
 Each phase is an independent commit so it can be iterated in isolation.
