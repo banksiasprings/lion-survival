@@ -11417,6 +11417,39 @@ function drawMinimap(){
     mmCtx.beginPath(); mmCtx.arc(px,py,4,0,Math.PI*2); mmCtx.fill();
   });
 
+  // 🐊 Crocodiles — SAND-BROWN, deliberately not blue.
+  // ⚠ Steven offered "blue or brown". Measured against the pond disc a croc is always
+  // sitting on (#2b6a8c): blue scores 2.03 contrast and shares the pond's hue, so it
+  // reads as part of the water — the one thing a danger marker must not do. Plain
+  // brown (#8b5e3c, the wall colour) is WORSE at 1.06, essentially invisible. A LIGHT
+  // warm sand-brown hits 2.54 and is the opposite hue to the cool blue, so it pops by
+  // luminance and hue at once. Brown was the right call, but only a light one.
+  // Big dot (5) to match the other heavyweights (rhino/gorilla); blazes orange-red the
+  // moment it commits, so a charge or a lunge is readable before it reaches you.
+  crocMeshes.forEach(K=>{
+    if(K.health<=0) return;
+    const hot = (K.state==='CHARGE' || K.state==='LUNGE' || K.state==='GRAB');
+    mmCtx.fillStyle = hot ? '#ff5a2e' : '#d4a05c';
+    const [px,py]=toMM(K.pos.x-player.pos.x, K.pos.z-player.pos.z);
+    mmCtx.beginPath(); mmCtx.arc(px,py,5,0,Math.PI*2); mmCtx.fill();
+  });
+
+  // 🐆 Cheetahs — Steven's spec exactly: a YELLOW dot with a BLACK circle in the middle.
+  // ⚠ The yellow band on this radar is crowded — lion-idle #ffcc00, gold cobra #d8a81e
+  // (hot #ffe066) and martial eagle #e8b23a are all golds. The concentric black core is
+  // what makes this unambiguous: every one of those is a SOLID disc, so "yellow ring
+  // with a dark centre" is structurally unique rather than merely a different shade.
+  // The yellow is pushed brighter than all of them for good measure.
+  cheetahMeshes.forEach(K=>{
+    if(K.health<=0) return;
+    const [px,py]=toMM(K.pos.x-player.pos.x, K.pos.z-player.pos.z);
+    // sprinting = the moment it's lethal, so the ring goes white-hot
+    mmCtx.fillStyle = (K.state==='SPRINT') ? '#fff6b0' : '#ffe14a';   // states are UPPERCASE
+    mmCtx.beginPath(); mmCtx.arc(px,py,4.5,0,Math.PI*2); mmCtx.fill();
+    mmCtx.fillStyle = '#120d02';
+    mmCtx.beginPath(); mmCtx.arc(px,py,1.9,0,Math.PI*2); mmCtx.fill();
+  });
+
   // Player dot
   mmCtx.fillStyle='#00ff88';
   mmCtx.beginPath(); mmCtx.arc(C,C,5,0,Math.PI*2); mmCtx.fill();

@@ -110,6 +110,13 @@ grace** to get out of the water. Killing the croc also makes it let go.
 Cobra venom sticks to a croc **basking on the bank** but can't reach one **under the water**.
 ⚠ Clear a pond of crocs and it's yours — **until dawn, when a new one moves in.**
 
+### 🗺️ Reading the radar
+- 🐊 **Crocodile** — a **sand-brown dot** sitting on the blue pond. It flares **orange-red** the instant it
+  charges or lunges, so you get warning before it reaches you.
+- 🐆 **Cheetah** — a **yellow dot with a black centre**. Four other things on the radar are gold (idle lions,
+  gold cobras, the martial eagle) but every one of those is a *solid* dot — the cheetah is the only ring with a
+  dark middle. It goes **white-hot** the moment it starts its sprint.
+
 ### 🌿 Your own bramble fence will cut you
 The fence is **symmetric**: **20 damage** to whatever walks into it and **half speed** while you're inside —
 **and that includes you**. Push back through your own line and it costs you 20 HP and slows you to a crawl, so

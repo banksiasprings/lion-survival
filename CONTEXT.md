@@ -2416,4 +2416,49 @@ BASK (14%) and LUNGE (22%) — the states where it is genuinely out of the water
   `croc_swim.png` (tail wave), `croc_gait.png` (the foot path plotted from `leg_phase()`).
 - 0 console errors.
 
+
+## 🗺️ MINIMAP — crocodile + cheetah markers (2026-07-31)
+Steven: *"We might crocodiles like blue or like brown on the mini map, and cheetahs put them on the map also.
+Maybe could you do like a yellow dot with a black circle in the middle on the mini map as a cheetah?"*
+
+### 🐊 Crocodile — SAND BROWN `#d4a05c`, deliberately NOT blue
+⚠ **Blue would have camouflaged them.** A crocodile is *always* drawn on top of the pond disc (`#2b6a8c`), so
+that disc — not the green background — is the surface the marker has to survive. Measured contrast against it:
+
+| candidate | vs pond |
+|---|---|
+| blue `#3aa0d8` (Steven's option A) | **2.03** — and shares the pond's hue, so it reads as *part of the water* |
+| dark brown `#8b5e3c` (the wall colour) | **1.06** — effectively invisible |
+| **sand brown `#d4a05c`** ← chosen | **2.54**, and warm against a cool blue, so it separates by hue *and* luminance |
+
+Brown was the right call of the two Steven offered, but **only a light one** — the obvious brown (the existing
+wall colour) is the single worst option on the board. Dot radius **5**, matching the other heavyweights
+(rhino/gorilla). Goes **orange-red `#ff5a2e`** on `CHARGE`/`LUNGE`/`GRAB`, so a committed croc is readable
+before it reaches you. (That hot colour measures 1.91 on luminance alone, but red-against-blue is maximal hue
+opposition and reads harder than the number suggests — visible in `minimap_croc_choice.png`.)
+
+### 🐆 Cheetah — yellow `#ffe14a` with a black `#120d02` core, exactly as specified
+⚠ **The yellow band on this radar was already crowded** — lion-idle `#ffcc00`, gold cobra `#d8a81e`
+(hot `#ffe066`) and martial eagle `#e8b23a` are all golds. Steven's concentric design is what makes the cheetah
+unambiguous: **every one of those is a SOLID disc**, so "yellow ring with a dark centre" is *structurally*
+unique rather than merely another shade. The yellow is also pushed brighter than all of them
+(luminance 0.756 vs lion-idle's 0.644). Ring **4.5**, core **1.9**; goes white-hot `#fff6b0` on `SPRINT` —
+the moment it's lethal.
+
+**Confirmed at true radar scale** (150×150, not zoomed): the black core occupies **16 pixels** and the
+ring-to-core contrast is **14.87**. It does not close up or mud out at map size.
+
+### Verification note
+The minimap canvas **cannot be read back** in this environment either — `getImageData` returns all zeros on the
+2D canvas exactly as it does on the WebGL one. So instead the 2D context was **instrumented** to record every
+draw op for one frame, and that real draw list was replayed offline in PIL. `dossiers/minimap_markers.png` is
+therefore a faithful render of what the game actually draws, not a mock-up.
+
+### Verified
+- Croc marker sits **on** the pond disc (the contrast case) and reads clearly
+- Cheetah drawn as two concentric arcs at **identical x/y** — ring then core
+- Eagle-Eye zoom, dead animals, and a 1800-frame soak with `drawMinimap()` every frame: **0 errors**
+- Panels: `minimap_markers.png` (real radar), `minimap_croc_choice.png` (why not blue),
+  `minimap_yellow_band.png` (the four existing golds vs the concentric cheetah)
+
 Each phase is an independent commit so it can be iterated in isolation.
