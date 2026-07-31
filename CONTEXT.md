@@ -2163,4 +2163,44 @@ the instant you step out from under it. **The roof protects the tile, not the pl
 | wall regression | walls still place and are still walkable — the generalisation didn't disturb them |
 - 0 console errors.
 
+
+## 🎒 PICK UP / DROP — one hand, one thing (2026-07-31)
+Steven: *"make a button so you can pick up rocks and berries and wood and drop them, but only make it able to
+pick up one at a time. And do that with meat as well."*
+
+### It's a HAND, not an inventory
+The carry slot deliberately does **not** touch `woodCount` / `rockCount` — those stay the abstract stock you
+build from. `carried` holds one physical object. Picking up **converts stock → hand**; dropping converts back.
+That's what makes "drop it somewhere else" mean anything: bait a carcass hunk away from camp, ferry a rock to
+where you'll want to throw it, carry a berry home.
+
+**Priority when you press take:** loose item on the ground → meat off a carcass → berry off a bush → your own
+stock. Reach **3.4**. Meat costs the carcass **20 food** and a carcass under 20 refuses.
+
+### ⚠ The conservation invariant
+At any instant every item is in **exactly one** of three places: stock, ground (`droppedItems`), or hand
+(`carried`). The soak below asserts `stock + ground + hand` after *every individual pickup and every individual
+drop* — not just at the end — so a leak can't hide inside a cycle.
+
+### ⚠ Found and fixed while wiring the touch button
+The phone **EAT** button still ran the old `carcass → collect` chain, so **gates and berry bushes were
+unreachable on a phone** — where Steven actually plays. Both shipped in earlier commits this session and were
+silently keyboard-only. `doTouchAction('eat')` now mirrors the full `[E]` chain
+(`gate → berry → carcass → collect`). Verified live: tapping EAT at a bush drops its crop by one.
+
+### Verified
+| pin | result |
+|---|---|
+| one at a time | second pickup refused, hand and stock both unchanged |
+| stock ↔ hand | rock leaves the counter on pickup, returns on drop |
+| drop persists | lands 1.6 ahead, sits on terrain, survives 10 s of simulation with **zero drift**, still there after walking 40 units away and back |
+| reach is honest | just inside 3.4 picks up, just outside refuses |
+| **conservation** | **60 pick/drop cycles, ledger checked after every single action — never once off** |
+| meat | 20 food off the carcass; a stripped carcass refuses |
+| berry | bush crop drops by exactly one |
+| phone button | TAKE → **DROP** + lit while full → TAKE; survives a reset |
+| disposal | reset empties hand and ground, **0 orphan meshes**, scene delta back to 0 |
+| soak | 1800 frames, **0 errors**, 1.26 ms/frame, held mesh tracking the camera at 1.05 |
+- 0 console errors.
+
 Each phase is an independent commit so it can be iterated in isolation.

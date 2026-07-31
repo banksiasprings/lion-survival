@@ -314,7 +314,7 @@ body.touch #crosshair{opacity:0.5}
     <span class="kb-only">
     WASD Move &nbsp;|&nbsp; Mouse Look &nbsp;|&nbsp; Shift Sprint &nbsp;|&nbsp; Space Jump &nbsp;|&nbsp; C Crouch (hold, or tap to toggle — hides in grass)<br>
     <span style="color:#c39bd3">🛒 Your kit is on the LEFT — LMB or Z Use active ability &nbsp;·&nbsp; R Switch &nbsp;·&nbsp; Tab Loadout (pauses) &nbsp;·&nbsp; unlock &amp; equip in the SHOP</span><br>
-    🪝 Grapple → tree is on your kit (select it, LMB/Z to fire · RMB/Space to drop · safe from lions while perched) &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; Q Pounce (ambush from grass ×3) &nbsp;|&nbsp; E Eat kill / Collect wood &amp; rocks<br>
+    🪝 Grapple → tree is on your kit (select it, LMB/Z to fire · RMB/Space to drop · safe from lions while perched) &nbsp;|&nbsp; F Throw Rock &nbsp;|&nbsp; Q Pounce (ambush from grass ×3) &nbsp;|&nbsp; E Eat kill / Collect wood &amp; rocks &nbsp;|&nbsp; T Pick up / drop (one thing at a time)<br>
     <span style="opacity:0.85">🏹 Crossbow equipped? Hold RMB or tap G to scope-zoom, LMB to fire. Each bolt costs 1 rhino horn.</span><br>
     </span>
     <span class="touch-only">
@@ -354,6 +354,7 @@ body.touch #crosshair{opacity:0.5}
     <button class="tc tc-btn" data-touch="eat">🍖<span class="tc-lab">EAT</span></button>
     <button class="tc tc-btn" data-touch="pounce">🐆<span class="tc-lab">POUNCE</span></button>
     <button class="tc tc-btn" data-touch="rock">🪨<span class="tc-lab">ROCK</span></button>
+    <button class="tc tc-btn" data-touch="carry">🎒<span class="tc-lab">TAKE</span></button>
     <button class="tc tc-btn" data-touch="grapple">🪝<span class="tc-lab">GRAPPLE</span></button>
     <button class="tc tc-btn" data-touch="crouch">🐾<span class="tc-lab">CROUCH</span></button>
     <button class="tc tc-btn" data-touch="sprint">💨<span class="tc-lab">SPRINT</span></button>
@@ -552,6 +553,10 @@ let berryBushes = [];               // 🫐 { mesh, pos, berries[], picked } —
 let cheetahMeshes = [];             // 🐆 the fastest thing alive — see the cheetah module
 let kitBrambles = [];               // 🌿 bramble fences — NOT in wallMeshes (they slow, they don't block)
 let kitRoofs   = [];                // 🏠 { mesh, aabb } flat walkable roofs — see the roof module
+// 🎒 CARRY — the single-slot hand. Steven: "make a button so you can pick up rocks and
+// berries and wood and drop them, but only one at a time. And do that with meat as
+// well." One item, in your hand, dropped where you stand.
+let carried = null;                 // { kind:'rock'|'wood'|'berry'|'meat', label, icon, mesh }
 let kitSwings = [];                 // { mesh, t } transient Hand Axe swing arcs — self-dispose
 let skyHammers = [];                // { grp,... } Hammer "from the sky" VFX — fall, impact, fade
 let _impactFlashes = [];            // { mesh,mat,life } bright ground bursts under a landing sky hammer
@@ -2072,6 +2077,12 @@ function registerControls(){
     if(e.code==='KeyF') throwRock();
     if(e.code==='KeyE'){ if(!toggleNearestGate() && !eatNearbyBerry() && !eatNearbyCarcass()) doCollect(); }   // gate → berry → carcass → collect
     if(e.code==='KeyQ') pouncePrey();                            // hunt: pounce on prey
+    // 🎒 T = Take / drop. One key, one item. Full hand → drops; empty hand → picks up
+    // the nearest eligible thing (dropped item → carcass meat → berry → held stock).
+    if(e.code==='KeyT' && !e.repeat){
+      if(carried) dropCarried();
+      else if(!tryPickUp()) showKillfeed('🎒 Nothing in reach to pick up');
+    }
   });
   document.addEventListener('keyup', e=>{
     keys[e.code]=false;
@@ -2117,7 +2128,7 @@ function registerControls(){
 //  give us unified touch/mouse + real multi-touch (move with one thumb, look/
 //  fire with the other) via pointerId + setPointerCapture.
 // =====================================================================
-let _tcSprintBtn=null, _tcCrouchBtn=null, _tcAttack=null, _tcPounceBtn=null, _tcScopeBtn=null;
+let _tcSprintBtn=null, _tcCrouchBtn=null, _tcAttack=null, _tcPounceBtn=null, _tcScopeBtn=null, _tcCarryBtn=null;
 function initTouchControls(){
   const forced = /[?&]touch=1/.test(location.search);
   IS_TOUCH = forced || ('ontouchstart' in window) || (navigator.maxTouchPoints||0) > 0;
@@ -2180,6 +2191,7 @@ function initTouchControls(){
   _tcCrouchBtn = document.querySelector('[data-touch="crouch"]');
   _tcPounceBtn = document.querySelector('[data-touch="pounce"]');
   _tcScopeBtn  = document.querySelector('[data-touch="scope"]');
+  _tcCarryBtn  = document.querySelector('[data-touch="carry"]');
   _tcAttack    = document.getElementById('tc-attack');
   // Scope 🔭 is a tap-toggle now (matches the [G] key) — routed through the delegated
   // tap handler → doTouchAction('scope') flips scopeToggle. No special hold listeners.
@@ -2211,7 +2223,11 @@ function doTouchAction(name, btn){
     case 'grapple': if(grapple.active||player.inTree||player.climbing) releaseGrapple(); else fireGrapple(); break; // == G
     case 'rock':    throwRock(); break;                                         // == F
     case 'pounce':  pouncePrey(); break;                                        // == Q
-    case 'eat':     if(!eatNearbyCarcass()) doCollect(); break;                 // == E
+    // ⚠ this MUST mirror the [E] key's full chain. It used to only try carcass→collect,
+    // which left gates and berry bushes unreachable on a phone — where Steven plays.
+    case 'eat':     if(!toggleNearestGate() && !eatNearbyBerry() && !eatNearbyCarcass()) doCollect(); break;  // == E
+    case 'carry':   if(carried) dropCarried();                                  // == T
+                    else if(!tryPickUp()) showKillfeed('🎒 Nothing in reach to pick up'); break;
     case 'scope':   scopeToggle = !scopeToggle; break;                          // tap-toggle (== [G])
   }
 }
@@ -2222,6 +2238,8 @@ function updateTouchUI(){
   if(_tcSprintBtn) _tcSprintBtn.classList.toggle('on', !!keys['ShiftLeft']);
   if(_tcCrouchBtn) _tcCrouchBtn.classList.toggle('on', !!keys['KeyC'] || player.crouching);
   if(_tcPounceBtn) _tcPounceBtn.classList.toggle('disabled', !hasNecklace());   // greyed until the necklace is worn
+  if(_tcCarryBtn){ _tcCarryBtn.classList.toggle('on', !!carried);               // lit while your hand is full
+    const lab=_tcCarryBtn.querySelector('.tc-lab'); if(lab) lab.textContent = carried ? 'DROP' : 'TAKE'; }
   // Big attack button mirrors the active tool's icon (spear/axe/hammer/…), so
   // it reads as "use this". Falls back to a paw when no ability is equipped.
   const activeId = progress.abilities[progress.activeAbility];
@@ -9199,6 +9217,100 @@ function roofOverhead(x, z, y){
 }
 function clearKitRoofs(){ kitRoofs.forEach(r=>killObj(r.mesh)); kitRoofs.length = 0; }
 
+// =====================================================================
+//  🎒 PICK UP / DROP  — one item at a time  (2026-07-31)
+// =====================================================================
+// Steven: "make a button so you can pick up rocks and berries and wood and drop them,
+// but only make it able to pick up one at a time. And do that with meat as well so you
+// can put in the thing."
+//
+// ⚠ This is a HAND, not an inventory. It deliberately does NOT touch the existing
+// woodCount / rockCount counters — those are the abstract stock you build from. The
+// carry slot is a physical object you are holding, which is what makes "drop it
+// somewhere else" meaningful (bait a carcass away from your camp, move a rock to where
+// you'll need it, carry a berry home). Picking up CONVERTS from stock to hand, and
+// dropping converts back — so nothing is ever created or lost.
+const CARRY_REACH = 3.4;
+function carryIcon(kind){ return kind==='rock'?'🪨' : kind==='wood'?'🪵' : kind==='berry'?'🫐' : '🍖'; }
+function makeCarriedMesh(kind){
+  const m = kind==='rock'  ? new THREE.Mesh(new THREE.DodecahedronGeometry(0.28,0), new THREE.MeshLambertMaterial({color:0x8f8f93}))
+          : kind==='wood'  ? new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.15,0.9,6), new THREE.MeshLambertMaterial({color:0x6f5334}))
+          : kind==='berry' ? new THREE.Mesh(new THREE.SphereGeometry(0.16,7,6), new THREE.MeshLambertMaterial({color:0x6a1b4d}))
+          : new THREE.Mesh(new THREE.BoxGeometry(0.5,0.26,0.36), new THREE.MeshLambertMaterial({color:0x8e3b32}));
+  m.castShadow = true; m.name = 'carried';
+  return m;
+}
+// Pick up whatever is nearest and eligible. Returns true if the hand filled.
+function tryPickUp(){
+  if(carried){ showKillfeed('🎒 Hands full — carrying the '+carried.label+' (drop it first)'); return true; }
+  // 1) a dropped item already lying on the ground
+  for(let i=droppedItems.length-1;i>=0;i--){
+    const d = droppedItems[i];
+    if(Math.hypot(d.pos.x-player.pos.x, d.pos.z-player.pos.z) > CARRY_REACH) continue;
+    killObj(d.mesh); droppedItems.splice(i,1);
+    carried = { kind:d.kind, label:d.label, icon:carryIcon(d.kind), mesh:makeCarriedMesh(d.kind) };
+    scene.add(carried.mesh);
+    showKillfeed(carried.icon+' Picked up the '+carried.label);
+    playSound('collect'); return true;
+  }
+  // 2) MEAT off a carcass — the one Steven called out specially
+  for(const c of carcasses){
+    if(Math.hypot(c.pos.x-player.pos.x, c.pos.z-player.pos.z) > CARRY_REACH) continue;
+    if((c.food||0) < 20) continue;
+    c.food -= 20;
+    carried = { kind:'meat', label:'hunk of meat', icon:'🍖', mesh:makeCarriedMesh('meat') };
+    scene.add(carried.mesh);
+    showKillfeed('🍖 Cut a hunk of meat from the carcass');
+    playSound('collect'); return true;
+  }
+  // 3) a berry straight off a bush
+  for(const b of berryBushes){
+    if(bushBerriesLeft(b) <= 0) continue;
+    if(Math.hypot(b.pos.x-player.pos.x, b.pos.z-player.pos.z) > CARRY_REACH) continue;
+    for(const m of b.berries) if(m.visible){ m.visible=false; break; }
+    carried = { kind:'berry', label:'berry', icon:'🫐', mesh:makeCarriedMesh('berry') };
+    scene.add(carried.mesh);
+    showKillfeed('🫐 Picked a berry'); playSound('collect'); return true;
+  }
+  // 4) out of held stock — converts stock → hand
+  if(rockCount > 0){ rockCount--; carried={kind:'rock',label:'rock',icon:'🪨',mesh:makeCarriedMesh('rock')};
+    scene.add(carried.mesh); showKillfeed('🪨 Took a rock in hand'); playSound('collect'); return true; }
+  if(woodCount > 0){ woodCount--; updateWoodHUD();
+    carried={kind:'wood',label:'log',icon:'🪵',mesh:makeCarriedMesh('wood')};
+    scene.add(carried.mesh); showKillfeed('🪵 Took a log in hand'); playSound('collect'); return true; }
+  return false;
+}
+// Put it down in front of you. It becomes a real object you can walk away from.
+function dropCarried(){
+  if(!carried){ showKillfeed('🎒 Nothing in hand'); return false; }
+  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  const p = player.pos.clone().addScaledVector(fwd, 1.6);
+  p.y = terrainY(p.x,p.z) + 0.22;
+  const mesh = carried.mesh;
+  mesh.position.copy(p); mesh.rotation.set(0, rand(0,6.28), 0);
+  droppedItems.push({ kind:carried.kind, label:carried.label, mesh, pos:p.clone() });
+  showKillfeed(carried.icon+' Dropped the '+carried.label);
+  carried = null;
+  playSound('place');
+  return true;
+}
+let droppedItems = [];   // { kind, label, mesh, pos } — physical things lying about
+// Keep the held item visible in front of the camera.
+function updateCarried(){
+  if(!carried || !carried.mesh) return;
+  const fwd = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation);
+  const right = new THREE.Vector3(1,0,0).applyEuler(camera.rotation);
+  carried.mesh.position.copy(camera.position)
+    .addScaledVector(fwd, 0.85).addScaledVector(right, 0.42).add(new THREE.Vector3(0,-0.3,0));
+  carried.mesh.rotation.y += 0.01;
+}
+function clearCarry(){
+  if(carried && carried.mesh) killObj(carried.mesh);
+  carried = null;
+  droppedItems.forEach(d=>killObj(d.mesh));
+  droppedItems.length = 0;
+}
+
 function kitPlaceWall(){      return placeKitWall(false); }
 function kitPlaceStoneWall(){ return placeKitWall(true);  }
 
@@ -10271,7 +10383,8 @@ function updateHUD(){
     (weather.intensity>0.15?`⛈️ STORM<br>`:'')+
     `🦁 Lions: ${lionMeshes.length}<br>`+
     `<span style="color:#f1c40f">${COIN} Coins: ${progress.coins}</span><br>`+
-    `🪨 Rocks: ${rockCount} &nbsp; 🪵 Wood: ${woodCount}`+mats;
+    `🪨 Rocks: ${rockCount} &nbsp; 🪵 Wood: ${woodCount}`+mats+
+    (carried?`<br><span style="color:#7fd8ff">🎒 Holding: ${carried.icon} ${carried.label}</span> <span style="opacity:0.6;font-size:11px">— [T] drop</span>`:'');
 
   // 💧 Oxygen bar — only shown while it matters (submerged, or refilling after a dive)
   { const ow=document.getElementById('oxygen-wrap'), ob=document.getElementById('oxygen-bar');
@@ -10577,6 +10690,7 @@ function resetGame(){
   // survive a run. Only the player-built brambles come down.
   [...kitBrambles].forEach(b=>killObj(b.mesh));
   clearKitRoofs();
+  clearCarry();                        // 🎒 empty the hand and clear anything left lying about
   [...skyVultureMeshes].forEach(V=>killObj(V.mesh));
   [...eagleMeshes].forEach(E=>killObj(E.mesh));
   [...secretaryMeshes].forEach(B=>killObj(B.mesh));
@@ -10678,6 +10792,7 @@ function animate(){
   updateWeather(dt);          // storm (after day/night — scales its lighting)
   updateWater(dt);            // 💧 ripple the pool surface
   updateFallingTrees(dt);     // 🌳 topple animation for felled trees
+  updateCarried();            // 🎒 keep the held item glued in front of the camera
   updateAbilities(dt);        // kit: cooldowns, timed buffs, EQUIP mods, fire-torch FX (before player/stealth read them)
   updatePlayer(dt);
   updateStealth(dt);

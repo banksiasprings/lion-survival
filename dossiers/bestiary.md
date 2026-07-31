@@ -79,6 +79,20 @@
 **Spears-to-kill:** gazelle/impala/warthog/zebra/wildebeest **1** · kudu **2** · giraffe **3** ·
 lion **5** · gorilla **10** · rhino **14** · **elephant 15**.
 
+### 🎒 Carrying things — [T] / the TAKE button
+You have **one hand and it holds one thing**. Press **[T]** (phone: the 🎒 **TAKE** button, which flips to
+**DROP** and lights up while your hand is full) to pick up the nearest thing you can carry, and press it again
+to put it down in front of you. It stays where you left it — walk off and come back, it's still there.
+
+**What it grabs, in priority order:** anything already lying on the ground → a **hunk of meat** cut off a
+carcass (costs the carcass 20 food; a carcass under 20 refuses) → a **berry** straight off a bush → a
+**rock or log out of your own stock**. Reach is **3.4**.
+
+⚠ **Nothing is ever created or destroyed.** Picking a rock out of your stock *moves* it from the counter into
+your hand; dropping it moves it back into the world. At any instant every item is in exactly one of three
+places — your stock, the ground, or your hand — which is what makes carrying meaningful: you can walk a
+carcass hunk away from camp as bait, or ferry a rock to where you'll actually want to throw it.
+
 ---
 
 ## Your kit — the Shop (abilities & accessories)
