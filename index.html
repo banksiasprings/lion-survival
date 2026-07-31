@@ -440,7 +440,8 @@ let grassSys  = null;       // {mesh, mat}  InstancedBufferGeometry of blades
 let dustSys   = null;       // THREE.Points
 let skyDome   = null;       // gradient dome {mesh, mat}
 let hillBand  = null;       // distant rolling hills (fog-immune silhouette)
-let wateringHole = null;    // {x,z,r,mesh} — Phase 5 focal point
+let wateringHole  = null;   // {x,z,r,mesh} — pond 0, the "focal point" landmark
+let wateringHoles = [];     // all three pond meshes; index-aligned with waterHoles
 // Weather (Phase 5): occasional storms — rain darkens the sky + cuts everyone's
 // detection (a shared stealth window). detMul is read by the detection model.
 let weather = { state:'clear', timer: rand(60,110), intensity:0, flash:0, detMul:1 };
@@ -654,7 +655,15 @@ function noise2d(x,z){
 // terrain mesh samples terrainY, so it deforms; animals walk down the bank; a wall
 // built on the slope sits on the slope.
 const WATER = {
-  DEPTH:      4.2,    // bowl depth at the centre, below the surrounding ground
+  // Steven: "make the pond five times bigger… make three ponds spawn in the map."
+  // 5× AREA, not 5× radius — 5× radius would be a 110-wide crater swallowing a fifth
+  // of the map. Area scales with r², so r × √5 ≈ r × 2.236: the old rand(9,13) becomes
+  // rand(20,29), i.e. ~40–58 across (~49 typical) for almost exactly 5× the water.
+  COUNT:      3,      // how many ponds to carve
+  R_MIN:     20, R_MAX: 29,
+  GAP:       22,      // clear LAND between two rims — ponds must never merge
+  DEPTH:      5.5,    // deepened from 4.2: a 49-wide dish only 4.2 deep is a puddle with
+                      // no bottom worth lurking on. Crocs need a real deep zone.
   SURFACE:   -0.55,   // water plane, relative to the ground height at the hole centre
   SPEED_MUL:  1/3,    // Steven: everything moves at a third speed in the water
   OXY_MAX:    100,
@@ -664,12 +673,54 @@ const WATER = {
   SWIM_UP:    4.2,    // Space / jump swims you up
   SINK:      -1.1,    // gentle negative buoyancy, so you drift down when idle
 };
-// Chosen BEFORE createTerrain() so the mesh is generated with the bowl already in it.
-let waterHole = null;   // { x, z, r, r2, depth } — read by terrainY on every call
-function chooseWaterHole(){
-  const r = rand(9,13);
-  waterHole = { x: rand(-HALF*0.5, HALF*0.5), z: rand(-HALF*0.5, HALF*0.5),
-                r, r2: r*r, depth: WATER.DEPTH };
+// Chosen BEFORE createTerrain() so the mesh is generated with the bowls already in it.
+// ⚠ ARRAY now, not a singleton. terrainY reads this on every single call, so it stays a
+// plain array of plain objects with pre-squared radii — no allocation, no sqrt.
+let waterHoles = [];    // [{ x, z, r, r2, depth, groundY }]
+let waterHole  = null;  // === waterHoles[0]. Kept as the "focal point" for the handful of
+                        // places that want ONE landmark (lion drinking runs, herd anchors).
+function chooseWaterHoles(){
+  waterHoles = [];
+  let guard = 0;
+  while(waterHoles.length < WATER.COUNT && guard++ < 4000){
+    const r = rand(WATER.R_MIN, WATER.R_MAX);
+    // keep the whole bowl on the map: the rim must clear the scatter margin
+    const lim = MAPR - r - 6;
+    const x = rand(-lim, lim), z = rand(-lim, lim);
+    // ⚠ separation is rim-to-rim, not centre-to-centre — with radii varying 20..29 a
+    // fixed centre distance would let a big pair overlap while keeping a small pair
+    // needlessly far apart.
+    if(waterHoles.some(w => Math.hypot(w.x-x, w.z-z) < w.r + r + WATER.GAP)) continue;
+    waterHoles.push({ x, z, r, r2: r*r, depth: WATER.DEPTH });
+  }
+  // Surface height per pond: sample the UNDUG ground just outside each rim, so each
+  // pool sits relative to its own surrounding land. Safe to do now that every bowl is
+  // registered — the nearest foreign rim is at least WATER.GAP away.
+  waterHoles.forEach(w => { w.groundY = terrainY(w.x + w.r + 2.0, w.z); });
+  waterHole = waterHoles[0] || null;
+}
+// The pond containing this XZ, or null. THE lookup every water rule goes through.
+function poolAt(x, z){
+  for(let i=0;i<waterHoles.length;i++){
+    const w = waterHoles[i], dx = x-w.x, dz = z-w.z;
+    if(dx*dx + dz*dz < w.r2) return w;
+  }
+  return null;
+}
+// Is XZ within `margin` of ANY pond? Replaces the old single-hole exclusion tests that
+// scatter-placement (grass, trees, bushes, spawns) uses to keep out of the water.
+function nearAnyPool(x, z, margin){
+  for(let i=0;i<waterHoles.length;i++){
+    const w = waterHoles[i];
+    if(Math.hypot(x-w.x, z-w.z) < w.r + margin) return true;
+  }
+  return false;
+}
+function randomPool(){ return waterHoles.length ? waterHoles[(Math.random()*waterHoles.length)|0] : null; }
+function nearestPool(x, z){
+  let best=null, bd=Infinity;
+  for(const w of waterHoles){ const d=Math.hypot(x-w.x,z-w.z); if(d<bd){ bd=d; best=w; } }
+  return best;
 }
 function terrainY(x,z){
   // gentle rolling, flat-ish
@@ -679,34 +730,37 @@ function terrainY(x,z){
   // bottom and a rim that meets the surrounding ground at exactly zero offset, so
   // there is no seam or cliff at the edge. Guarded with a squared-distance compare
   // (no sqrt) because terrainY is one of the hottest functions in the file.
-  if(waterHole){
-    const dx = x-waterHole.x, dz = z-waterHole.z, d2 = dx*dx + dz*dz;
-    if(d2 < waterHole.r2){
-      const k = 1 - d2/waterHole.r2;          // 1 at centre → 0 at rim
-      y -= waterHole.depth * k * k;
+  for(let i=0;i<waterHoles.length;i++){
+    const w = waterHoles[i];
+    const dx = x-w.x, dz = z-w.z, d2 = dx*dx + dz*dz;
+    if(d2 < w.r2){
+      const k = 1 - d2/w.r2;                  // 1 at centre → 0 at rim
+      y -= w.depth * k * k;
     }
   }
   return y;
 }
-// Water surface height in world space (constant across the pool).
-function waterSurfaceY(){
-  return waterHole ? (waterHole.groundY + WATER.SURFACE) : -1e9;
+// Water surface height for the pond at this XZ (each pond has its own level, because
+// each sits in different terrain). -1e9 when you're on dry land, so a naive
+// `y < waterSurfaceY(...)` can never read as submerged.
+function waterSurfaceY(x, z){
+  const w = (x===undefined) ? waterHole : poolAt(x, z);
+  return w ? (w.groundY + WATER.SURFACE) : -1e9;
 }
+// Surface of a specific pond — for anything that already knows which pond it's in.
+function poolSurfaceY(w){ return w ? (w.groundY + WATER.SURFACE) : -1e9; }
 // Is this XZ inside the pool, and is `y` below the surface? Used by the player and
 // by every animal's movement for the one-third speed rule.
 function inWaterAt(x, z, y){
-  if(!waterHole) return false;
-  const dx = x-waterHole.x, dz = z-waterHole.z;
-  if(dx*dx + dz*dz > waterHole.r2) return false;
-  return y < waterSurfaceY();
+  const w = poolAt(x, z);
+  return w ? (y < poolSurfaceY(w)) : false;
 }
 // Movement multiplier for anything walking/swimming at (x,z). ONE call in each
 // animal's step so the rule is uniform: a third speed in the water, full on land.
 function waterSpeedMul(x, z){
-  if(!waterHole) return 1;
-  const dx = x-waterHole.x, dz = z-waterHole.z;
-  if(dx*dx + dz*dz > waterHole.r2) return 1;
-  return (terrainY(x,z) < waterSurfaceY()) ? WATER.SPEED_MUL : 1;
+  const w = poolAt(x, z);
+  if(!w) return 1;
+  return (terrainY(x,z) < poolSurfaceY(w)) ? WATER.SPEED_MUL : 1;
 }
 
 // In-game hour 0..24. dn.time 0 = dawn ≈ 05:00; HALF_CYCLE (120) = dusk ≈ 17:00.
@@ -1053,7 +1107,7 @@ function createTerrain(){
 // =====================================================================
 function createSavanna(){
   generateTallGrassClumps();
-  createWateringHole();      // before grass so blades skip the water (Phase 5)
+  createWateringHoles();     // before grass so blades skip the water (Phase 5)
   createSkyDome();
   createDistantHills();
   createGrass();
@@ -1063,15 +1117,20 @@ function createSavanna(){
 
 // A watering hole — the savanna's focal point. Animals (and the player) are
 // drawn here; lions drift in to drink and lie in ambush, especially at dusk.
-function createWateringHole(){
-  // Position/radius were fixed by chooseWaterHole() before the terrain was built —
+function createWateringHoles(){
+  wateringHoles = [];
+  waterHoles.forEach(w => buildOnePool(w));
+  // `wateringHole` stays the FOCAL point (pond 0) for the few places that want one
+  // landmark to walk toward. Anything that means "any water" uses nearAnyPool/poolAt.
+  wateringHole = wateringHoles[0] || null;
+}
+function buildOnePool(hole){
+  // Position/radius were fixed by chooseWaterHoles() before the terrain was built —
   // reuse them, or the pool would sit somewhere the ground was never dug.
-  const { x, z, r } = waterHole;
-  // `groundY` is the UNDUG ground height at the centre: sample just outside the rim,
-  // where the bowl term is zero, so the surface sits relative to the surrounding land
-  // rather than to the bottom of the hole it just carved.
-  const groundY = terrainY(x + r + 2.0, z);
-  waterHole.groundY = groundY;
+  const { x, z, r } = hole;
+  // groundY was measured just outside this rim, where the bowl term is zero, so the
+  // surface sits relative to the surrounding land, not the bottom it just carved.
+  const groundY = hole.groundY;
   const surfY = groundY + WATER.SURFACE;
 
   const grp = new THREE.Group(); grp.position.set(x, 0, z);
@@ -1115,22 +1174,26 @@ function createWateringHole(){
   grp.add(floor);
 
   scene.add(grp);
-  // wateringHole keeps its old shape ({x,z,r,y,mesh,water}) because ~14 existing call
-  // sites read it — grass exclusion, lion drinking, siesta spots, the minimap.
-  wateringHole = { x, z, r, y:groundY, mesh:grp, water, surfaceY:surfY };
+  // Same shape as the old singleton ({x,z,r,y,mesh,water}) so existing call sites read
+  // unchanged; `hole` back-links to the terrain record the croc AI works from.
+  wateringHoles.push({ x, z, r, y:groundY, mesh:grp, water, surfaceY:surfY, hole });
 }
 // Cheap animated surface: two crossed sine waves walking across the disc. No shader,
 // no extra draw call — just the existing vertices nudged each frame.
 function updateWater(dt){
-  if(!wateringHole || !wateringHole.water) return;
-  const w = wateringHole.water, base = w._base;
-  if(!base) return;
-  const pos = w.geometry.attributes.position, t = elapsed;
-  for(let i=0;i<pos.count;i++){
-    const bx = base[i*3], bz = base[i*3+2];
-    pos.setY(i, Math.sin(bx*0.55 + t*1.5)*0.075 + Math.cos(bz*0.47 + t*1.1)*0.065);
+  const t = elapsed;
+  for(let p=0;p<wateringHoles.length;p++){
+    const w = wateringHoles[p].water; if(!w) continue;
+    const base = w._base; if(!base) continue;
+    const pos = w.geometry.attributes.position;
+    // phase-offset per pond so the three surfaces don't ripple in lockstep
+    const ph = p * 2.1;
+    for(let i=0;i<pos.count;i++){
+      const bx = base[i*3], bz = base[i*3+2];
+      pos.setY(i, Math.sin(bx*0.55 + t*1.5 + ph)*0.075 + Math.cos(bz*0.47 + t*1.1 + ph)*0.065);
+    }
+    pos.needsUpdate = true;
   }
-  pos.needsUpdate = true;
 }
 
 // Scatter tall-grass hide spots. These are the tactical heart of stealth
@@ -1142,6 +1205,10 @@ function generateTallGrassClumps(){
     attempts++;
     const x = rand(-MAPR,MAPR), z = rand(-MAPR,MAPR);
     if(tallGrassClumps.some(c=>Math.hypot(c.x-x,c.z-z) < 7)) continue;
+    // ⚠ tall grass is a HIDE spot. One growing in open water would be a free stealth
+    // bubble in the middle of a pond — and now that there are three ponds at ~5× area
+    // it lands there often enough to matter. Exclude the clump's whole footprint.
+    if(nearAnyPool(x, z, 6.5)) continue;
     tallGrassClumps.push({ x, z, r: rand(3.5,6.5) });
   }
 }
@@ -1220,7 +1287,7 @@ function createGrass(){
   let guard=0;
   while(n<COUNT && guard++<COUNT*4){
     const gx=rand(-HALF+2,HALF-2), gz=rand(-HALF+2,HALF-2);
-    if(wateringHole && Math.hypot(gx-wateringHole.x, gz-wateringHole.z) < wateringHole.r+1) continue;
+    if(nearAnyPool(gx, gz, 1)) continue;
     place(gx, gz, false);
   }
 
@@ -1594,7 +1661,7 @@ function plantTree(item, placed){
   while(att++<40 && !ok){
     x=rand(-MAPR,MAPR); z=rand(-MAPR,MAPR);
     ok = (!placed || !placed.some(p=>Math.hypot(p[0]-x,p[1]-z)<spacing))
-      && !(wateringHole && Math.hypot(x-wateringHole.x,z-wateringHole.z)<wateringHole.r+2);
+      && !nearAnyPool(x, z, 2);
   }
   if(!ok) return null;
   if(placed) placed.push([x,z]);
@@ -1893,7 +1960,7 @@ function createBerryBushes(){
   let placed = 0, att = 0;
   while(placed < BERRY.BUSHES && att++ < BERRY.BUSHES*40){
     const x = rand(-MAPR,MAPR), z = rand(-MAPR,MAPR);
-    if(wateringHole && Math.hypot(x-wateringHole.x, z-wateringHole.z) < wateringHole.r+2) continue;
+    if(nearAnyPool(x, z, 2)) continue;
     if(berryBushes.some(b=>Math.hypot(b.pos.x-x, b.pos.z-z) < 7)) continue;
     makeBerryBush(x,z); placed++;
   }
@@ -1940,7 +2007,7 @@ function regrowBushes(){
   let grown=0, att=0;
   while(grown < n && att++ < n*40){
     const x = rand(-MAPR,MAPR), z = rand(-MAPR,MAPR);
-    if(wateringHole && Math.hypot(x-wateringHole.x, z-wateringHole.z) < wateringHole.r+2) continue;
+    if(nearAnyPool(x, z, 2)) continue;
     if(berryBushes.some(b=>Math.hypot(b.pos.x-x, b.pos.z-z) < 7)) continue;
     makeBerryBush(x,z); grown++;
   }
@@ -1990,7 +2057,7 @@ function createRockFormations(){
       x=rand(-MAPR,MAPR); z=rand(-MAPR,MAPR);
       ok = !placed.some(p=>Math.hypot(p[0]-x,p[1]-z)<5)
         && !treeObjects.some(t=>t.pos.distanceTo(v3(x,0,z))<3.5)
-        && !(wateringHole && Math.hypot(x-wateringHole.x,z-wateringHole.z)<wateringHole.r+2)
+        && !nearAnyPool(x, z, 2)
         && Math.hypot(x,z)>5;
     }
     if(!ok) continue;
@@ -2073,6 +2140,8 @@ function registerControls(){
     // Grapple is no longer bound to G — it lives on its kit slot (LMB/Z) and drops via RMB/Space.
     if(e.code==='KeyG' && progress.abilities[progress.activeAbility]==='kit_crossbow' && !e.repeat) scopeToggle = !scopeToggle;
     if(e.code==='KeyC' && !e.repeat) _crouchDownT = performance.now();   // start timing — a brief C press = a tap (see keyup)
+    // 🐊 Space is the break-out mash FIRST — while a croc has you it means nothing else.
+    if(e.code==='Space' && playerGrabbed()){ crocTapEscape(); return; }
     if(e.code==='Space' && player.inTree) dropFromTree();   // drop off the branch
     if(e.code==='KeyF') throwRock();
     if(e.code==='KeyE'){ if(!toggleNearestGate() && !eatNearbyBerry() && !eatNearbyCarcass()) doCollect(); }   // gate → berry → carcass → collect
@@ -2212,6 +2281,9 @@ function initTouchControls(){
 function doTouchAction(name, btn){
   // Menu toggles the loadout even while paused; everything else needs a live run.
   if(name==='menu'){ if(uiPaused) closeShop(); else if(gameState==='playing') openShop('game'); return; }
+  // 🐊 While a croc has you, EVERY button is the break-out mash. Steven plays on a
+  // phone — hunting for one specific button mid-drowning is not a fair fight.
+  if(gameState==='playing' && !uiPaused && playerGrabbed()){ crocTapEscape(); return; }
   if(gameState!=='playing' || uiPaused) return;
   if(player.stunTimer > 0) return;                       // dazed by a gorilla tree-grab
   switch(name){
@@ -2327,6 +2399,9 @@ function updatePlayer(dt){
     if(move.lengthSq()>0) move.normalize().multiplyScalar(Math.min(1, Math.hypot(touchMove.x, touchMove.y)));
   }
   if(stunned) move.set(0,0,0);                              // dazed — no walking
+  // 🐊 Held by a croc: you can still LOOK (aim is untouched) but you cannot move
+  // yourself — updateCrocGrab owns your position until you break free or die.
+  if(playerGrabbed()) move.set(0,0,0);
   move.multiplyScalar(speed);
 
   // ---- Grapple / climbing / perched (Phase 4) ----
@@ -2464,7 +2539,11 @@ function updateOxygen(dt){
   const submerged = inWaterAt(player.pos.x, player.pos.z, headY);
   if(submerged){
     const was = player.oxygen;
-    player.oxygen = Math.max(0, player.oxygen - WATER.OXY_DRAIN*dt);
+    // 🐊 Steven: the death roll "uses your oxygen extra fast so you drown faster".
+    // This multiplier is the ACTUAL lethality of a grab — the roll damage alone is
+    // survivable, but 2.5× drain turns ~11 s of breath into ~4 s.
+    const mult = playerGrabbed() ? CROC.OXY_MULT : 1;
+    player.oxygen = Math.max(0, player.oxygen - WATER.OXY_DRAIN*mult*dt);
     if(was > 0 && player.oxygen <= 0) showKillfeed('🫧 Out of air — you are drowning!');
     if(player.oxygen <= 0){
       player.health -= WATER.DROWN_DPS*dt;
@@ -2537,7 +2616,7 @@ function updateHealth(dt){
     // WATER IS THE CURE — wade into the watering hole and it flushes out. That's
     // the pride's drinking spot and the serpents' midday bank, so the trek there
     // on 1 HP is the price.
-    if(wateringHole && Math.hypot(player.pos.x-wateringHole.x, player.pos.z-wateringHole.z) < wateringHole.r){
+    if(poolAt(player.pos.x, player.pos.z)){            // ANY of the three ponds cures it
       cureVenom('💧 You wade into the water — the venom washes out');
       poisoned = false;
     } else if(player.poisonT <= 0){
@@ -3021,13 +3100,15 @@ function updateLions(dt){
         let best=null,bd=Infinity;
         treeObjects.forEach(t=>{ if(!t.big) return; const d=t.pos.distanceTo(lpos); if(d<bd){bd=d;best=t;} });
         // ~40% head for water instead of shade
-        L.restTarget = (wateringHole && Math.random()<0.4)
-          ? new THREE.Vector3(wateringHole.x, terrainY(wateringHole.x,wateringHole.z), wateringHole.z)
+        const _lp = (Math.random()<0.4) ? randomPool() : null;   // any of the three
+        L._restPool = _lp;
+        L.restTarget = _lp
+          ? new THREE.Vector3(_lp.x, terrainY(_lp.x,_lp.z), _lp.z)
           : (best ? best.pos : null);
       }
       if(L.restTarget){
         const d = L.restTarget.distanceTo(lpos);
-        const stop = (wateringHole && Math.abs(L.restTarget.x-wateringHole.x)<0.1) ? wateringHole.r+1 : 2.5;
+        const stop = L._restPool ? L._restPool.r+1 : 2.5;   // stop on the bank of ITS pond
         if(d > stop){ dir.copy(L.restTarget).sub(lpos); dir.y=0; dir.normalize(); }
       }
     } else { // wander
@@ -3403,7 +3484,9 @@ function spawnHerds(){
   plan.forEach((key,hi)=>{
     const s=SPECIES[key];
     let cx,cz;
-    if(hi%3===0 && wateringHole){ const a=rand(0,6.28), r=rand(11,22); cx=clamp(wateringHole.x+Math.cos(a)*r,-MAPR,MAPR); cz=clamp(wateringHole.z+Math.sin(a)*r,-MAPR,MAPR); }
+    const _hp = (hi%3===0) ? randomPool() : null;        // every third herd waters at a pond
+    if(_hp){ const a=rand(0,6.28), rr=_hp.r+rand(3,14);   // ON THE BANK, scaled to that pond
+             cx=clamp(_hp.x+Math.cos(a)*rr,-MAPR,MAPR); cz=clamp(_hp.z+Math.sin(a)*rr,-MAPR,MAPR); }
     else { cx=rand(-MAPR,MAPR); cz=rand(-MAPR,MAPR); }
     const n=s.herd[0] + (Math.random()*(s.herd[1]-s.herd[0]+1)|0);
     for(let i=0;i<n;i++) makePrey(key, clamp(cx+rand(-5,5),-MAPR,MAPR), clamp(cz+rand(-5,5),-MAPR,MAPR), 'h'+hi);
@@ -5282,7 +5365,7 @@ function vulturePickLanding(V){
     if(bad) continue;
     const near=(list,rad)=>list.some(o=>o.health>0 && Math.hypot(o.pos.x-x,o.pos.z-z)<rad);
     if(near(lionMeshes,4)||near(gorillaMeshes,5)||near(rhinoMeshes,5)||near(preyMeshes,4)||near(dogMeshes,3)) continue;
-    if(wateringHole && Math.hypot(x-wateringHole.x,z-wateringHole.z)<wateringHole.r+2) continue;
+    if(nearAnyPool(x, z, 2)) continue;
     return {x,z};
   }
   return null;
@@ -6866,6 +6949,8 @@ function updateCreatureVenom(dt){
   };
   lionMeshes.forEach(tick); preyMeshes.forEach(tick); gorillaMeshes.forEach(tick);
   cheetahMeshes.forEach(tick);
+  // 🐊 A croc only carries venom if it was hit while hauled out — see the spit gate.
+  crocMeshes.forEach(tick);
   rhinoMeshes.forEach(tick); dogMeshes.forEach(tick); skyVultureMeshes.forEach(tick);
   secretaryMeshes.forEach(tick);
   eagleMeshes.forEach(E=>{ if(!E.dying) tick(E); });
@@ -7035,6 +7120,10 @@ function updateVenomSpits(dt){
       done = tryHit(lionMeshes) || tryHit(dogMeshes) || tryHit(preyMeshes) || tryHit(rhinoMeshes)
           || tryHit(gorillaMeshes, G=>G.state==='perched')
           || tryHit(secretaryMeshes, B=>!secretaryGrounded(B))
+          // 🐊 A venom blob is a physical projectile: it hits a croc hauled out on the
+          // bank, and it does NOT reach one lying under the water. Same rule the spit
+          // already uses for a perched gorilla and an airborne secretary bird.
+          || tryHit(crocMeshes, C=>crocSubmerged(C))
           // …and never its OWN species. pickSpitTarget already refuses to AIM at one,
           // so a blob clipping a same-variant bystander in flight was the two paths
           // disagreeing, not a design choice — and it mattered: the venom floors any
@@ -7192,8 +7281,9 @@ function pickSiestaSpot(S){
   // `skin` is how far past the anchor the search ring reaches — for the pond that's
   // its own radius plus the search band, so we hunt the BANK, never the water.
   let anchor = null, skin = 0;
-  if(wateringHole){ anchor = {x:wateringHole.x, z:wateringHole.z}; skin = wateringHole.r; }
-  else {
+  { const np = nearestPool(S.pos.x, S.pos.z);          // hunt the bank of the CLOSEST pond
+    if(np){ anchor = {x:np.x, z:np.z}; skin = np.r; } }
+  if(!anchor){                                          // no water on the map at all
     let bd=Infinity;
     tallGrassClumps.forEach(c=>{ const d=Math.hypot(c.x-S.pos.x,c.z-S.pos.z); if(d<bd){ bd=d; anchor={x:c.x,z:c.z}; } });
   }
@@ -7215,7 +7305,7 @@ function pickSiestaSpot(S){
   if(!best){
     let bd=Infinity;
     tallGrassClumps.forEach(c=>{
-      if(wateringHole && Math.hypot(c.x-wateringHole.x,c.z-wateringHole.z) < wateringHole.r+1.5) return;
+      if(nearAnyPool(c.x, c.z, 1.5)) return;
       const d=Math.hypot(c.x-S.pos.x,c.z-S.pos.z); if(d<bd){ bd=d; best={x:c.x,z:c.z}; }
     });
   }
@@ -8465,6 +8555,7 @@ function updateHealthBars(dt){
   lionMeshes.forEach(step); preyMeshes.forEach(step);
   gorillaMeshes.forEach(step); rhinoMeshes.forEach(step); dogMeshes.forEach(step);
   cheetahMeshes.forEach(step);
+  crocMeshes.forEach(step);
   skyVultureMeshes.forEach(step); snakeMeshes.forEach(step);
   eagleMeshes.forEach(step); secretaryMeshes.forEach(step);
 }
@@ -9225,6 +9316,442 @@ function roofOverhead(x, z, y){
 }
 function clearKitRoofs(){ kitRoofs.forEach(r=>killObj(r.mesh)); kitRoofs.length = 0; }
 
+
+// =====================================================================
+//  🐊 CROCODILE  — the pond apex. Grab, drag under, death roll.  (2026-07-31)
+// =====================================================================
+// Steven: "build crocodiles to go in the ponds. And they can grab you and drag you
+// under the water where you can drown, and then they can use the death roll, which
+// does damage, and it also uses your oxygen extra fast so you drown faster… make them
+// want to attack everything that comes near the waterhole. And they, like, sit on the
+// edge sometimes a day. They just lie on the edge, and they lie on the bottom and just
+// swim around and stuff."
+//
+// ⚠ THE DEFINING CONSTRAINT: a croc is BOUND TO ITS POND. It has no land AI at all —
+// it never crosses the map, never chases you home. Everything below leashes to
+// `C.pool`. That is what makes the ponds dangerous instead of making the map dangerous:
+// water becomes a place you choose to enter, and three ponds means three such places.
+let crocMeshes = [];
+const CROC = {
+  PER_POND_MIN: 1, PER_POND_MAX: 2,   // "no pond is a safe pond"
+  HEALTH:    600,     // tanky: ~5 spear hits. Between a lion (fast, fragile) and a rhino.
+  BITE_DMG:   26,     // the plain snap, when a grab is on cooldown
+  BITE_CD:   1.6,
+  // --- grab & drag ---
+  GRAB_R:     3.4,    // strike range
+  GRAB_CD:    7.0,    // per-croc, after a grab ends however it ends
+  DRAG_SPEED: 3.2,    // how fast it hauls you toward the bottom
+  ROLL_DMG:   20,     // Steven's "death roll" — per roll cycle
+  ROLL_EVERY: 1.35,   // seconds between rolls
+  OXY_MULT:   2.5,    // ⚠ air burns 2.5× faster while held — the actual killer
+  // --- breaking free ---
+  BREAK_TAPS:   9,    // taps needed
+  TAP_DECAY:  3.2,    // taps/sec bleed off, so slow tapping never gets there — you MASH
+  GRACE:      3.0,    // seconds of immunity after breaking free (Steven's ask: 2-3 s)
+  // --- movement ---
+  SPD_CRUISE: 3.4,    // idle subsurface patrol
+  SPD_CHARGE: 9.5,    // the lunge — faster than you can swim (player swim is ~1/3 speed)
+  SPD_BANK:   1.5,    // the waddle up onto the bank; crocs are slow on land by design
+  DETECT:      26,    // notices anything this close…
+  BANK_MARGIN: 3.0,   // …and will follow it up to this far past its own rim, no further
+  // --- day rhythm (Steven: basking, bottom-lurking, cruising) ---
+  BASK_MIN:  14, BASK_MAX: 30,
+  LURK_MIN:  10, LURK_MAX: 24,
+  CRUISE_MIN: 8, CRUISE_MAX: 18,
+};
+// One global grab — a croc can only hold ONE thing, and you can only be held by ONE
+// croc. Exclusive by construction, so a second croc can never chain-grab you.
+let crocGrab = { croc:null, t:0, taps:0, rollT:0, graceT:0 };
+function playerGrabbed(){ return !!crocGrab.croc; }
+
+function makeCrocodile(x, z, pool){
+  const g = new THREE.Group();
+  const dark  = lmat(0x2b3327);   // wet olive-black back
+  const mid   = lmat(0x3d4632);   // flank
+  const belly = lmat(0x7d7f5e);   // pale underside
+  const tooth = lmat(0xe8e2cf);
+  const eye   = lmat(0xc9a227);   // gold slit eye
+
+  // Body: a long low wedge — 4.6 units nose to tail-tip, sitting barely above the waterline.
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.52, 2.1), dark);
+  torso.position.y = 0.34; torso.castShadow = true; g.add(torso);
+  const under = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.2, 2.0), belly);
+  under.position.y = 0.13; g.add(under);
+  // Scutes — the armoured ridges. Two rows, the visual cue that says "do not fight this".
+  for(let i=0;i<7;i++){
+    for(const sx of [-0.24, 0.24]){
+      const sc = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.17, 4), mid);
+      sc.position.set(sx, 0.6, -0.9 + i*0.3); g.add(sc);
+    }
+  }
+  // Head: long flat snout, the silhouette that reads instantly at a distance.
+  const head = new THREE.Group(); head.position.set(0, 0.3, 1.42); g.add(head);
+  const skull = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.34, 0.7), dark);
+  skull.position.z = -0.1; head.add(skull);
+  const snout = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.22, 0.86), dark);
+  snout.position.set(0, -0.03, 0.6); head.add(snout);
+  const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.13, 0.84), belly);
+  jaw.position.set(0, -0.17, 0.58); head.add(jaw); head._jaw = jaw;
+  for(let i=0;i<7;i++){                       // the grin
+    const t1 = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.13, 4), tooth);
+    t1.position.set(-0.17 + (i%2)*0.34, -0.12, 0.25 + (i*0.09)); t1.rotation.x = Math.PI; head.add(t1);
+  }
+  for(const ex of [-0.19, 0.19]){             // eyes ON TOP — the periscope look
+    const e = new THREE.Mesh(new THREE.SphereGeometry(0.085, 6, 5), eye);
+    e.position.set(ex, 0.19, -0.05); head.add(e);
+    const b = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), dark);
+    b.position.set(ex, 0.13, -0.05); b.scale.set(1,0.7,1); head.add(b);
+  }
+  // Tail: four tapering segments, so the swim animation has something to ripple.
+  const tail = new THREE.Group(); tail.position.set(0, 0.32, -1.05); g.add(tail); g._tail = tail;
+  let prev = tail;
+  const segs = [];
+  for(let i=0;i<4;i++){
+    const w = 0.62 - i*0.13, h = 0.4 - i*0.07;
+    const seg = new THREE.Group(); seg.position.z = i===0 ? 0 : -0.45;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.5), i<2?dark:mid);
+    m.position.z = -0.22; seg.add(m);
+    if(i<3){ const fin = new THREE.Mesh(new THREE.ConeGeometry(0.08,0.2,4), mid);
+             fin.position.set(0, h*0.5+0.05, -0.22); seg.add(fin); }
+    prev.add(seg); prev = seg; segs.push(seg);
+  }
+  g._tailSegs = segs;
+  // Legs — splayed, short. They matter only for the bank waddle.
+  const legs = [];
+  for(const [lx,lz] of [[-0.52,0.75],[0.52,0.75],[-0.55,-0.5],[0.55,-0.5]]){
+    const leg = new THREE.Group(); leg.position.set(lx, 0.22, lz);
+    const up = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.14,0.3), mid);
+    up.position.set(lx<0?-0.12:0.12, -0.02, 0); up.rotation.z = lx<0?0.5:-0.5; leg.add(up);
+    const ft = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.09,0.24), mid);
+    ft.position.set(lx<0?-0.24:0.24, -0.16, 0.02); leg.add(ft);
+    g.add(leg); legs.push(leg);
+  }
+  g._legs = legs;
+  g.name = 'crocodile';
+  const gy = terrainY(x,z);
+  g.position.set(x, gy, z);
+  scene.add(g);
+
+  const C = {
+    mesh:g, pos:g.position, pool,
+    health:CROC.HEALTH, maxHealth:CROC.HEALTH,
+    state:'LURK', stateT:rand(0,8), heading:rand(0,Math.PI*2),
+    biteCd:0, grabCd:0, flashTimer:0, stunTimer:0,
+    target:null, targetKind:null, dest:null, swimY:0, bob:rand(0,6.28),
+    label:'crocodile', species:'crocodile',
+  };
+  setHitbox(C); attachHealthBar(C); crocMeshes.push(C);
+  return C;
+}
+
+// 1–2 per pond, placed in their own water. Called once at world build and on reset.
+function spawnCrocodiles(){
+  waterHoles.forEach(w=>{
+    const n = CROC.PER_POND_MIN + ((Math.random()*(CROC.PER_POND_MAX-CROC.PER_POND_MIN+1))|0);
+    for(let i=0;i<n;i++){
+      const a = rand(0,6.28), rr = Math.sqrt(Math.random())*w.r*0.7;
+      makeCrocodile(w.x+Math.cos(a)*rr, w.z+Math.sin(a)*rr, w);
+    }
+  });
+}
+// Is this croc's body in its pond's water right now?
+function crocSubmerged(C){
+  return terrainY(C.pos.x, C.pos.z) < poolSurfaceY(C.pool) - 0.35;
+}
+// ⚠ THE LEASH. A croc may never be further from its pond centre than the rim plus a
+// small bank margin. Every destination and every chase clamps through this, which is
+// why a croc physically cannot follow you across the map.
+function crocClampToPond(C, x, z){
+  const w = C.pool, dx = x-w.x, dz = z-w.z, d = Math.hypot(dx,dz);
+  const lim = w.r + CROC.BANK_MARGIN;
+  if(d <= lim) return {x, z};
+  return { x: w.x + dx/d*lim, z: w.z + dz/d*lim };
+}
+function crocInRange(C, x, z){
+  const w = C.pool;
+  return Math.hypot(x-w.x, z-w.z) <= w.r + CROC.BANK_MARGIN;
+}
+// Everything that enters the water is prey. Steven: "attack everything that comes near
+// the waterhole" — so this scans PREDATORS as well as prey, and the player.
+function crocPickTarget(C){
+  let best=null, bk=null, bd=CROC.DETECT;
+  const consider=(e,kind)=>{
+    if(!e || !(e.health>0) || e.dying) return;
+    if(!crocInRange(C, e.pos.x, e.pos.z)) return;      // not at MY pond → not my problem
+    const d = Math.hypot(e.pos.x-C.pos.x, e.pos.z-C.pos.z);
+    if(d < bd){ bd=d; best=e; bk=kind; }
+  };
+  if(gameState==='playing' && crocGrab.graceT<=0 && crocInRange(C, player.pos.x, player.pos.z)){
+    const d = Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z);
+    if(d < bd){ bd=d; best=player; bk='player'; }
+  }
+  preyMeshes.forEach(e=>consider(e,'prey'));
+  lionMeshes.forEach(e=>consider(e,'lion'));
+  dogMeshes.forEach(e=>consider(e,'dog'));
+  cheetahMeshes.forEach(e=>consider(e,'cheetah'));
+  snakeMeshes.forEach(e=>consider(e,'snake'));
+  secretaryMeshes.forEach(e=>{ if(secretaryGrounded(e)) consider(e,'secretary'); });
+  // ⚠ RHINO and GORILLA are deliberately absent: at 2+ tonnes they shrug a croc off.
+  // A croc that grabs a rhino should lose, and modelling that is a fight system this
+  // doesn't need — so it simply doesn't pick them.
+  return best ? {ent:best, kind:bk} : null;
+}
+
+
+// ---- movement: swim inside the bowl, waddle on the bank, always leashed ----
+function crocStep(C, tx, tz, speed, dt){
+  const cl = crocClampToPond(C, tx, tz);
+  const dx = cl.x-C.pos.x, dz = cl.z-C.pos.z, d = Math.hypot(dx,dz);
+  if(d > 0.05){
+    const step = Math.min(speed*dt, d);
+    C.pos.x += dx/d*step; C.pos.z += dz/d*step;
+    const want = Math.atan2(dx, dz);
+    let dd = want - C.heading;
+    while(dd> Math.PI) dd-=Math.PI*2;
+    while(dd<-Math.PI) dd+=Math.PI*2;
+    C.heading += dd*Math.min(1, 4.0*dt);
+  }
+  // hard leash — belt and braces, in case anything moves C.pos directly
+  const p2 = crocClampToPond(C, C.pos.x, C.pos.z);
+  C.pos.x = p2.x; C.pos.z = p2.z;
+  C.mesh.rotation.y = C.heading;
+}
+// Vertical placement: rides at the waterline when cruising, flat on the bed when
+// lurking, on the mud when basking. This IS the visual tell of its current state.
+function crocPlaceY(C, dt){
+  const ground = terrainY(C.pos.x, C.pos.z);
+  const surf   = poolSurfaceY(C.pool);
+  let want;
+  if(C.state==='LURK')        want = ground;                       // flat on the bottom
+  else if(C.state==='BASK')   want = ground;                       // hauled out on the mud
+  else if(C.state==='GRAB')   want = Math.max(ground, C.pos.y);    // set by the drag
+  else {
+    // CRUISE / CHARGE: just under the surface, only the eye-ridge showing
+    want = Math.min(ground + 0.1, surf - 0.34) ;
+    if(ground > surf) want = ground;                               // shallows / on land
+  }
+  C.pos.y += (want - C.pos.y) * Math.min(1, 6*dt);
+  C.bob += dt;
+}
+// Tail sway + jaw. Motionless while lurking — that's the ambush read.
+function crocAnimate(C, dt, moving){
+  const amp = C.state==='LURK' ? 0 : (C.state==='CHARGE' ? 0.42 : 0.2);
+  const rate = C.state==='CHARGE' ? 9 : 3.4;
+  if(C._tailSegs) C._tailSegs.forEach((sg,i)=>{
+    sg.rotation.y = Math.sin(C.bob*rate - i*0.7) * amp * (0.5 + i*0.2);
+  });
+  const jaw = C.mesh.children.find(o=>o.type==='Group' && o._jaw);
+  if(jaw && jaw._jaw){
+    const open = (C.state==='CHARGE' || C.state==='GRAB') ? 0.34 : 0.02;
+    jaw._jaw.rotation.x += (open - jaw._jaw.rotation.x) * Math.min(1, 8*dt);
+  }
+}
+
+// =====================================================================
+//  🐊 GRAB → DRAG → DEATH ROLL → BREAK OUT
+// =====================================================================
+// Steven: "they can grab you and drag you under the water where you can drown, and
+// then they can use the death roll, which does damage, and it also uses your oxygen
+// extra fast so you drown faster."
+//
+// ⚠ Break-out is RAPID TAP, chosen over a hold or a QTE because it's the only one of
+// the three that is identical on a keyboard and a phone: Space, or tap anywhere. The
+// tap counter DECAYS at TAP_DECAY/sec, so a leisurely tap-tap-tap never accumulates —
+// you have to actually mash, which is the panic the moment wants. Without decay, 9
+// taps spread over 9 seconds would free you while you calmly drowned.
+function crocBeginGrab(C){
+  if(playerGrabbed() || crocGrab.graceT>0) return false;
+  crocGrab.croc = C; crocGrab.t = 0; crocGrab.taps = 0; crocGrab.rollT = CROC.ROLL_EVERY*0.5;
+  C.state = 'GRAB'; C.stateT = 0;
+  player.inTree = false; player.climbing = false;
+  if(typeof releaseGrapple === 'function' && grapple.active) releaseGrapple();
+  showKillfeed('🐊 A CROCODILE HAS YOU — MASH [SPACE] / TAP TO BREAK FREE!');
+  playSound('roar');
+  shakeTime = Math.max(shakeTime, 0.5); shakeAmt = 0.02;
+  return true;
+}
+function crocEndGrab(broke){
+  const C = crocGrab.croc;
+  if(C){ C.state = 'CRUISE'; C.stateT = 0; C.grabCd = CROC.GRAB_CD; C.target = null; }
+  crocGrab.croc = null; crocGrab.taps = 0;
+  // ⚠ grace exists so breaking free is actually an escape. Without it the same croc
+  // re-grabs on the very next frame and the mash was worthless.
+  if(broke){
+    crocGrab.graceT = CROC.GRACE;
+    showKillfeed('💪 You wrench free of the jaws! ('+CROC.GRACE.toFixed(0)+'s to get out)');
+    playSound('rustle');
+  }
+}
+// Called from the keydown handler and the touch tap.
+function crocTapEscape(){
+  if(!playerGrabbed()) return false;
+  crocGrab.taps++;
+  shakeTime = Math.max(shakeTime, 0.1); shakeAmt = 0.006;
+  if(crocGrab.taps >= CROC.BREAK_TAPS){ crocEndGrab(true); }
+  return true;
+}
+function updateCrocGrab(dt){
+  if(crocGrab.graceT > 0) crocGrab.graceT -= dt;
+  const C = crocGrab.croc;
+  if(!C) return;
+  if(!(C.health > 0)){ crocEndGrab(true); return; }      // kill it and it lets go
+  crocGrab.t += dt;
+  // taps bleed away — mash or drown
+  crocGrab.taps = Math.max(0, crocGrab.taps - CROC.TAP_DECAY*dt);
+
+  // DRAG: haul the player toward the croc and DOWN toward the pond bed.
+  const surf = poolSurfaceY(C.pool);
+  const bed  = terrainY(C.pos.x, C.pos.z);
+  player.pos.x += (C.pos.x - player.pos.x) * Math.min(1, 3.0*dt);
+  player.pos.z += (C.pos.z - player.pos.z) * Math.min(1, 3.0*dt);
+  const wantY = Math.max(bed, surf - 2.6);               // under the surface, off the bed
+  player.pos.y += (wantY - player.pos.y) * Math.min(1, CROC.DRAG_SPEED*dt);
+  player.vel.set(0,0,0);
+  player.swimming = true;
+
+  // DEATH ROLL: periodic burst of damage, and it spins you.
+  crocGrab.rollT -= dt;
+  if(crocGrab.rollT <= 0){
+    crocGrab.rollT = CROC.ROLL_EVERY;
+    player.health -= CROC.ROLL_DMG;
+    player.lastHitBy = C; player.lastHitKind = 'crocodile';
+    shakeTime = Math.max(shakeTime, 0.4); shakeAmt = 0.026;
+    showKillfeed('🐊 DEATH ROLL! (-'+CROC.ROLL_DMG+')');
+    playSound('roar');
+  }
+  C.mesh.rotation.z = Math.sin(crocGrab.t*11) * 0.85;    // the roll, visibly
+  if(player.health <= 0) crocEndGrab(false);
+}
+
+// ---- a croc taking an ANIMAL: grab, drown, eat. No mash for them. ----
+function crocSeizeAnimal(C, e, kind){
+  const dmg = 55;
+  e.health -= dmg; e.flashTimer = 0.25;
+  e.lastHitBy = C; e.lastHitKind = 'crocodile';
+  if(typeof alertDogPack === 'function' && kind==='dog') alertDogPack(C, 'crocodile');
+  if(e.health <= 0){
+    const nm = e.label || e.species || kind;
+    showKillfeed('🐊 The crocodile drags the '+nm+' under!');
+    if(typeof spawnCarcass === 'function' && kind==='prey'){
+      // carcass on the BANK, not mid-pond — a floating carcass reads as a bug, and it
+      // keeps the scavenger chain (vultures) working on walkable ground.
+      const w=C.pool, a=Math.atan2(C.pos.z-w.z, C.pos.x-w.x);
+      const bx=w.x+Math.cos(a)*(w.r+1.5), bz=w.z+Math.sin(a)*(w.r+1.5);
+      spawnCarcass(new THREE.Vector3(bx, terrainY(bx,bz), bz), 55, nm);
+    }
+  } else {
+    showKillfeed('🐊 The crocodile seizes the '+(e.label||kind)+'!');
+  }
+  C.grabCd = CROC.GRAB_CD;
+}
+
+function updateCrocodiles(dt){
+  if(gameState!=='playing') return;
+  updateCrocGrab(dt);
+  for(let i=crocMeshes.length-1;i>=0;i--){
+    const C = crocMeshes[i];
+    if(C.health <= 0){
+      if(crocGrab.croc===C) crocEndGrab(true);
+      killObj(C.mesh); crocMeshes.splice(i,1);
+      showKillfeed('🐊 The crocodile is dead.');
+      continue;
+    }
+    C.stateT += dt;
+    C.biteCd = Math.max(0, C.biteCd - dt);
+    C.grabCd = Math.max(0, C.grabCd - dt);
+    if(C.flashTimer>0) C.flashTimer -= dt;
+
+    if(C.state === 'GRAB'){                 // held by updateCrocGrab
+      crocPlaceY(C, dt); crocAnimate(C, dt, false);
+      if(!playerGrabbed()) { C.state='CRUISE'; C.stateT=0; C.mesh.rotation.z=0; }
+      continue;
+    }
+    C.mesh.rotation.z *= 0.85;
+
+    // --- acquire ---
+    const tgt = crocPickTarget(C);
+    if(tgt && C.state!=='CHARGE'){ C.state='CHARGE'; C.stateT=0; C.target=tgt.ent; C.targetKind=tgt.kind; }
+
+    switch(C.state){
+      case 'CHARGE': {
+        const t = C.target;
+        const gone = !t || (t!==player && !(t.health>0)) ||
+                     !crocInRange(C, t===player?player.pos.x:t.pos.x, t===player?player.pos.z:t.pos.z);
+        if(gone){ C.state='CRUISE'; C.stateT=0; C.target=null; break; }
+        const tp = (t===player) ? player.pos : t.pos;
+        const d = Math.hypot(tp.x-C.pos.x, tp.z-C.pos.z);
+        if(d > CROC.GRAB_R){ crocStep(C, tp.x, tp.z, CROC.SPD_CHARGE, dt); }
+        else if(t===player){
+          if(C.grabCd<=0 && !playerGrabbed() && crocGrab.graceT<=0){ crocBeginGrab(C); }
+          else if(C.biteCd<=0){
+            C.biteCd = CROC.BITE_CD;
+            player.health -= CROC.BITE_DMG;
+            player.lastHitBy = C; player.lastHitKind = 'crocodile';
+            showKillfeed('🐊 The crocodile snaps at you! (-'+CROC.BITE_DMG+')');
+            shakeTime=Math.max(shakeTime,0.25); shakeAmt=0.014;
+          }
+        } else if(C.grabCd<=0){ crocSeizeAnimal(C, t, C.targetKind); C.state='CRUISE'; C.stateT=0; C.target=null; }
+        break;
+      }
+      case 'BASK': {
+        // hauled out on the mud at the rim, motionless. Still lethal if you walk up.
+        if(!C.dest){
+          const w=C.pool, a=rand(0,6.28);
+          C.dest = { x:w.x+Math.cos(a)*(w.r-0.5), z:w.z+Math.sin(a)*(w.r-0.5) };
+        }
+        crocStep(C, C.dest.x, C.dest.z, CROC.SPD_BANK, dt);
+        if(C.stateT > rand(CROC.BASK_MIN, CROC.BASK_MAX)){ C.state='CRUISE'; C.stateT=0; C.dest=null; }
+        break;
+      }
+      case 'LURK': {
+        // dead still on the bed. No movement at all — this is the ambush state.
+        if(C.stateT > rand(CROC.LURK_MIN, CROC.LURK_MAX)){
+          C.state = Math.random()<0.45 ? 'BASK' : 'CRUISE'; C.stateT=0; C.dest=null;
+        }
+        break;
+      }
+      default: {   // CRUISE — patrol just under the surface
+        if(!C.dest || Math.hypot(C.dest.x-C.pos.x, C.dest.z-C.pos.z) < 1.5){
+          const w=C.pool, a=rand(0,6.28), rr=Math.sqrt(Math.random())*w.r*0.92;
+          C.dest = { x:w.x+Math.cos(a)*rr, z:w.z+Math.sin(a)*rr };
+        }
+        crocStep(C, C.dest.x, C.dest.z, CROC.SPD_CRUISE, dt);
+        if(C.stateT > rand(CROC.CRUISE_MIN, CROC.CRUISE_MAX)){
+          // day → more basking; night → more lurking. Steven: "sometimes a day they
+          // just lie on the edge, and they lie on the bottom and just swim around".
+          const r = Math.random();
+          C.state = (dn.isDay ? (r<0.45?'BASK':(r<0.8?'LURK':'CRUISE'))
+                              : (r<0.2?'BASK':(r<0.75?'LURK':'CRUISE')));
+          C.stateT=0; C.dest=null;
+        }
+      }
+    }
+    crocPlaceY(C, dt);
+    crocAnimate(C, dt, C.state!=='LURK');
+  
+  }
+}
+// ⚠ Steven's rule is "no pond is a SAFE pond". Kill every croc in a pond and that pond
+// is yours — for the rest of the day. At dawn one moves back in. Clearing a pond is
+// therefore real, useful progress (a day of free water) without being permanent, which
+// is the same bargain the cheetah's PER_DAWN respawn makes. Restocks to 1, not to the
+// full 1–2, so a cleared pond stays the *easier* pond for a while.
+function restockCrocodiles(){
+  waterHoles.forEach(w=>{
+    if(crocMeshes.some(C=>C.pool===w && C.health>0)) return;
+    const a=rand(0,6.28), rr=Math.sqrt(Math.random())*w.r*0.7;
+    makeCrocodile(w.x+Math.cos(a)*rr, w.z+Math.sin(a)*rr, w);
+    if(Math.hypot(player.pos.x-w.x, player.pos.z-w.z) < w.r+40)
+      showKillfeed('🐊 A new crocodile has moved into the water…');
+  });
+}
+function clearCrocodiles(){
+  if(crocGrab.croc) crocEndGrab(false);
+  crocGrab.croc=null; crocGrab.taps=0; crocGrab.graceT=0;
+  crocMeshes.forEach(C=>killObj(C.mesh));
+  crocMeshes.length = 0;
+}
+
 // =====================================================================
 //  🎒 PICK UP / DROP  — one item at a time  (2026-07-31)
 // =====================================================================
@@ -9539,6 +10066,7 @@ function nearestAnimalInFront(range, minDot){
   scan(rhinoMeshes,'rhino');
   scan(dogMeshes,'dog');
   scan(cheetahMeshes,'cheetah');
+  scan(crocMeshes,'crocodile');
   scan(skyVultureMeshes,'skyvulture', V=>(V.pos.y - terrainY(V.pos.x,V.pos.z)) > SKYV.MELEE_CEIL);   // melee only reaches it when low (landed / diving)
   scan(eagleMeshes,'eagle', E=>E.dying || (E.pos.y - terrainY(E.pos.x,E.pos.z)) > EAGLE.MELEE_CEIL); // …same for the eagle: only while it mantles or stoops low
   scan(secretaryMeshes,'secretary', B=>(B.pos.y - terrainY(B.pos.x,B.pos.z)) > SECR.GROUND_CEIL);    // it's a walker — only out of reach mid-escape-flight
@@ -10177,6 +10705,7 @@ function dnState(t){
 function spawnDailyWave(){
   for(let i=0;i<3 && lionMeshes.length    < 14;       i++) spawnLion(Math.random()<0.75?'lioness':'male');
   for(let i=0;i<CHEETAH.PER_DAWN && cheetahMeshes.length < CHEETAH.MAX; i++) spawnCheetah();
+  restockCrocodiles();          // 🐊 any pond that got cleared out yesterday gets one back
   for(let i=0;i<2 && gorillaMeshes.length < GOR.MAX;  i++) spawnGorilla();
   for(let i=0;i<2 && rhinoMeshes.length   < RHINO.MAX;i++) spawnRhino();   // 2 rhinos/day (was 1)
   for(let i=0;i<DOG.PACK && dogMeshes.length < DOG.MAX;  i++) spawnWildDog();   // 10 wild dogs/day (cap 15)
@@ -10234,6 +10763,9 @@ function healAllAnimals(){
   // wounded is what keeps the counter-play honest: it stays out of your reach, you
   // stay able to finish it with a spear, bolt, rock or boomerang.
   cheetahMeshes.forEach(C=>{ if(ok(C)) C.health=C.maxHealth; });
+  // A croc holding the player does NOT get a free top-up mid-grab — otherwise killing
+  // your way out of the jaws could be undone by a day/night turn landing mid-roll.
+  crocMeshes.forEach(C=>{ if(ok(C) && crocGrab.croc!==C) C.health=C.maxHealth; });
   snakeMeshes.forEach(S=>{ if(!S.dying && !S.turret && ok(S)) S.health=S.maxHealth; });
 }
 
@@ -10392,7 +10924,12 @@ function updateHUD(){
     `🦁 Lions: ${lionMeshes.length}<br>`+
     `<span style="color:#f1c40f">${COIN} Coins: ${progress.coins}</span><br>`+
     `🪨 Rocks: ${rockCount} &nbsp; 🪵 Wood: ${woodCount}`+mats+
-    (carried?`<br><span style="color:#7fd8ff">🎒 Holding: ${carried.icon} ${carried.label}</span> <span style="opacity:0.6;font-size:11px">— [T] drop</span>`:'');
+    (carried?`<br><span style="color:#7fd8ff">🎒 Holding: ${carried.icon} ${carried.label}</span> <span style="opacity:0.6;font-size:11px">— [T] drop</span>`:'')+
+    (playerGrabbed()
+      ? `<br><span style="color:#ff5b4a">🐊 SEIZED — MASH ${IS_TOUCH?'TAP':'[SPACE]'}</span>`+
+        `<br><span style="font-size:11px">${'▮'.repeat(Math.min(CROC.BREAK_TAPS,Math.floor(crocGrab.taps)))}`+
+        `<span style="opacity:0.35">${'▯'.repeat(Math.max(0,CROC.BREAK_TAPS-Math.floor(crocGrab.taps)))}</span></span>`
+      : '');
 
   // 💧 Oxygen bar — only shown while it matters (submerged, or refilling after a dive)
   { const ow=document.getElementById('oxygen-wrap'), ob=document.getElementById('oxygen-bar');
@@ -10513,10 +11050,12 @@ function drawMinimap(){
   }
 
   // Watering hole (Phase 5) — a blue landmark
-  if(wateringHole){
-    const [px,py]=toMM(wateringHole.x-player.pos.x, wateringHole.z-player.pos.z);
+  if(wateringHoles.length){
     mmCtx.fillStyle='#2b6a8c';
-    mmCtx.beginPath(); mmCtx.arc(px,py, wateringHole.r*scale, 0, Math.PI*2); mmCtx.fill();
+    for(const wh of wateringHoles){
+      const [px,py]=toMM(wh.x-player.pos.x, wh.z-player.pos.z);
+      mmCtx.beginPath(); mmCtx.arc(px,py, wh.r*scale, 0, Math.PI*2); mmCtx.fill();
+    }
   }
 
   // Trees
@@ -10698,6 +11237,7 @@ function resetGame(){
   // survive a run. Only the player-built brambles come down.
   [...kitBrambles].forEach(b=>killObj(b.mesh));
   clearKitRoofs();
+  clearCrocodiles(); spawnCrocodiles();   // 🐊 fresh crocs, every pond restocked
   clearCarry();                        // 🎒 empty the hand and clear anything left lying about
   [...skyVultureMeshes].forEach(V=>killObj(V.mesh));
   [...eagleMeshes].forEach(E=>killObj(E.mesh));
@@ -10813,6 +11353,7 @@ function animate(){
   updateRhinos(dt);           // neutral rhinos — roam, charge when provoked
   updateWildDogs(dt);
   updateCheetahs(dt);         // 🐆 lounges all day, one or two lethal midday sprints
+  updateCrocodiles(dt);       // 🐊 pond apex — bask / lurk / cruise, grab + death roll
   updateBrambles(dt);         // 🌿 prick anything standing in a bramble fence         // fast pack predator — hunt/roam, relentless vendetta if provoked
   updateSkyVultures(dt);      // high-cruising raptor — dives on smaller prey, never dies airborne
   updateMartialEagles(dt);    // 🦅 sky hunter — soar high on level wings, bank → stoop → strike → mantle → rebound
@@ -10847,11 +11388,12 @@ function animate(){
 //  BOOTSTRAP
 // =====================================================================
 initScene();
-chooseWaterHole();        // ⚠ BEFORE createTerrain — the mesh must be built with the bowl in it
+chooseWaterHoles();       // ⚠ BEFORE createTerrain — the mesh must be built with the bowls in it
 createTerrain();
 createSavanna();          // sky dome, hills, grass, dust, tall-grass clumps
 createTrees();
 createBerryBushes();      // 🫐 prickly bushes with a daily berry crop
+spawnCrocodiles();        // 🐊 1–2 per pond — no pond is a safe pond
 createRocks();
 createRockFormations();   // scenery boulders/standing stones/outcrops
 registerControls();

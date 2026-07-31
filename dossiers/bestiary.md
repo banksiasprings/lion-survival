@@ -79,6 +79,25 @@
 **Spears-to-kill:** gazelle/impala/warthog/zebra/wildebeest **1** · kudu **2** · giraffe **3** ·
 lion **5** · gorilla **10** · rhino **14** · **elephant 15**.
 
+### 🐊 Crocodile — the pond apex *(600 HP)*
+**There are three ponds now, each ~49 across, and every one has 1–2 crocodiles in it.** A croc **never leaves
+its own pond** — it will not chase you across the map, and an animal at a *different* pond is none of its
+business. That makes water a place you *choose* to enter.
+
+Through the day it **basks on the mud at the rim**, **lies dead-still on the bottom** (no movement at all —
+that's the ambush), and **cruises just under the surface** with only its eye-ridge showing. Day favours
+basking, night favours lurking. It attacks **everything** that comes into its water: you, prey drinking,
+lions, dogs, cheetahs, snakes. **Rhinos and gorillas it leaves alone** — too big to hold.
+
+**If it gets you:** it **grabs you, drags you under**, and starts the **death roll — 20 damage every 1.35 s,
+and your air burns 2.5× faster**, turning ~11 seconds of breath into about 4. You can still look around but
+you **cannot swim away**.
+**To break free: MASH — [SPACE], or tap anywhere on a phone.** Nine taps, but the meter *bleeds away*, so
+casual tapping will never get there; a proper mash frees you in about a second. You then get **3 seconds of
+grace** to get out of the water. Killing the croc also makes it let go.
+Cobra venom sticks to a croc **basking on the bank** but can't reach one **under the water**.
+⚠ Clear a pond of crocs and it's yours — **until dawn, when a new one moves in.**
+
 ### 🌿 Your own bramble fence will cut you
 The fence is **symmetric**: **20 damage** to whatever walks into it and **half speed** while you're inside —
 **and that includes you**. Push back through your own line and it costs you 20 HP and slows you to a crawl, so

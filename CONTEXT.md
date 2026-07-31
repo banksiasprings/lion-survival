@@ -2254,4 +2254,88 @@ actually plays on.
 - Dive blocked under the roof, allowed 9 units clear
 - 1800-frame soak parked in thorns under a roof: **0 errors**, 0 console errors
 
+
+## 🐊 THREE PONDS + CROCODILES — grab, drag, death roll (2026-07-31)
+Steven: *"Can you make the pond five times bigger? Can you make three ponds spawn in the map? And can you build
+crocodiles to go in the ponds? And they can grab you and drag you under the water where you can drown, and then
+they can use the death roll, which does damage, and it also uses your oxygen extra fast so you drown faster…
+make them want to attack everything that comes near the waterhole. And they, like, sit on the edge sometimes a
+day. They just lie on the edge, and they lie on the bottom and just swim around and stuff."*
+
+### Pond scale — 5× AREA, not 5× radius
+5× radius would be a 110-wide crater eating a fifth of the map. Area goes with r², so `r × √5`: the old
+`rand(9,13)` becomes **`rand(20,29)` — 40–58 across, ~49 typical**, measured at **4.6× the old area** per pond.
+Depth went **4.2 → 5.5**: a 49-wide dish only 4.2 deep is a puddle with no bottom worth lurking on, and the
+crocs need a real deep zone. Result: **28–41% of each pond is over-your-head swimmable**, the rest is wadeable
+shore. Same `terrainY()` bowl carve, so there is still no seam — worst rim discontinuity **0.024**.
+
+### Three ponds — the singleton is gone
+`waterHole` → **`waterHoles[]`**, with `poolAt()` / `nearAnyPool()` / `nearestPool()` / `randomPool()` as the
+only ways anything asks about water. All ~14 consumers were converted: grass, trees, berry bushes, spawn
+points, venom cure (**any** pond now), lion drinking runs, prey herd anchors, the secretary bird's bank hunt,
+and the minimap (**draws all three**). Separation is **rim-to-rim**, not centre-to-centre — with radii varying
+20–29 a fixed centre distance would let a big pair merge while keeping a small pair needlessly far apart.
+
+### ⚠ The croc's defining constraint: it is BOUND TO ITS POND
+A crocodile has **no land AI at all**. Every destination and every chase clamps through `crocClampToPond`, so
+it physically cannot follow you home. That is what makes the *ponds* dangerous instead of making the *map*
+dangerous — water becomes a place you choose to enter, three times over. **Verified over a 60 s soak: never
+more than 1.15 past its own rim** (limit 3.0).
+
+**States** — `BASK` (hauled out on the mud, motionless), `LURK` (flat on the bed, zero movement, the ambush
+read), `CRUISE` (patrolling just under the surface, eye-ridge showing), `CHARGE`, `GRAB`. Measured mix over a
+clean minute: **BASK 38% · CRUISE 40% · LURK 15% · CHARGE 7%**. Day favours basking, night favours lurking.
+
+### The grab — and the counterplay
+| | |
+|---|---|
+| HP | **600** (~5 spears) |
+| Bite (grab on cooldown) | 26 |
+| **Death roll** | **20 per 1.35 s** |
+| **Oxygen** | **2.5× drain** — measured 22.5/s vs 9/s |
+| Break-out | **9 taps**, decaying at 3.2/s |
+| Grace after breaking free | **3 s** |
+
+⚠ **Break-out is RAPID TAP** — chosen over a hold or a QTE because it is the only one identical on a keyboard
+and a phone: **Space, or tap anything**. On touch *every* button is the mash, because hunting for one specific
+button while drowning is not a fair fight. **The decay is the whole design**: without it, 9 leisurely taps
+spread over 9 seconds would free you while you calmly drowned. Measured — **60 slow taps over 20 s never got
+the meter above 1.0 and never freed**; a real 10/s mash frees you in **1.22 s** for ~19 HP and ~21 oxygen.
+
+The **2.5× oxygen** is the actual killer, not the roll: it turns ~11 s of breath into ~4 s. Grabs are exclusive
+by construction (one global `crocGrab`), so **no chain-grabbing** — verified with three crocs on one target.
+
+### 🐛 Found and fixed while building
+1. **A cleared pond stayed safe forever.** Kill every croc and two dawns passed with zero restocking — Steven's
+   "no pond is a safe pond" quietly broken. `restockCrocodiles()` now moves **one** croc back into any empty
+   pond at dawn (not the full 1–2), so clearing a pond buys you a real day of free water without being
+   permanent — the same bargain the cheetah's `PER_DAWN` makes.
+2. **Tall grass could grow in open water.** Pre-existing, but 14× more water made it land often: a hide spot in
+   the middle of a pond is a free stealth bubble. Now excluded across the clump's whole footprint.
+
+### Design calls
+- **Rhino and gorilla are deliberately not targets.** At 2+ tonnes they shrug a croc off; modelling that is a
+  fight system this doesn't need, so the croc simply never picks them. Verified: a rhino parked mid-pond is
+  **ignored**.
+- **Cobra venom hits a BASKING croc, not a submerged one** — a blob is a physical projectile. Same rule the
+  spit already uses for a perched gorilla and an airborne secretary bird. Both directions verified.
+- **Birds don't attack crocs** — they were never in any bird target list, and an armoured croc shrugging off a
+  stoop is the right answer anyway.
+
+### ⚠ ECOSYSTEM — worth Steven knowing before starvation ships
+Prey settles at **~30% below its start and then PLATEAUS** (88 → 49 over one cycle; 44 → 28–32 held flat across
+three). Crocs take **~4 prey/day**. It is an equilibrium, **not a death spiral** — but crocs now guard the
+water, and **once animal starvation/thirst ships, "the crocodile owns the drinking spot" becomes a real
+ecosystem constraint** rather than a local hazard. Flagging it now because that session will want to know.
+
+### Verified
+- 3 ponds, rim gaps **96/167/290** (min 22), all on-map, worst rim seam **0.024**
+- 1–2 crocs per pond, every pond stocked; **never left its pond** over 60 s
+- Grabbed on entering the water · dragged **2.6 under the surface** · **cannot walk out** (0 drift)
+- Roll damage, 2.5× oxygen, tap-to-break, 3 s grace (no re-grab), grace not permanent
+- Killing the croc releases you · only ever **one** holder
+- Territorial: **lion took 55 in the pond**, prey attacked, **another pond's animals ignored**, rhino ignored
+- Dawn restock: 0 crocs → **all 3 ponds** repopulated
+- 1800-frame soak **1.12 ms/frame**, 0 errors, 0 console errors
+
 Each phase is an independent commit so it can be iterated in isolation.
