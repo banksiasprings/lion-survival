@@ -355,6 +355,7 @@ body.touch #crosshair{opacity:0.5}
     <button class="tc tc-btn" data-touch="pounce">🐆<span class="tc-lab">POUNCE</span></button>
     <button class="tc tc-btn" data-touch="rock">🪨<span class="tc-lab">ROCK</span></button>
     <button class="tc tc-btn" data-touch="carry">🎒<span class="tc-lab">TAKE</span></button>
+    <button class="tc tc-btn" data-touch="name" style="display:none">🏷️<span class="tc-lab">NAME</span></button>
     <button class="tc tc-btn" data-touch="grapple">🪝<span class="tc-lab">GRAPPLE</span></button>
     <button class="tc tc-btn" data-touch="crouch">🐾<span class="tc-lab">CROUCH</span></button>
     <button class="tc tc-btn" data-touch="sprint">💨<span class="tc-lab">SPRINT</span></button>
@@ -541,6 +542,8 @@ const SHOP_ITEMS = [
     desc:'A survivor\'s charm — you recover health more than twice as fast.' },
   { id:'forager_satchel', type:'accessory', icon:'🎒', name:'Forager\'s Satchel',
     desc:'Rationing pouch: hunger drains 40% slower.' },
+  { id:'name_tag',      type:'accessory', icon:'🏷️', name:'Name Tag',
+    desc:'A scratched bone tag on a thong. While worn, [RMB] (phone: the 🏷️ NAME button) on any animal you are looking at gives it a name — "Bob" by default, or type your own. The name floats over its head, and the killfeed will remember it by name when it dies.' },
 ];
 const SHOP_BY_ID = {}; SHOP_ITEMS.forEach(it=>SHOP_BY_ID[it.id]=it);
 const ABILITY_SLOTS = 5, ACCESSORY_SLOTS = 2;
@@ -2261,7 +2264,7 @@ function registerControls(){
 //  give us unified touch/mouse + real multi-touch (move with one thumb, look/
 //  fire with the other) via pointerId + setPointerCapture.
 // =====================================================================
-let _tcSprintBtn=null, _tcCrouchBtn=null, _tcAttack=null, _tcPounceBtn=null, _tcScopeBtn=null, _tcCarryBtn=null;
+let _tcSprintBtn=null, _tcCrouchBtn=null, _tcAttack=null, _tcPounceBtn=null, _tcScopeBtn=null, _tcCarryBtn=null, _tcNameBtn=null;
 function initTouchControls(){
   const forced = /[?&]touch=1/.test(location.search);
   IS_TOUCH = forced || ('ontouchstart' in window) || (navigator.maxTouchPoints||0) > 0;
@@ -2325,6 +2328,7 @@ function initTouchControls(){
   _tcPounceBtn = document.querySelector('[data-touch="pounce"]');
   _tcScopeBtn  = document.querySelector('[data-touch="scope"]');
   _tcCarryBtn  = document.querySelector('[data-touch="carry"]');
+  _tcNameBtn   = document.querySelector('[data-touch="name"]');
   _tcAttack    = document.getElementById('tc-attack');
   // Scope 🔭 is a tap-toggle now (matches the [G] key) — routed through the delegated
   // tap handler → doTouchAction('scope') flips scopeToggle. No special hold listeners.
@@ -2364,6 +2368,7 @@ function doTouchAction(name, btn){
     case 'eat':     if(!toggleNearestGate() && !eatNearbyBerry() && !eatNearbyCarcass()) doCollect(); break;  // == E
     case 'carry':   if(carried) dropCarried();                                  // == T
                     else if(!tryPickUp()) showKillfeed('🎒 Nothing in reach to pick up'); break;
+    case 'name':    tryNameAnimal(); break;                                     // == RMB, 🏷️ worn
     case 'scope':   scopeToggle = !scopeToggle; break;                          // tap-toggle (== [G])
   }
 }
@@ -2374,6 +2379,8 @@ function updateTouchUI(){
   if(_tcSprintBtn) _tcSprintBtn.classList.toggle('on', !!keys['ShiftLeft']);
   if(_tcCrouchBtn) _tcCrouchBtn.classList.toggle('on', !!keys['KeyC'] || player.crouching);
   if(_tcPounceBtn) _tcPounceBtn.classList.toggle('disabled', !hasNecklace());   // greyed until the necklace is worn
+  // 🏷️ the NAME button only exists while the tag is actually worn
+  if(_tcNameBtn) _tcNameBtn.style.display = hasNameTag() ? '' : 'none';
   if(_tcCarryBtn){ _tcCarryBtn.classList.toggle('on', !!carried);               // lit while your hand is full
     const lab=_tcCarryBtn.querySelector('.tc-lab'); if(lab) lab.textContent = carried ? 'DROP' : 'TAKE'; }
   // Big attack button mirrors the active tool's icon (spear/axe/hammer/…), so
@@ -2393,7 +2400,145 @@ function updateTouchUI(){
   tickAbilityBar();   // keep the toolbar's active-ring + cooldown numbers live on touch
 }
 
+// =====================================================================
+//  🏷️ NAME TAG  — "and its name will be Bob"  (2026-07-31)
+// =====================================================================
+// Steven: "As one of the accessories, could you make a name tag which is you can right
+// click an animal or predator and its name will be Bob."
+//
+// An ACCESSORY, as asked — so it costs no ability slot and competes with nothing you
+// actually need to survive. Worn, it turns [RMB] into "name whatever I'm looking at".
+//
+// ⚠ PERSISTENCE — the honest version. There is NO world save in this game: `saveProgress`
+// stores coins, unlocks, abilities and accessories, and nothing else. Every reload builds
+// a brand-new savannah and spawns brand-new animals, so the animal you named does not
+// exist to be re-named — there is no instance to key a saved name to. What DOES carry
+// across a quit is therefore:
+//   • the tag itself (the normal accessory save layer), and
+//   • the NAME BOOK below — every name you have given, the species, and how it ended.
+// That keeps the part with the actual emotional payoff ("Bob the black cobra — slain,
+// day 4") without pretending an animal survived a reload when it did not.
+const NAME_DEFAULT = 'Bob';
+const NAME_MAX_LEN = 24;     // fits 'Timmy the Death Cheetah' — the brief's own example was 23
+const NAME_REACH   = 30;      // you must be within this to tag, and to read a tag
+const NAME_BOOK_MAX= 24;      // capped so the save can't grow without bound
+function hasNameTag(){ return progress.accessories.includes('name_tag'); }
+
+// A floating label, built lazily — an unnamed animal carries no sprite and costs nothing.
+const NT_W = 256, NT_H = 64;
+function attachNamePlate(o){
+  if(o.nameSprite) return o.nameSprite;
+  const cv = document.createElement('canvas'); cv.width = NT_W; cv.height = NT_H;
+  const tex = new THREE.CanvasTexture(cv);
+  tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:tex, transparent:true, depthTest:true }));
+  sp.geometry.userData.keep = true;      // shared quad — never dispose
+  sp.userData.noFlash = true;            // the damage-flash sweep must not restyle it
+  const gs = o.mesh.scale.x || 1;
+  sp.scale.set(2.6/gs, 0.65/gs, 1);
+  sp.position.y = (o.hitTop || 1.6) + 0.95;
+  o.mesh.add(sp);
+  o.nameSprite = sp; o.nameCtx = cv.getContext('2d'); o.nameTex = tex;
+  return sp;
+}
+function drawNamePlate(o){
+  const c = o.nameCtx; if(!c) return;
+  c.clearRect(0,0,NT_W,NT_H);
+  c.font = 'bold 34px system-ui,-apple-system,Arial';
+  c.textAlign='center'; c.textBaseline='middle';
+  c.lineWidth = 7; c.strokeStyle = 'rgba(0,0,0,0.92)';
+  c.strokeText(o.givenName, NT_W/2, NT_H/2);
+  c.fillStyle = '#ffe9a8';
+  c.fillText(o.givenName, NT_W/2, NT_H/2);
+  o.nameTex.needsUpdate = true;
+}
+// Give (or overwrite) a name. Overwriting is deliberate: pressing it again renames.
+// ⚠ Every named animal is held here as well as in its species list. That is what lets a
+// death be caught NO MATTER what killed it — spear, lion, croc, venom, drowning — and no
+// matter that each species splices its own corpse out of its own array on its own frame.
+// Editing a dozen per-species kill branches to add a name would have missed one.
+let namedAnimals = [];
+function nameAnimal(o, nm){
+  nm = String(nm||'').trim().slice(0, NAME_MAX_LEN);
+  if(!nm) return false;
+  const wasNamed = !!o.givenName;
+  o.givenName = nm;
+  if(!wasNamed) namedAnimals.push(o);
+  attachNamePlate(o);
+  drawNamePlate(o);
+  progress.lastName = nm;                        // the input pre-fills with your last choice
+  noteNameGiven(nm, speciesOf(o));
+  saveProgress();
+  return true;
+}
+// The persistent name book. Keyed by name+species, not by animal — see the note above.
+function noteNameGiven(nm, species){
+  progress.nameBook = progress.nameBook || [];
+  progress.nameBook = progress.nameBook.filter(e=>!(e.n===nm && e.s===species));
+  progress.nameBook.unshift({ n:nm, s:species, f:'alive', d:dn.day });
+  if(progress.nameBook.length > NAME_BOOK_MAX) progress.nameBook.length = NAME_BOOK_MAX;
+}
+// ⚠ A fate is TERMINAL and recorded ONCE. The melee path books "slain" the instant the
+// blow lands, and the registry sweep books whatever else killed it — without this guard
+// the sweep ran a frame later and overwrote a genuine "slain" with a generic "died",
+// AND printed a second obituary. `_fateNoted` is the interlock; the sweep reads it to
+// decide whether the death has already been announced.
+function noteNameFate(o, fate){
+  if(!o || !o.givenName || o._fateNoted) return;
+  o._fateNoted = fate;
+  progress.nameBook = progress.nameBook || [];
+  const sp = speciesOf(o);
+  const e = progress.nameBook.find(x=>x.n===o.givenName && x.s===sp);
+  if(e){ e.f = fate; e.d = dn.day; saveProgress(); }
+}
+// ⚠ Only PREY carry a `.label` — lions, dogs, cheetahs, snakes and the rest have none,
+// so a naive `o.label || 'animal'` produced "Nigel the animal" for a lion. Fall back to
+// list membership, which is the only thing that reliably identifies a species here.
+function speciesOf(o){
+  if(!o) return 'animal';
+  if(o.v && o.v.label) return o.v.label;              // serpents name themselves by morph
+  if(o.label) return o.label;
+  if(o.species && o.species!=='crocodile') return o.species;
+  const L = [[lionMeshes,'lion'], [preyMeshes,'animal'], [dogMeshes,'wild dog'],
+             [cheetahMeshes,'cheetah'], [crocMeshes,'crocodile'], [gorillaMeshes,'gorilla'],
+             [rhinoMeshes,'rhino'], [snakeMeshes,'serpent'], [secretaryMeshes,'secretary bird'],
+             [eagleMeshes,'martial eagle'], [skyVultureMeshes,'vulture']];
+  for(const [list,nm] of L) if(list && list.indexOf(o) >= 0) return nm;
+  return 'animal';
+}
+// The one place anything asks "what do I call this animal?".
+function displayName(o){
+  if(!o) return 'animal';
+  const base = speciesOf(o);
+  return o.givenName ? (o.givenName+' the '+base) : base;
+}
+// Tag whatever the player is looking at.
+function tryNameAnimal(){
+  if(!hasNameTag()) return false;
+  const hit = nearestAnimalInFront(NAME_REACH, 0.25);
+  if(!hit || !hit.o || !(hit.o.health > 0)){
+    showKillfeed('🏷️ Nothing in front of you to name'); return true;
+  }
+  const o = hit.o;
+  const suggested = o.givenName || progress.lastName || NAME_DEFAULT;
+  uiPaused = true;                                  // pause while the prompt is up
+  const _sp = speciesOf(o);
+  let nm = null;
+  try { nm = window.prompt('Name this '+_sp+':', suggested); }
+  catch(e){ nm = suggested; }                       // prompt blocked → fall back to the default
+  uiPaused = false;
+  if(nm === null) return true;                      // cancelled — still consumed the click
+  if(nameAnimal(o, nm)) showKillfeed('🏷️ Named '+displayName(o));
+  return true;
+}
+
 function onRightClick(){
+  // 🏷️ Name Tag worn → RMB names the animal in front. Checked FIRST, but it steps aside
+  // whenever RMB has its established job to do (dropping out of a tree or off a rope),
+  // so the tag can never strand you up a tree.
+  if(hasNameTag() && !player.inTree && !grapple.active && !player.climbing){
+    if(tryNameAnimal()) return;
+  }
   // RMB always releases the grapple / drops from a tree, whatever slot is held.
   if(player.inTree || grapple.active || player.climbing) releaseGrapple();
 }
@@ -8610,6 +8755,39 @@ function drawHealthBar(o){
   hb.drawn = hp;
 }
 
+// 🏷️ Nameplates fade out beyond NAME_REACH so the map doesn't turn into a wall of
+// floating text — you read a name when you're near enough to care who it is.
+// Sweep the registry for deaths. Runs every frame, off the registry's OWN references,
+// so it sees the corpse even after its species list has dropped it.
+function reapNamedAnimals(){
+  for(let i=namedAnimals.length-1;i>=0;i--){
+    const o = namedAnimals[i];
+    if(o.health > 0 && !o.dying) continue;
+    // Already announced by the killing blow (melee books "slain" on the spot)? Then this
+    // is pure bookkeeping — drop it from the registry and say nothing more.
+    const alreadyBooked = !!o._fateNoted;
+    noteNameFate(o, o.lastHitKind==='player' ? 'slain' : 'died');
+    if(!alreadyBooked) showKillfeed('🏷️ '+displayName(o)+' is dead.');
+    namedAnimals.splice(i,1);
+  }
+}
+function updateNamePlates(){
+  reapNamedAnimals();
+  const lists = [lionMeshes, preyMeshes, dogMeshes, cheetahMeshes, crocMeshes,
+                 gorillaMeshes, rhinoMeshes, snakeMeshes, secretaryMeshes,
+                 eagleMeshes, skyVultureMeshes];
+  for(const L of lists){
+    if(!L) continue;
+    for(const o of L){
+      const sp = o.nameSprite; if(!sp) continue;
+      const d = Math.hypot(o.pos.x-player.pos.x, o.pos.z-player.pos.z);
+      const vis = d < NAME_REACH && o.health > 0;
+      sp.visible = vis;
+      if(vis) sp.material.opacity = Math.min(1, (NAME_REACH - d) / 6);
+    }
+  }
+}
+
 function updateHealthBars(dt){
   // Whatever the player is looking at reads as their "active target" — its bar
   // is always up (there is only ever one, so it costs no clutter).
@@ -8811,6 +8989,7 @@ const COIN_PRICES = {
   smoke_screen:    5,    // Steven: "not really useful"
   camo_cloak:      6,    // was a starter
   kit_axe:         6,
+  name_tag:        6,    // comedic cosmetic — cheap enough to grab early, not free
   kit_fire:        6,
   adrenaline:      8,
   eagle_eye:      10,    // Steven: "standard utility"
@@ -8861,6 +9040,15 @@ function loadProgress(){
     progress.accessories= normalizeSlots(saved.accessories,ACCESSORY_SLOTS, 'accessory');
     progress.activeAbility = Math.min(ABILITY_SLOTS-1, Math.max(0, saved.activeAbility|0));
     progress.coins = Math.max(0, saved.coins|0);
+    // 🏷️ carried across a quit — sanitised, because it is free text off localStorage
+    progress.nameBook = Array.isArray(saved.nameBook)
+      ? saved.nameBook.filter(e=>e && typeof e.n==='string')
+          .slice(0, NAME_BOOK_MAX)
+          .map(e=>({ n:String(e.n).slice(0,NAME_MAX_LEN), s:String(e.s||'animal').slice(0,32),
+                     f:(e.f==='slain'||e.f==='died')?e.f:'alive', d:Math.max(0,e.d|0) }))
+      : [];
+    progress.lastName = typeof saved.lastName==='string'
+      ? saved.lastName.slice(0, NAME_MAX_LEN) : '';
     // MIGRATION v0 → v1. A legacy save predates coins, and back then every unlock was
     // FREE — so the player KEEPS everything they already own and simply starts on a 0
     // balance. Retroactively locking their kit would be the exact "lose everything"
@@ -8898,7 +9086,10 @@ function saveProgress(){
       saveVersion: SAVE_VERSION,                 // present from v1 on, for future migrations
       coins: progress.coins,
       unlocked:[...progress.unlocked], abilities:progress.abilities,
-      accessories:progress.accessories, activeAbility:progress.activeAbility
+      accessories:progress.accessories, activeAbility:progress.activeAbility,
+      // 🏷️ the name book + your last-typed name. NOT the animals themselves — see the
+      // Name Tag module note: there is no world save to hang an animal identity on.
+      nameBook: progress.nameBook || [], lastName: progress.lastName || ''
     }));
   } catch(e){ /* storage full / disabled — kit just won't persist */ }
 }
@@ -10484,8 +10675,15 @@ const MELEE_TOOL = {
 function dealKitMelee(hit, dmg, tool){
   const o = hit.o;
   o.flashTimer = 0.25;
+  // 🏷️ a named animal dies BY NAME — "You slew Bob the black cobra". Captured before
+  // the branches so every one of them inherits it without a per-branch edit.
+  const _named = o.givenName ? displayName(o) : null;
   let t;                                                                        // target noun, set per-branch
-  const kill = ()=> tool.icon+' The '+tool.name+' '+tool.kill+' the '+t+'!';
+  const kill = ()=> {
+    if(_named) noteNameFate(o, 'slain');
+    return _named ? (tool.icon+' You slew '+_named+'.')
+                  : (tool.icon+' The '+tool.name+' '+tool.kill+' the '+t+'!');
+  };
   if(hit.kind==='lion'){
     t='lion';
     o.health -= dmg;
@@ -11691,6 +11889,7 @@ function resetGame(){
   [...kitBrambles].forEach(b=>killObj(b.mesh));
   clearKitRoofs();
   clearCrocodiles(); spawnCrocodiles();   // 🐊 fresh crocs, every pond restocked
+  namedAnimals.length = 0;                // 🏷️ every named animal was just disposed
   clearCarry();                        // 🎒 empty the hand and clear anything left lying about
   [...skyVultureMeshes].forEach(V=>killObj(V.mesh));
   [...eagleMeshes].forEach(E=>killObj(E.mesh));
@@ -11815,6 +12014,7 @@ function animate(){
   updateVenomSpits(dt);       // ☠️ venom blobs a canopy cobra sprayed — flight + impact (right after the cobras that fire them)
   updateCreatureVenom(dt);    // ☠️ cobra venom draining every bitten ANIMAL (the player's ticks in updateHealth)
   updateHealthBars(dt);       // floating HP bars (after every animal has moved)
+  updateNamePlates();         // 🏷️ reap named deaths, then fade names in/out by distance
   updateCarcasses(dt);
   updateVultures(dt);
   updateDustPuffs(dt);

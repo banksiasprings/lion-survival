@@ -197,6 +197,11 @@ Unlocks are **free** (no currency yet) and — like the equipped loadout — **p
 - 🪵 **Palisade Wall** — drop a **permanent** wooden barrier for cover (up to **50** walls up at once), **no cooldown** — materials are the only gate. Blocks animals; the gorilla & elephant still smash through. 120 HP (axe fells in 3, hammer in 2).
 - 🧱 **Stone Wall** — drop a **permanent** stone barrier the gorilla & elephant **cannot smash** — only a Hammer brings it down. Shares the same **50**-wall cap, **no cooldown**. 200 HP (hammer fells in 3).
 - 🪝 **Grappling Hook** — reel up into a climbable tree or yank toward any surface in range (same as the tool grapple).
+- 🏷️ **Name Tag** *(accessory, 6 coins)* — while worn, **[RMB]** (phone: the 🏷️ NAME button) on any animal
+  within 30 units names it. It offers **"Bob"** by default — just press Enter — or type your own, up to 24
+  characters. The name floats over its head, and when it dies the killfeed says so by name: *"You slew Gerald
+  the elephant."* ⚠ The animals themselves don't survive closing the app (the world is regenerated each run),
+  but **the names you've given are kept** — who they were, what they were, and how they ended.
 - 🪓 **Hand Axe** — swing: chop a nearby tree for wood, **fell a wood wall** (42), or land a **heavy melee** blow (42) on the animal in front, **0.6 s cooldown** (halved 2026-07-31 — same 42 damage, so a tree is still 3 swings, just twice as fast). Can't cut stone.
 - 🔨 **Hammer** — swing: **smash a stone OR wood wall** (67), or land a **crushing melee** blow (67) on the animal in front, 1.4 s cooldown. The demolition tool. On each swing a **giant hammer crashes down from the sky** onto the target (flash + dust + screen-shake) — pure spectacle on top of the swing.
 - 🪃 **Tusk Boomerang** — **craft from 1 elephant tusk.** Hurl a boomerang that flies out ~26 m and **returns to your hand** for **100 damage**, 20 s cooldown. One-shots a lion; 2 throws down a gorilla, 3 an elephant.

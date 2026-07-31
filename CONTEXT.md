@@ -2606,4 +2606,67 @@ edit.
 - Second press inside the window is still refused (the cooldown is enforced, not merely declared).
 - 0 console errors.
 
+
+## 🏷️ NAME TAG — "and its name will be Bob" (2026-07-31)
+Steven: *"As one of the accessories, could you make a name tag which is you can right click an animal or
+predator and its name will be Bob."*
+
+**Option B**, as recommended: the prompt opens **pre-filled with "Bob"** — press Enter and the joke lands
+untouched — but you can type anything up to 24 characters. (24, not 18: the brief's own example
+*"Timmy the Death Cheetah"* is 23, and an 18-cap silently clipped it to "Timmy the Death Ga".)
+
+**An accessory, as asked** — so it costs no ability slot and competes with nothing you need to survive.
+**6 coins**, matching the axe and the camo cloak: cheap enough to grab early, not free on a fresh install.
+Worn, `[RMB]` names whatever you're looking at within **30 units**; on a phone a 🏷️ **NAME** button appears in
+the touch bar, and only while the tag is actually worn.
+
+### ⚠ PERSISTENCE — the spec asked for something the game cannot do
+The brief asked for named animals to *"keep their name across sessions — attached to the animal instance ID +
+a save layer"*. **There is no world save.** `saveProgress` stores coins, unlocks, abilities and accessories and
+nothing else — every reload builds a brand-new savannah and spawns brand-new animals. There is no animal
+instance on the far side of a reload to attach a saved name to; the animal you named has ceased to exist.
+
+Rather than fake it, what persists is what *can*:
+- **the tag itself** (the ordinary accessory save layer), and
+- **the NAME BOOK** — every name given, the species, how it ended, and on what day. Capped at 24 entries and
+  sanitised on load, since it is free text coming back off localStorage.
+- **your last-typed name**, so the next prompt pre-fills with *that* rather than always "Bob".
+
+That keeps the part with the actual payoff — *"Gerald the elephant — slain, day 1"* still on record when you
+come back tomorrow — without pretending an animal survived a reload. **Verified against a real page reload:
+book, fates, coins, worn tag and last name all came back; living named animals came back as 0.**
+
+### The registry — why deaths are caught properly
+Every named animal is held in `namedAnimals` as well as its species list. That is what lets a death be caught
+**no matter what killed it** (spear, lion, croc, venom, drowning) and no matter that each species splices its
+own corpse out of its own array on its own frame. Editing a dozen per-species kill branches would have missed
+one. The melee path books **"You slew Bob the black cobra"** the instant the blow lands; the sweep covers
+everything else with *"🏷️ Bob the zebra is dead."*
+
+### 🐛 Two bugs found in testing
+1. **The fate was being overwritten and the obituary printed twice.** The melee booked `slain`, then the sweep
+   ran a frame later, saw `lastHitKind` was not `'player'` (the prey branch doesn't set it) and overwrote it
+   with `died` **plus** a second death line. Fixed with `_fateNoted` as a terminal-fate interlock.
+2. **"Nigel the animal".** Only *prey* carry a `.label` — lions, dogs, cheetahs, crocs and serpents have none,
+   so everything that wasn't prey read as "the animal". `speciesOf()` now falls back to list membership, which
+   is the only thing that reliably identifies a species here. Serpents report their morph
+   (*"Hiss the black cobra"*).
+
+### Verified
+| pin | result |
+|---|---|
+| default | prompt offers **"Bob"**; accepting it names the animal Bob |
+| custom | **"Timmy the Death Cheetah"** kept in full |
+| not worn | RMB does **not** name, and still drops you from a tree / releases the grapple |
+| rename | overwrites, no duplicate registry entry |
+| cancel (Esc) | leaves the existing name untouched |
+| player | **cannot** be named |
+| nameplate | child of the mesh, visible near, **hidden past 30 units** |
+| killfeed | **"🔨 You slew Gerald the elephant."** — exactly **one** obituary |
+| book fate | `slain` (by you) vs `died` (anything else), both recorded |
+| **real reload** | tag, coins (44), book, fates and last-name all restored; **0** living named animals |
+| every species | zebra / lion / wild dog / cheetah / crocodile / rhino / gorilla — none say "the animal" |
+| soak | 3600 frames, 0 errors; reset clears the registry but **keeps the book** |
+- 0 console errors.
+
 Each phase is an independent commit so it can be iterated in isolation.
