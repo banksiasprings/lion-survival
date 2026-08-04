@@ -1778,7 +1778,7 @@ function makeCheetah(x, z){
     sprintsLeft:CHEETAH.SPRINTS_PER_DAY, sprintT:0, cooldown:0, restSpot:null, restT:0,
     fleeSpot:null,                      // 🩸 where it is limping off to
     legPhase:Math.random()*6.28, _lastSpeed:0,
-    lastHitBy:null, lastHitKind:null, _prevHealth:CHEETAH.HEALTH, _brambleCd:0 };
+    lastHitBy:null, lastHitKind:null, _prevHealth:CHEETAH.HEALTH };
   setHitbox(C); attachHealthBar(C); cheetahMeshes.push(C);
   return C;
 }
@@ -9484,14 +9484,28 @@ function placeKitWall(stone){
 // game already has the right answer for getting through your own defences: a GATE.
 // Damage and slow are identical for everyone. One line to make it animals-only
 // (`if(e===player) return;` in the zone check) if he'd rather.
+//
+// ⚠ EACH FENCE HITS INDEPENDENTLY (2026-08-04). It used to be one global timer per
+// VICTIM (`e._brambleCd`) plus a `brambleAt()` that returned only the FIRST overlapping
+// fence — so a line of five fences was worth 20 damage, not 100: the first fence armed
+// the shared cooldown and the other four were silently free. Measured before the fix:
+// five fences 3.0 apart, walked at 5.6 u/s → 60 dmg (three ticks of the 1.2 s timer);
+// SPRINTED through at 16 u/s → 20, exactly what Steven reported. Now every fence keeps
+// its OWN cooldown against every victim (`e._brambleCds`, keyed by the fence's id), so
+// a wall of thorns is worth what you paid for it.
 const BRAMBLE = {
   COST:      2,     // bramble bundles per fence (a chopped bush yields 3)
   MAX:      40,
-  DMG:      20,     // Steven's number, per crossing
-  SPEED:   0.5,     // Steven's number — half speed inside
+  DMG:      20,     // Steven's number, per fence crossed
+  SPEED:   0.5,     // Steven's number — half speed inside (does NOT stack across fences)
   RADIUS:  1.5,     // effect radius around the fence centre
-  RECHARGE: 1.2,    // seconds before the same victim can be pricked again
+  RECHARGE: 0.5,    // ⚠ PER FENCE, not per victim — Steven's "~500ms". It is an
+                    // anti-edge-dance floor, NOT a damage tick: see updateBrambles.
 };
+// Stable per-fence identity, so a cooldown can be keyed to the fence that caused it.
+// ⚠ Deliberately NOT reset by resetGame: monotonic ids mean a fresh fence can never
+// inherit a live cooldown that a victim is still carrying against a disposed one.
+let _brambleId = 0;
 function placeKitBramble(){
   if(kitBrambles.length >= BRAMBLE.MAX){
     showKillfeed('🌿 Bramble limit ('+BRAMBLE.MAX+') reached'); return false; }
@@ -9523,7 +9537,7 @@ function placeKitBramble(){
   }
   g.name = 'bramble';
   scene.add(g);
-  kitBrambles.push({ mesh:g, pos:new THREE.Vector3(pos.x, gy, pos.z) });
+  kitBrambles.push({ id: ++_brambleId, mesh:g, pos:new THREE.Vector3(pos.x, gy, pos.z) });
   brambleCount -= BRAMBLE.COST;
   playSound('place');
   return true;
@@ -9538,32 +9552,68 @@ function brambleAt(x, z){
   }
   return null;
 }
-// Half speed inside a bramble. Folded into waterSpeedMul's callers via brambleSpeedMul
-// so every mover picks it up at the same nine sites the water rule uses.
+// Half speed inside a bramble — ONE fence's worth, however many you are standing in.
+// Folded into waterSpeedMul's callers via brambleSpeedMul so every mover picks it up at
+// the same nine sites the water rule uses. (Deliberately not stacked: the *damage* is
+// what scales with the number of fences, the slow is a binary "you are in thorns".)
 function brambleSpeedMul(x, z){ return brambleAt(x,z) ? BRAMBLE.SPEED : 1; }
-// Per-frame prick pass. Every entity standing in a bramble takes DMG, then goes on a
-// short cooldown so a slow crossing is a few pricks rather than 20 dmg every frame.
+// Per-frame prick pass. EVERY fence a victim is standing in scores its own 20 — five
+// fences in a line is 5 × 20 — and the damage is **once per CROSSING**, not a tick:
+//
+//   in the fence  → its timer is REFRESHED every frame, so it can never bite twice
+//                   while you are inside it. Parking in thorns costs 20, once.
+//   out of it     → the timer decays, and after RECHARGE the fence is armed again.
+//
+// That single rule satisfies all three things Steven asked for at once: 20 per fence
+// however fast you cross (a walk spends 0.54 s inside a 3.0-wide fence and a sprint
+// 0.19 s — a plain 0.5 s cooldown scored those as 40 and 20), a stationary victim is
+// not chunked by proximity, and RECHARGE is left doing real work as the floor that
+// stops someone edge-dancing in and out of one fence for free damage.
+// The SLOW is what punishes standing in thorns; the damage is the crossing.
 function updateBrambles(dt){
   if(gameState!=='playing' || !kitBrambles.length) return;
+  const R2 = BRAMBLE.RADIUS*BRAMBLE.RADIUS;
+  const _inside = [];
   const prick = (e, isPlayer)=>{
-    if(!brambleAt(e.pos.x, e.pos.z)){ e._brambleCd = 0; return; }
-    // ⚠ brambleAt is XZ-only, so it says "yes" to anything in the COLUMN above the
+    // ⚠ The fence test is XZ-only, so it says "yes" to anything in the COLUMN above the
     // thorns. Thorns are on the GROUND: a player on a roof, on a wall or up a tree —
     // and a secretary bird mid-flight — are metres clear of them and must not be
     // scratched. playerOffGround() is the same predicate every other ground-only
     // attack uses (it covers inTree / climbing / grappling / anything above 1.5).
     // Ground animals all sit at exactly terrain height, so 0.5 is a safe airborne cut.
-    if(isPlayer ? playerOffGround()
-                : (e.pos.y - terrainY(e.pos.x, e.pos.z)) > 0.5){ e._brambleCd = 0; return; }
-    e._brambleCd = (e._brambleCd||0) - dt;
-    if(e._brambleCd > 0) return;
-    e._brambleCd = BRAMBLE.RECHARGE;
+    const airborne = isPlayer ? playerOffGround()
+                              : (e.pos.y - terrainY(e.pos.x, e.pos.z)) > 0.5;
+    _inside.length = 0;
+    if(!airborne){
+      for(let i=0;i<kitBrambles.length;i++){
+        const b = kitBrambles[i];
+        const dx = e.pos.x-b.pos.x, dz = e.pos.z-b.pos.z;
+        if(dx*dx + dz*dz < R2) _inside.push(b.id);
+      }
+    }
+    // Tick the map: refresh whatever we are still standing in, decay the rest, and
+    // delete anything expired so the map can never grow without bound. Keys are plain
+    // numbers, so a fence that has since been disposed leaves nothing behind.
+    const m = e._brambleCds;
+    if(m) for(const k in m){
+      if(_inside.indexOf(+k) >= 0) m[k] = BRAMBLE.RECHARGE;      // still in it — hold it armed-shut
+      else if((m[k] -= dt) <= 0)   delete m[k];
+    }
+    if(!_inside.length) return;
+    let dmg = 0, fences = 0;
+    const map = e._brambleCds || (e._brambleCds = {});
+    for(const id of _inside){
+      if(map[id] > 0) continue;                  // THIS fence already had its bite
+      map[id] = BRAMBLE.RECHARGE;
+      dmg += BRAMBLE.DMG; fences++;
+    }
+    if(!dmg) return;
     if(isPlayer){
-      player.health -= BRAMBLE.DMG;
-      shakeTime = Math.max(shakeTime,0.18); shakeAmt = 0.005;
-      showKillfeed('🌿 The brambles tear at you! (-'+BRAMBLE.DMG+')');
+      player.health -= dmg;
+      shakeTime = Math.max(shakeTime, fences>1?0.26:0.18); shakeAmt = 0.005;
+      showKillfeed('🌿 The brambles tear at you! (-'+dmg+')');
     } else {
-      e.health -= BRAMBLE.DMG; e.flashTimer = 0.2;
+      e.health -= dmg; e.flashTimer = 0.2;
     }
   };
   prick(player, true);
