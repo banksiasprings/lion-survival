@@ -153,6 +153,65 @@ test('bramble: an animal crossing five fences takes five bites', ()=>{
 });
 
 // =====================================================================
+//  FEATURE 2 — the world wall cap is 100, and the 101st is refused for free
+// =====================================================================
+test('walls: 100 place, the 101st is refused and charges nothing', ()=>{
+  clearWalls();
+  pinPlayer();
+  woodCount = 5000; rockCount = 5000;
+  const detail = { cap: KIT_WALL_MAX };
+  // Place the full cap on a wide grid so nothing overlaps or stacks.
+  let placed = 0;
+  for(let i=0; i<KIT_WALL_MAX; i++){
+    const gx = (i % 10) * 6 - 30, gz = Math.floor(i/10) * 6 - 30;
+    if(placeAheadAt(gx, gz, ()=>placeKitWall(false))) placed++;
+  }
+  detail.placed = placed;
+  detail.kitWalls = kitWalls.length;
+  detail.wallMeshes = wallMeshes.length;
+  detail.wallAABBs = wallAABBs.length;
+
+  // …and the one past the cap.
+  const woodBefore = woodCount;
+  const over = placeAheadAt(80, 80, ()=>placeKitWall(false));
+  detail.overflowReturned = over;
+  detail.woodCharged = woodBefore - woodCount;
+  detail.afterOverflow = kitWalls.length;
+
+  // Stone shares the same pool — the cap is a WORLD cap, not a per-material one.
+  const stoneOver = placeAheadAt(84, 84, ()=>placeKitWall(true));
+  detail.stoneAlsoRefused = (stoneOver === false);
+
+  // Wall meshes must stay in lockstep with their AABBs at the cap, or collision
+  // silently drifts from what you can see. (The multi-instance assertion: this is
+  // the bug shape where a mechanic is right for one and wrong for a hundred.)
+  detail.lockstep = (wallMeshes.length === wallAABBs.length &&
+                     kitWalls.length === KIT_WALL_MAX);
+
+  const pass = placed === KIT_WALL_MAX &&
+               kitWalls.length === KIT_WALL_MAX &&
+               over === false && detail.woodCharged === 0 &&
+               detail.stoneAlsoRefused && detail.lockstep;
+  clearWalls();
+  return { pass, detail };
+});
+
+// The shop copy must not be able to drift from the constant again.
+test('walls: shop cards quote the live cap', ()=>{
+  const wall  = SHOP_BY_ID['kit_wall'].desc;
+  const stone = SHOP_BY_ID['kit_stonewall'].desc;
+  const gate  = SHOP_BY_ID['kit_gate'].desc;
+  const detail = {
+    wallQuotesCap:  wall.indexOf(String(KIT_WALL_MAX)) >= 0,
+    stoneQuotesCap: stone.indexOf(String(KIT_WALL_MAX)) >= 0,
+    gateQuotesCap:  gate.indexOf(String(KIT_GATE_MAX)) >= 0,
+    staleFifty: /\b50[- ]wall|up to 50\b/.test(wall + stone),
+  };
+  return { pass: detail.wallQuotesCap && detail.stoneQuotesCap &&
+                 detail.gateQuotesCap && !detail.staleFifty, detail };
+});
+
+// =====================================================================
 //  runner
 // =====================================================================
 window.SAVANNAH_TESTS = T;
