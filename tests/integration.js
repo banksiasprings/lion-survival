@@ -230,25 +230,55 @@ test('bones: killing several species leaves several distinct named drops', ()=>{
   const C = cheetahMeshes[0];
   if(!L || !D || !P || !C) return { pass:false, detail:'need a lion, dog, prey and cheetah alive' };
   victims.push(['lion', L], ['wilddog', D], [P.species, P], ['cheetah', C]);
+  // ⚠ Snapshot each victim's death SITE before killing it. See the attribution note below —
+  // this is the only thing that tells our four corpses apart from a bystander's.
+  const sites = victims.map(([key,o])=>({ key, x:o.pos.x, z:o.pos.z }));
   for(const [,o] of victims) o.health = 0;
 
   updateLions(0.05); updateWildDogs(0.05); updatePrey(0.05); updateCheetahs(0.05);
 
-  const got = boneDrops.map(d=>d.key);
+  // ⚠ ATTRIBUTE DROPS TO OUR VICTIMS — do NOT assert on all of boneDrops.
+  // These are WORLD-WIDE update functions and the ecosystem is live: a fifth creature (in
+  // practice a wild dog already worn down by the bramble tests above) can legitimately die
+  // inside this very frame and add its own drop. Asserting on the whole array made this test
+  // fail ~2 runs in 3 — 13/13, 12/13, 12/13 on three consecutive runs of one page — for a
+  // bone system that was entirely correct.
+  // ⚠ Match on species + NEAREST death site, not on an exact position. The update runs the
+  // animal's movement before it processes the death, so the corpse has already drifted from
+  // where we snapshotted it — measured at up to 0.70 units in one 0.05 s frame, which an
+  // exact-match version of this got wrong and scored every real drop as a bystander. The four
+  // victims are tens of units apart, so a 3.0 tolerance separates them from each other and
+  // from a same-species bystander with room to spare.
+  const NEAR = 3.0, claimed = new Set(), mine = [];
+  for(const s of sites){
+    let best = -1, bestD = NEAR;
+    for(let i=0; i<boneDrops.length; i++){
+      if(claimed.has(i) || boneDrops[i].key !== s.key) continue;
+      const d = Math.hypot(boneDrops[i].pos.x - s.x, boneDrops[i].pos.z - s.z);
+      if(d < bestD){ bestD = d; best = i; }
+    }
+    if(best >= 0){ claimed.add(best); mine.push(boneDrops[best]); }
+  }
+  const bystanders = boneDrops.filter((d,i)=>!claimed.has(i));
+
   detail.expectedKeys = victims.map(v=>v[0]).sort();
-  detail.droppedKeys  = [...got].sort();
-  detail.labels       = boneDrops.map(d=>d.label);
-  detail.distinctMeshes = new Set(boneDrops.map(d=>d.mesh.uuid)).size;
+  detail.droppedKeys  = mine.map(d=>d.key).sort();
+  detail.labels       = mine.map(d=>d.label);
+  detail.distinctMeshes = new Set(mine.map(d=>d.mesh.uuid)).size;
+  // Surfaced, never silently swallowed: if the world killed something else mid-frame we
+  // want to SEE it in the detail, we just don't want it failing the assertion.
+  detail.bystanderDrops = bystanders.map(d=>d.key);
 
   // Every drop must be its OWN mesh with its OWN material instance — a shared material
   // would mean disposing one drop yanks the colour out from under the others.
-  const mats = boneDrops.map(d=>{ let m=null; d.mesh.traverse(o=>{ if(o.isMesh && !m) m=o.material; }); return m; });
+  const mats = mine.map(d=>{ let m=null; d.mesh.traverse(o=>{ if(o.isMesh && !m) m=o.material; }); return m; });
   detail.distinctMaterials = new Set(mats.map(m=>m && m.uuid)).size;
-  detail.colours = boneDrops.map((d,i)=>({ key:d.key, hex:'0x'+mats[i].color.getHexString(),
-                                           want:'0x'+new THREE.Color(BONE_KINDS[d.key].colour).getHexString() }));
+  detail.colours = mine.map((d,i)=>({ key:d.key, hex:'0x'+mats[i].color.getHexString(),
+                                      want:'0x'+new THREE.Color(BONE_KINDS[d.key].colour).getHexString() }));
   detail.coloursCorrect = detail.colours.every(c=>c.hex === c.want);
 
-  const pass = detail.droppedKeys.join(',') === detail.expectedKeys.join(',') &&
+  const pass = mine.length === victims.length &&
+               detail.droppedKeys.join(',') === detail.expectedKeys.join(',') &&
                detail.distinctMeshes === victims.length &&
                detail.distinctMaterials === victims.length &&
                detail.coloursCorrect;
