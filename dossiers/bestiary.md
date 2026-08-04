@@ -300,6 +300,10 @@ bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks f
 - **Can't climb** — a tree is your safe haven from them. **Scared of fire.**
 
 ### 🦍 Gorilla — the apex brawler (very strong)
+- **The tallest and broadest animal on the field** — about **twice the height of a porcupine** and roughly
+  2.7× a lion's, though it is a tall upright ape rather than a long one: shorter nose-to-tail than a lion,
+  and far wider across the shoulders than anything else. *(Shrunk 2026-08-05 — it used to stand nearly as
+  tall as the trees.)*
 - HP 160, extremely tanky (~10 spears). Territorial: **fights lions, rhinos AND elephants**, and hunts you.
 - **Roams by day, perches in a tree by night**, dropping to engage anything that comes near.
 - **The only animal that can see & grab a treed player** — it closes in and **tree-grabs** you down.

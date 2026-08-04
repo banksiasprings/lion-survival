@@ -2987,3 +2987,39 @@ Most of this shipped 2026-07-31 and is **preserved**; the missing half was the d
 ### Verified
 13/13 integration tests, 0 console errors, live build re-checked on the deployed Pages URL (game starts, 30
 real `animate()` frames, all five features present with correct values).
+
+## 🦍 Gorilla shrunk to 2× porcupine · 🦔 porcupine back coat doubled (2026-08-05)
+Two size/visual passes off Steven playing the build. **No gameplay number moved on either animal** — HP,
+damage, speeds, cooldowns, aggro, FSMs are byte-for-byte what they were.
+
+### 🦍 Gorilla — scale 1.36 → 1.05
+Steven: *"currently way too big, shrink to 2× porcupine"*, with an explicit target of **~6.64 long ×
+~3.62 tall** (2× the porcupine's 3.32 × 1.81).
+- **Measured before** (Box3 over `isMesh` descendants, `rotation.y` zeroed, HP-bar sprite excluded):
+  gorilla **2.82 long × 4.75 tall × 3.92 wide**, `hitR` 2.208, `hitTop` 5.146.
+  Porcupine (mean of 5, its per-quill length jitter makes a single sample noisy): **3.32 × 1.83 × 1.96**.
+- ⚠ **Only ONE of the two targets is reachable by scaling, and the brief's two numbers pull opposite ways.**
+  This mesh is a **tall upright ape** — taller than it is long (1.68 : 1) — where a porcupine is longer than
+  it is tall (1.81 : 1). Hitting **6.64 long** means scaling **UP ×2.36**, i.e. the opposite of "shrink";
+  hitting **3.66 tall** is the shrink actually described. Height was therefore pinned at **2.00×** the
+  porcupine and everything else follows uniformly. Hitting both at once needs a ×2.4 non-uniform stretch
+  along Z — a horizontal, dachshund-shaped gorilla — or a genuine torso reproportion, which is a mesh
+  change rather than a size change and was not in scope.
+- **Measured after:** **2.17 long × 3.67 tall × 3.02 wide** (height ratio to porcupine **2.012**),
+  `hitR` **2.208 → 1.762**, `hitTop` **5.146 → 4.065**. Against a tree (`TREE_H` 6) it drops from 79% to
+  61% of canopy height; against a lion (1.37 tall) from 3.47× to 2.68×. It is still the tallest and widest
+  animal in the game — its **width** (3.02) remains its largest horizontal dimension, because the mesh's
+  knuckle-walk arms sit outboard of the shoulder yoke.
+- ⚠ **`GOR.BODY_R` is new and is the whole point of the ⚠.** The gorilla's stone-wall collision radius was
+  the bare literal `1.4` inside `gorillaMoveToward`. It does **not** ride `group.scale` the way `setHitbox`'s
+  Box3 does — the same trap `PORC.BODY_R` hit on 2026-08-04. Promoted to a named constant next to the rest
+  of `GOR` and moved by hand: **1.4 → 1.08** (`1.4 × 1.05/1.36`). Verified against a real stone wall driven
+  through the real `gorillaMoveToward`: 400 frames at `SPEED_DROP`, closest approach **2.33** (wall half-span
+  1.25 + `BODY_R` 1.08), **0 crossings**.
+- **Left alone deliberately:** `MAUL_RANGE` 2.4 / `SWIPE_RANGE` 3.4 / `GRAB_RANGE` 4.2 / `SMASH_RANGE` 3.2
+  are centre-to-centre *gameplay* reaches, not hitbox derivatives — the same call `PORC.CONTACT_R` got. The
+  one real balance consequence is that a **smaller `hitR` makes the gorilla a slightly smaller target for
+  thrown weapons** (2.208 → 1.762 m of horizontal catch radius), which is the honest consequence of a
+  smaller body rather than a separate tuning decision.
+- `attachHealthBar` divides the group scale back out, so the floating HP bar re-sized itself with no edit;
+  its stale "gorilla 1.36" comment was corrected in the same commit.
