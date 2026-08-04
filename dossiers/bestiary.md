@@ -163,7 +163,8 @@ Thorns are on the **ground** — you're clear of them on a roof, on a wall, or u
 dark-brown and low-slung, its back climbing to a **hunch over the hips**, with a small pig-snouted head carried
 near the ground and a pale band across the throat. It is **covered** in cream-tipped banded quills — crown,
 neck, back, flanks, rump and tail, longest over the hips, with a crest of finer bristles running from between
-the eyes to the shoulders. **It will never start a fight.** Left alone it just trundles about foraging, swaying
+the eyes to the shoulders. *(The coat over the **back** was doubled again on 2026-08-05 — from any angle
+above the waist it is now a solid mass of quills rather than a spiky back.)* **It will never start a fight.** Left alone it just trundles about foraging, swaying
 gently on the spot — it does not hunt, does not track you, and its quills are harmless while they're lying
 flat. **You can walk straight past one.**
 

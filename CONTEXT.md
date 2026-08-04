@@ -3023,3 +3023,52 @@ Steven: *"currently way too big, shrink to 2× porcupine"*, with an explicit tar
   smaller body rather than a separate tuning decision.
 - `attachHealthBar` divides the group scale back out, so the floating HP bar re-sized itself with no edit;
   its stale "gorilla 1.36" comment was corrected in the same commit.
+
+### 🦔 Porcupine — back coat DOUBLED, 196 → 328 quills
+Steven played the 196-quill build and still read the **back** as sparse; crown and crest were fine. So the
+increase is confined to the back/sides/rump band and everything else is byte-identical.
+- **Back 134 → 266 quills** over the **exact same z span** (0.28 → −0.92) and the same `thMax` wrap — twice
+  the coat on the same body, not a bigger coat. Face/crown 21, crest 34 and the 7 tail rattle quills are
+  untouched. Total **328**.
+- ⚠ **Doubled on BOTH axes, not one.** 10 rows → **14** (z spacing 0.135 → 0.092) **and** ~**×1.41 quills
+  per row**, i.e. √2 on each. Doubling only the per-row count leaves the rows as visible bands with bare
+  skin between them; doubling only the row count leaves gaps around the circumference. √2 on each keeps the
+  spacing isotropic, which is what reads as fur rather than as a comb.
+- ⚠ **The stagger flag has to keep alternating down the row list.** At this spacing un-staggered neighbours
+  line the quills into columns (corduroy) far more obviously than they did at half the density.
+- **Still ONE merged mesh — 1 draw call for the whole coat**, 26 meshes per animal, unchanged. That is the
+  point of the merge: the 2026-08-04 pass went 64 → 196 and this one 196 → 328 with **zero** extra draw
+  calls. Verts/animal 7,456 → **11,416**; quill tris 7,840 → 13,120.
+- ⚠ **Frame budget — the polish session's 2.75% does NOT still hold; it is now 4.41%.** Measured with the
+  real re-bake gate at the real 60 fps `dt`, six porcupines **all bristling at once** (the worst case, and
+  only the player can provoke one): **0.458 ms → 0.735 ms/frame = 4.41% of 16.67 ms**, 1.96 of a possible 6
+  re-bakes per frame. Dead **linear** in quill count (328/196 × 0.458 = 0.766 predicted). Six **calm** ones
+  cost **0.0066 ms (0.04%)** — the `BAKE_EPS` short-circuit means a calm coat is still free at any count.
+  ⚠ **Measure at `dt = 1/60`, not at `animate()`'s 0.05 clamp.** The quiver is `sin(swayT*11)`, so a 0.05
+  step advances its phase 3× as far, trips `BAKE_EPS` on ~3.7 of 6 animals instead of ~2.0, and reports
+  **1.43 ms (8.6%)** — a real number for a 50 ms stutter frame, but not the 60 fps cost.
+- ⚠ **Bounding-sphere inflation stays ×1.35 — verified, not assumed.** Flaring rotates quills, it does not
+  lengthen the extremes, so the furthest vertex barely moves: rest radius **1.2202**, furthest **flared**
+  vertex **1.2245**, i.e. the minimum factor that avoids frustum-pop is **1.0036**. ×1.35 gives radius
+  1.6472 and **0.4227 of headroom**. ×1.5 is not needed and would only make culling lazier.
+- **Nothing about the hitbox moved**, because the coat did not grow: 3.32 long × 1.83 tall × 1.98 wide,
+  identical to the 196-quill build. ⚠ Worth knowing while reading `hitR` numbers in this file: `setHitbox`
+  runs **after** `g.rotation.y = P.heading`, so a porcupine's `hitR` depends on its **spawn heading** —
+  ~1.91 axis-aligned to ~2.3 at 45°, mean **2.11**. Pre-existing, deliberately left alone (it feeds spike
+  reach `CONTACT_R + hitR`), but the single quoted "1.93" in earlier notes is one sample, not a constant.
+- **Disposal re-verified, 36 animals** through both `killObj` and the real dead-loop: **936 = 26×36**
+  geometry frees, every merged quill geometry freed **exactly once**, 0 double, 0 never-freed, 0 porcupine
+  groups left in the scene, and the shared `QUILL_TPL` / `QUILL_MAT` **never** freed. 200 s soak of a full
+  sextet through FORAGE/BRISTLE/FLEE: **0 errors, 0 NaN** (quill buffer sampled included).
+- ⚠ **New ceiling worth writing down:** the merged index buffer is a `Uint16Array`, so the coat is capped at
+  65535/30 = **2,184 quills**. Far off, but it would wrap silently rather than throw.
+- Offline sheet regenerated: `dossiers/porcupine_render.png` (`render_porcupine.py`, whose `ROWS` table
+  mirrors the engine's by hand and was updated in the same commit).
+
+### Verified
+13/13 integration tests green (same 13 as the 2026-08-04 baseline, none needed changing — the porcupine
+tests reference HP relatively and assert `damage > 0`), 0 console errors, gorilla stone-wall collision
+driven through the real `gorillaMoveToward` (0 crossings), porcupine disposal + 200 s soak clean.
+⚠ **The in-app Browser pane still cannot render WebGL** — canvas comes back 0×0 and `readPixels` reads
+0 non-zero pixels across a full 2560×1600 frame — so both animals were verified numerically in-page and
+visually through the offline PIL projector, as on every previous mesh session.

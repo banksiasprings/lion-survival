@@ -116,16 +116,24 @@ ROWS = [(1.00, 5, 0.13, 0.011, 0.80, 0.95, 0.02, False),    # face & crown
         (0.66, 11, 0.52, 0.015, 1.00, 1.30, 0.04, True),    # the crest
         (0.54, 11, 0.66, 0.016, 1.02, 1.32, 0.04, False),
         (0.42, 12, 0.72, 0.017, 1.00, 1.35, 0.05, True),
-        (0.28, 13, 0.52, 0.023, 0.96, 1.38, 0.04, False),   # back, sides and rump
-        (0.14, 14, 0.58, 0.025, 0.94, 1.40, 0.04, True),
-        (0.00, 14, 0.63, 0.026, 0.92, 1.42, 0.05, False),
-        (-0.14, 15, 0.68, 0.027, 0.90, 1.44, 0.05, True),
-        (-0.29, 15, 0.72, 0.028, 0.90, 1.45, 0.05, False),
-        (-0.43, 15, 0.74, 0.028, 0.90, 1.45, 0.05, True),
-        (-0.57, 15, 0.73, 0.028, 0.91, 1.44, 0.05, False),
-        (-0.70, 13, 0.66, 0.027, 0.94, 1.40, 0.04, True),
-        (-0.82, 11, 0.54, 0.025, 0.99, 1.34, 0.04, False),
-        (-0.92, 9, 0.40, 0.023, 1.06, 1.26, 0.03, True),
+        # ⚠ back/sides/rump DOUBLED 2026-08-05 (134 -> 266 quills over the same z span):
+        # 10 rows -> 14 AND ~x1.41 per row, i.e. sqrt(2) on each axis so the spacing stays
+        # isotropic. Face/crown, crest and tail rattle are untouched — Steven read only the
+        # BACK as sparse.
+        (0.28, 18, 0.520, 0.0230, 0.96, 1.38, 0.04, False),  # back, sides and rump
+        (0.19, 19, 0.555, 0.0240, 0.95, 1.39, 0.04, True),
+        (0.10, 20, 0.585, 0.0250, 0.94, 1.40, 0.04, False),
+        (0.00, 20, 0.630, 0.0260, 0.92, 1.42, 0.05, True),
+        (-0.09, 21, 0.655, 0.0265, 0.91, 1.43, 0.05, False),
+        (-0.18, 21, 0.685, 0.0270, 0.90, 1.44, 0.05, True),
+        (-0.28, 21, 0.715, 0.0280, 0.90, 1.45, 0.05, False),
+        (-0.37, 21, 0.730, 0.0280, 0.90, 1.45, 0.05, True),
+        (-0.46, 21, 0.740, 0.0280, 0.90, 1.45, 0.05, False),
+        (-0.55, 20, 0.740, 0.0280, 0.90, 1.45, 0.05, True),
+        (-0.64, 19, 0.720, 0.0275, 0.90, 1.44, 0.05, False),
+        (-0.73, 17, 0.650, 0.0270, 0.93, 1.41, 0.04, True),
+        (-0.83, 15, 0.535, 0.0250, 0.98, 1.35, 0.04, False),
+        (-0.92, 13, 0.400, 0.0230, 1.06, 1.26, 0.03, True),
         (-1.01, 7, 0.20, 0.042, 1.15, 1.20, 0.02, False)]   # tail rattle quills
 
 
@@ -231,10 +239,11 @@ def sheet(path):
         dr.text(((i % 2)*pw + 16, 24 + (i//2)*(PH + 30)), label, fill=(235, 232, 214))
     dr.text((12, 4), 'CRESTED PORCUPINE ("spike-back") — makePorcupine() / animatePorc()',
             fill=(238, 231, 210))
-    dr.text((W - 440, 6), 'quills: %d   meshes/animal: %d (quills merged into 1)   verts: 7456   scale %.2f'
+    dr.text((W - 470, 6), 'quills: %d   meshes/animal: %d (quills merged into 1)   verts: 11416   scale %.2f'
             % (len(QUILLS), BODY_MESHES + 1, SCALE), fill=(150, 158, 132))
     dr.text((12, H - 16),
-            'bristling: quill tips +19%% taller, +38%% wider   ·   scale 1.28 (x1.45)   ·   hitR 1.93',
+            'back coat DOUBLED 2026-08-05 (196 -> 328 quills, back 134 -> 266)   ·   still 1 draw call'
+            '   ·   scale 1.28   ·   hitR ~1.9-2.1',
             fill=(150, 158, 132))
     img.save(path)
     return path
