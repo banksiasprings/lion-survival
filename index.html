@@ -2006,7 +2006,11 @@ const PORC = {
                          // 18 back EACH, which is what makes "don't melee me" bite.
                          // ⚠ FLEE_HP is a FRACTION, so it tracks this automatically (30% of 125 =
                          // 37.5). Do not re-express it as an absolute.
-  BODY_R: 0.5,
+  BODY_R: 0.73,          // ⚠ scaled with the 2026-08-04 size bump (0.5 × 1.4545). This is the
+                         // COLLISION radius `porcStep` feeds to segCrossesWall/collideWalls —
+                         // it is a hand-set constant and does NOT ride the group scale the way
+                         // setHitbox's Box3 does, so it must be moved by hand or a 1.45×-bigger
+                         // animal clips into walls it visibly overlaps.
   SPEED_FORAGE: 3.2,     // a slow, head-down amble — it is not going anywhere
   SPEED_CHARGE: 9,       // the reverse rush. Slower than a sprint (16) ON PURPOSE:
                          // walking away must always beat it, or "passive" is a lie.
@@ -2036,23 +2040,54 @@ const PORC = {
 // Hence: solid dark root, solid cream shaft, one dark band, and a solid PALE OUTER THIRD.
 // The pale tip is the half that matters — it is what separates a quill from the dark pelt
 // behind it at any distance you actually fight this animal from.
-const QUILL_BANDS = [0x120f0b, 0x120f0b, 0xf0e6cc, 0xefe4c8, 0x171009, 0xf7f0dc, 0xf7f0dc];
-const QUILL_GEO = (function(){
-  // radius 1, height 1, 5 sides, 6 stacked rings, NO end caps — the root is buried in the
-  // pelt and the far end is a point, so two caps per quill would be pure waste.
-  const g = new THREE.ConeGeometry(1, 1, 5, 6, true);
-  g.translate(0, 0.5, 0);                    // root at y=0, so a pivot rotates about the skin
+// ⚠ SIX rings, and the flat runs are DOUBLED UP. Vertex colours are Gouraud-interpolated up
+// the shaft, so any colour given a single ring averages away into its neighbours — an early
+// cut read as a uniformly pale needle with a dirty root. A value only holds if it spans a
+// whole SEGMENT, i.e. two adjacent rings of the same colour. Hence: solid dark root, solid
+// cream shaft, one dark band, solid pale tip. The pale tip is the half that matters — it is
+// what separates a quill from the dark pelt behind it at any distance you fight this from.
+const QUILL_BANDS = [0x120f0b, 0x120f0b, 0xf0e6cc, 0xefe4c8, 0x171009, 0xf7f0dc];
+// The TEMPLATE quill: radius 1, height 1, root at y=0, tip at y=1. Never added to a scene and
+// never disposed — it is a stamp that makePorcupine copies vertices out of, not a live asset.
+// 4 sides × 5 stacks, no end caps: 30 verts / 40 tris. At the size a quill occupies on screen
+// 4 sides is indistinguishable from 8, and it is multiplied by ~190 per animal.
+const QUILL_TPL = (function(){
+  const g = new THREE.ConeGeometry(1, 1, 4, 5, true);
+  g.translate(0, 0.5, 0);
   const pos = g.attributes.position, col = new Float32Array(pos.count*3), c = new THREE.Color();
   for(let i=0;i<pos.count;i++){
-    c.setHex(QUILL_BANDS[Math.min(6, Math.round(pos.getY(i)*6))]);   // 7 rings → 7 band colours
+    c.setHex(QUILL_BANDS[Math.min(5, Math.round(pos.getY(i)*5))]);
     col[i*3]=c.r; col[i*3+1]=c.g; col[i*3+2]=c.b;
   }
   g.setAttribute('color', new THREE.BufferAttribute(col,3));
-  g.userData.keep = true;
   return g;
 })();
 const QUILL_MAT = new THREE.MeshLambertMaterial({vertexColors:true});
 QUILL_MAT.userData.keep = true;
+
+// ⚠ THE WHOLE QUILL FIELD IS **ONE MESH**, not one mesh per quill.
+// Steven asked for the animal to be *covered* — ~190 quills instead of 64. At one mesh each
+// that is 190 draw calls per animal and 1,140 for a sextet, which is not affordable next to a
+// scene that already runs ~3,800. So the quills are stamped into a single merged BufferGeometry:
+// **1 draw call for the entire coat**, and the count becomes essentially free.
+//
+// The cost of merging is that a quill can no longer be posed by rotating its own Group. But the
+// bristle pose is a pure function of ONE scalar, so both extremes are baked at build time
+// (`_restPos`/`_upPos`) and `bakeQuills` lerps between them on the CPU. That is plain array
+// maths — no morph-target shader path to silently not compile, and it is verifiable by reading
+// the buffer straight back, which matters a lot here because this environment cannot screenshot
+// WebGL. It only runs when `bristle` actually moved (see BAKE_EPS), so a calm animal pays nothing.
+const BAKE_EPS = 0.012;
+function bakeQuills(P, b){
+  const g = P.quillGeo, u = g.userData;
+  const pos = g.attributes.position.array, nrm = g.attributes.normal.array;
+  const rp = u._restPos, up = u._upPos, rn = u._restNrm, un = u._upNrm;
+  for(let i=0;i<pos.length;i++) pos[i] = rp[i] + (up[i]-rp[i])*b;
+  for(let i=0;i<nrm.length;i++) nrm[i] = rn[i] + (un[i]-rn[i])*b;
+  g.attributes.position.needsUpdate = true;
+  g.attributes.normal.needsUpdate = true;
+  P._bakedBristle = b;
+}
 
 function makePorcupine(x, z){
   const g = new THREE.Group();
@@ -2110,91 +2145,151 @@ function makePorcupine(x, z){
   });
 
   // ⚠ THE SPIKES — the whole point of the animal, so they are not decoration.
-  // Every quill is parented to its own pivot Group at the point it leaves the skin. The
-  // pivot carries a REST pose (swept back and tucked along the body) and an UP pose
-  // (pitched upright and fanned wide); animatePorc lerps between them off one 0..1
-  // `bristle` value, so the provoked animal visibly swells instead of merely tilting.
-  const quills=[];
-  const addQuill=(px,py,pz, len, rad, lean, splay, rattle)=>{
-    const pivot = new THREE.Group(); pivot.position.set(px,py,pz);
-    const q = new THREE.Mesh(QUILL_GEO, QUILL_MAT);
-    q.scale.set(rad, len, rad);                        // the shared unit cone, sized per quill
-    // ⚠ castShadow deliberately OFF for quills. A needle casts a shadow you cannot see, and
-    // 60 of them per animal × 6 animals is 360 casters re-rendered into the shadow map every
-    // frame for nothing. The body still casts; the ground shadow is unchanged to the eye.
-    pivot.add(q);
-    // ⚠ NEGATED, and still load-bearing. `lean` reads as "how far back it sweeps", but a
-    // POSITIVE rotation.x tips +Y toward +Z — and +Z is the NOSE (nose z≈1.30, tail z≈-0.96).
-    // The first cut used it unsigned and every quill lay forward over the animal's face;
-    // caught by dossiers/render_porcupine.py, which is exactly what that sheet is for.
-    pivot.userData.restX = -lean;                      // swept back along the spine
-    pivot.userData.upX   = -lean*0.16;                 // …and near-upright when flared
-    // ⚠ ROLL SIGN: a Z-rotation sends +Y toward −X, so a quill out on the +X flank needs a
-    // NEGATIVE rotation.z to splay OUTWARD. Hence the minus on both poses.
-    pivot.userData.restZ = -splay*0.45;                // tucked against the flank at rest…
-    pivot.userData.upZ   = -splay*1.15;                // …and fanned into a halo when bristling
-    pivot.userData.phase = (quills.length%2) ? 1 : -1; // alternating shiver, so the fluff shimmers
-    pivot.userData.rattle = !!rattle;
-    // ⚠ Euler order 'XYZ' means the matrix is Rx·Ry·Rz, i.e. the ROLL is applied FIRST and the
-    // pitch then sweeps the already-splayed quill backwards. dossiers/render_porcupine.py has
-    // to nest its transforms in that same order or the two stop agreeing.
-    pivot.rotation.set(-lean, 0, -splay*0.45);
-    g.add(pivot); quills.push(pivot);
-    return pivot;
+  // Steven, 2026-08-04: "cover it… head, sides, rump, tail. Dense." So the field is laid out
+  // ON THE BODY SURFACE rather than as hand-placed rows: a cross-section table gives the
+  // half-width and centre height at any z, and each quill is planted at an angle θ around
+  // that ellipse. θ doubles as the quill's outward SPLAY, which is why the coverage looks
+  // like it grew out of the animal instead of being combed onto its spine.
+  // θ is capped short of the belly on purpose — a real porcupine's underside is bare.
+  //                 z,    halfW,  cy,   halfH
+  const SECTIONS = [[ 1.02, 0.150, 0.420, 0.130],   // muzzle
+                    [ 0.90, 0.223, 0.455, 0.207],   // skull
+                    [ 0.62, 0.280, 0.420, 0.263],   // neck
+                    [ 0.28, 0.400, 0.480, 0.360],   // shoulder
+                    [-0.10, 0.500, 0.520, 0.420],   // barrel
+                    [-0.48, 0.570, 0.530, 0.460],   // hips — widest
+                    [-0.80, 0.410, 0.450, 0.350],   // rump
+                    [-0.98, 0.150, 0.400, 0.110]];  // tail base
+  const sectionAt = z => {
+    if(z >= SECTIONS[0][0]) return SECTIONS[0];
+    for(let i=1;i<SECTIONS.length;i++){
+      const a=SECTIONS[i-1], b=SECTIONS[i];
+      if(z >= b[0]){ const t=(a[0]-z)/(a[0]-b[0]);
+        return [z, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t, a[3]+(b[3]-a[3])*t]; }
+    }
+    return SECTIONS[SECTIONS.length-1];
   };
 
-  // The CREST — the "crested" in crested porcupine. These are hair-like BRISTLES, not the
-  // thick banded quills: thinner, longer, springing from just behind the eyes and longest
-  // over the nape. It is the part that reads at distance as "that is not a rat".
-  for(let i=0;i<8;i++){
-    const t=i/7;                                       // 0 crown → 1 shoulder
-    addQuill(0, 0.50+0.12*t, 0.88-t*0.60, 0.44+Math.sin(t*Math.PI)*0.34, 0.019, 1.02-0.10*t, 0);
-  }
-  for(let i=0;i<3;i++){                                // a flanking pair each side
-    const t=(i+0.5)/3;
-    for(const s of [-1,1])
-      addQuill(s*0.085, 0.48+0.12*t, 0.82-t*0.58, 0.38+Math.sin(t*Math.PI)*0.24, 0.017, 1.00, s*0.30);
-  }
-
-  // The BACK-AND-RUMP FIELD — the thick banded quills. Laid out as ARCS ACROSS the back
-  // rather than as a line down the spine: the first cut kept every quill within ±0.37 of the
-  // centreline, so from directly behind — which is the view a BACK-CHARGE gives you, i.e.
-  // the only view that really matters on this animal — it was a thin picket fence instead of
-  // a fan. Rows are longest and densest over the hips, exactly where a real one is.
-  // ⚠ `spread` reaches 0.50 against a hip half-width of 0.57, and the roots drop by u²·0.30,
-  // so the outermost quills leave the animal from the SIDE of the barrel rather than from the
-  // top. Held back at ±0.38 the rear view was a bare egg wearing a spiky hat.
-  //     z,    y,    n, len,  rad,   lean, spread
-  ;[[ 0.20, 0.76, 6, 0.42, 0.026, 0.98, 0.34],
-    [-0.06, 0.82, 9, 0.52, 0.029, 0.94, 0.44],
-    [-0.32, 0.85,10, 0.62, 0.031, 0.90, 0.50],
-    [-0.58, 0.85,10, 0.64, 0.031, 0.92, 0.49],
-    [-0.78, 0.74, 8, 0.56, 0.029, 0.98, 0.42]].forEach(([z,y,n,len,rad,lean,spread])=>{
+  const quills = [];   // plain defs now — {p,l,r,restX,upX,restZ,upZ}, no Object3D per quill
+  const addQuill=(px,py,pz, len, rad, lean, splay)=>{
+    // ⚠ NEGATED, and still load-bearing. `lean` reads as "how far back it sweeps", but a
+    // POSITIVE rotation about X tips +Y toward +Z — and +Z is the NOSE (nose z≈1.30, tail
+    // z≈-0.98). An early cut used it unsigned and every quill lay forward over the animal's
+    // face; caught by dossiers/render_porcupine.py, which is exactly what that sheet is for.
+    // ⚠ ROLL SIGN: a Z-rotation sends +Y toward −X, so a quill out on the +X flank needs a
+    // NEGATIVE roll to splay OUTWARD. Hence the minus on both roll poses.
+    // ⚠ The REST roll is only ~a third of the surface normal on purpose. Once the coat covers
+    // the whole body, a calm animal posed at the full normal is already a spiky ball — it
+    // looks permanently bristled and the aggro tell disappears into it. Tucked to 0.34 the
+    // calm silhouette is sleek and swept-back; flared PAST the normal (1.20) it opens into a
+    // halo. That gap is the entire "don't melee me" read, so it is tuned, not incidental.
+    quills.push({ px, py, pz, len, rad,
+      restX: -lean,        upX: -lean*0.16,      // swept back → near-upright
+      restZ: -splay*0.34,  upZ: -splay*1.20 });  // laid along the flank → fanned past normal
+  };
+  // Plant one row of `n` quills around the body's cross-section at `z`.
+  const row=(z, n, len, rad, lean, thMax, jitter, stagger)=>{
+    const [,w,cy,h] = sectionAt(z);
     for(let i=0;i<n;i++){
-      const u = (i/(n-1))*2-1;                         // −1 left flank … +1 right flank
-      // ride the barrel: drop and shorten each quill as it goes off-centre, so the field
-      // wraps the body instead of standing on a flat plate.
-      addQuill(u*spread, y-u*u*0.30, z,
-               len*(1-u*u*0.26) + rand(-0.03,0.03), rad, lean-u*u*0.16, u*1.05);
+      // ⚠ stagger alternate rows by half a step, or the quills line up into visible columns
+      // and the coat reads as corduroy instead of as fur.
+      const th = ((i + (stagger?0.5:0))/(n-1))*2*thMax - thMax;
+      const s = Math.sin(th), c = Math.cos(th);
+      addQuill(w*s*0.94, cy + h*c*0.94, z,
+               len*(1 - Math.abs(th/thMax)*0.30) + rand(-jitter, jitter),
+               rad, lean - (th*th)*0.10, th);
     }
-  });
+  };
 
-  // Rattle quills on the stub tail — short, fat and hollow, and what a real one shakes as a
-  // warning before it ever backs into you. Tagged `rattle` so the bristle shiver hits them
-  // hardest.
-  for(let i=0;i<7;i++){
-    const u=(i/6)*2-1;
-    addQuill(u*0.16, 0.44-u*u*0.05, -0.96, 0.22, 0.052, 1.15, u*1.05, true);
+  // FACE & CROWN — short fine bristles. A crested porcupine really is bristly right up over
+  // the brow; this is what stops the head reading as a bare snout stuck on a spiky body.
+  row( 1.00, 5, 0.13, 0.011, 0.80, 0.95, 0.02, false);
+  row( 0.90, 7, 0.19, 0.012, 0.88, 1.15, 0.02, true);
+  row( 0.78, 9, 0.30, 0.014, 0.95, 1.25, 0.03, false);
+  // THE CREST — the "crested" in crested porcupine: hair-like, longer and thinner than the
+  // body quills, longest over the nape. Reads at distance as "that is not a rat".
+  row( 0.66,11, 0.52, 0.015, 1.00, 1.30, 0.04, true);
+  row( 0.54,11, 0.66, 0.016, 1.02, 1.32, 0.04, false);
+  row( 0.42,12, 0.72, 0.017, 1.00, 1.35, 0.05, true);
+  // BACK, SIDES AND RUMP — the thick banded quills, densest and longest over the hips.
+  row( 0.28,13, 0.52, 0.023, 0.96, 1.38, 0.04, false);
+  row( 0.14,14, 0.58, 0.025, 0.94, 1.40, 0.04, true);
+  row( 0.00,14, 0.63, 0.026, 0.92, 1.42, 0.05, false);
+  row(-0.14,15, 0.68, 0.027, 0.90, 1.44, 0.05, true);
+  row(-0.29,15, 0.72, 0.028, 0.90, 1.45, 0.05, false);
+  row(-0.43,15, 0.74, 0.028, 0.90, 1.45, 0.05, true);
+  row(-0.57,15, 0.73, 0.028, 0.91, 1.44, 0.05, false);
+  row(-0.70,13, 0.66, 0.027, 0.94, 1.40, 0.04, true);
+  row(-0.82,11, 0.54, 0.025, 0.99, 1.34, 0.04, false);
+  row(-0.92, 9, 0.40, 0.023, 1.06, 1.26, 0.03, true);
+  // RATTLE QUILLS on the stub tail — short, fat and hollow, and what a real one shakes as a
+  // warning before it ever backs into you.
+  row(-1.01, 7, 0.20, 0.042, 1.15, 1.20, 0.02, false);
+
+  // ---- stamp every quill into ONE geometry, at both pose extremes -------------------
+  // Two full vertex sets are built here (rest and flared) and kept on the geometry; bakeQuills
+  // lerps between them at runtime. Building both up front is what makes the runtime cost a
+  // straight array lerp with no trigonometry and no matrix maths per frame.
+  const tplPos = QUILL_TPL.attributes.position.array, tplNrm = QUILL_TPL.attributes.normal.array,
+        tplCol = QUILL_TPL.attributes.color.array,    tplIdx = QUILL_TPL.index.array,
+        vPer = QUILL_TPL.attributes.position.count, N = quills.length;
+  const restPos=new Float32Array(N*vPer*3), upPos=new Float32Array(N*vPer*3),
+        restNrm=new Float32Array(N*vPer*3), upNrm=new Float32Array(N*vPer*3),
+        colours=new Float32Array(N*vPer*3), indices=new Uint16Array(N*tplIdx.length);
+  const m=new THREE.Matrix4(), nm=new THREE.Matrix3(), e=new THREE.Euler(), q=new THREE.Quaternion(),
+        sc=new THREE.Vector3(), tr=new THREE.Vector3(), v=new THREE.Vector3();
+  const stamp=(k, rx, rz, outP, outN)=>{
+    const Q = quills[k];
+    // ⚠ Euler order 'XYZ' builds Rx·Ry·Rz, so the ROLL applies FIRST and the pitch then sweeps
+    // the already-splayed quill backwards — the same order the old pivot Groups produced, and
+    // the order dossiers/render_porcupine.py must nest its transforms in to agree.
+    e.set(rx, 0, rz, 'XYZ'); q.setFromEuler(e);
+    sc.set(Q.rad, Q.len, Q.rad); tr.set(Q.px, Q.py, Q.pz);
+    m.compose(tr, q, sc); nm.getNormalMatrix(m);
+    const base = k*vPer*3;
+    for(let i=0;i<vPer;i++){
+      v.set(tplPos[i*3], tplPos[i*3+1], tplPos[i*3+2]).applyMatrix4(m);
+      outP[base+i*3]=v.x; outP[base+i*3+1]=v.y; outP[base+i*3+2]=v.z;
+      v.set(tplNrm[i*3], tplNrm[i*3+1], tplNrm[i*3+2]).applyMatrix3(nm).normalize();
+      outN[base+i*3]=v.x; outN[base+i*3+1]=v.y; outN[base+i*3+2]=v.z;
+    }
+  };
+  for(let k=0;k<N;k++){
+    const Q=quills[k];
+    stamp(k, Q.restX, Q.restZ, restPos, restNrm);
+    stamp(k, Q.upX,   Q.upZ,   upPos,   upNrm);
+    colours.set(tplCol, k*vPer*3);
+    for(let i=0;i<tplIdx.length;i++) indices[k*tplIdx.length+i] = tplIdx[i] + k*vPer;
   }
+  const qgeo = new THREE.BufferGeometry();
+  qgeo.setAttribute('position', new THREE.BufferAttribute(restPos.slice(),3).setUsage(THREE.DynamicDrawUsage));
+  qgeo.setAttribute('normal',   new THREE.BufferAttribute(restNrm.slice(),3).setUsage(THREE.DynamicDrawUsage));
+  qgeo.setAttribute('color',    new THREE.BufferAttribute(colours,3));
+  qgeo.setIndex(new THREE.BufferAttribute(indices,1));
+  qgeo.userData._restPos=restPos; qgeo.userData._upPos=upPos;
+  qgeo.userData._restNrm=restNrm; qgeo.userData._upNrm=upNrm;
+  // ⚠ The bounding sphere must cover the FLARED pose too. It is computed from the rest
+  // positions currently in the buffer, so a bristling porcupine would pop out of existence
+  // when its own bounds no longer contain it — frustum culling tests this sphere, not the mesh.
+  qgeo.computeBoundingSphere(); qgeo.boundingSphere.radius *= 1.35;
+  const quillMesh = new THREE.Mesh(qgeo, QUILL_MAT);
+  // ⚠ castShadow deliberately OFF. A needle casts a shadow you cannot see, and ~190 of them
+  // per animal × 6 animals re-rendered into the shadow map every frame buys nothing.
+  quillMesh.frustumCulled = true; g.add(quillMesh);
 
-  // ⚠ traverse, not children.forEach — the quills live one level down inside their pivot
-  // Groups, so the old children-only sweep never gave them an origMat and a struck porcupine
-  // flashed its body while its most visible feature sat there unlit.
+  // ⚠ traverse, not children.forEach — keeps working whatever nesting the mesh grows.
   g.traverse(c=>{ if(c.isMesh) c.userData.origMat = c.material; });
   const ty = terrainY(x,z);
-  g.position.set(x,ty,z); g.scale.setScalar(0.88); g.name='porcupine';   // ~a wild dog
+  g.position.set(x,ty,z);
+  // ⚠ SIZE, Steven 2026-08-04: 0.88 → 1.28, i.e. ×1.45. At 0.88 the body measured 0.75× a wild
+  // dog's LENGTH, so "1.4–1.5× wild dog" cannot mean 1.45× the dog's linear size — that lands at
+  // scale 1.70 and makes it LONGER than a lion (3.47), contradicting "still smaller than a lion".
+  // Read as 1.45× its own former size it comes out chunky, shorter than a lion, and clearly the
+  // heaviest thing below the megafauna. ⚠ PORC.BODY_R moved with it; setHitbox rides it for free.
+  g.scale.setScalar(1.28); g.name='porcupine';
   scene.add(g);
-  const P = { mesh:g, legs, quills, pos:new THREE.Vector3(x,ty,z),
+  const P = { mesh:g, legs, quills, quillGeo:qgeo, quillMesh, _bakedBristle:0,
+    pos:new THREE.Vector3(x,ty,z),
     health:PORC.HEALTH, maxHealth:PORC.HEALTH,
     state:'FORAGE',                     // FORAGE | BRISTLE | FLEE
     heading:rand(0,Math.PI*2), stunTimer:0, flashTimer:0,
@@ -2222,17 +2317,16 @@ function animatePorc(P, dt){
   P.swayT += dt;
   const b = P.bristle;
   // ⚠ THE AGGRO TELL. A provoked porcupine doesn't just tilt its quills — it SWELLS. Pitch
-  // and splay lerp together off the one value, so the field opens from a sleek back-comb
-  // into a halo roughly twice as wide, and on top of that the whole coat SHIVERS (a real
-  // one rattles before it commits). The shiver is one sin per frame shared by every quill,
-  // flipped per quill by `phase` so the coat shimmers instead of waving in lockstep, and it
-  // is skipped entirely while calm so the passive state costs nothing.
-  const shiver = b>0.01 ? Math.sin(P.swayT*14)*0.05*b : 0;
-  for(const q of P.quills){
-    const u = q.userData;
-    q.rotation.x = u.restX + (u.upX - u.restX)*b + (shiver && shiver*u.phase*(u.rattle?2.4:1));
-    q.rotation.z = u.restZ + (u.upZ - u.restZ)*b;
-  }
+  // and splay lerp together off the one value, so the field opens from a sleek back-comb into
+  // a halo, and while it holds that pose the whole coat QUIVERS (a real one rattles before it
+  // commits). The quiver rides the same scalar rather than a per-quill offset, because the
+  // coat is now one merged mesh: nudging `bristle` re-bakes the field, and one shared scalar
+  // is the only thing that can move ~190 quills without per-quill work.
+  const quiver = b>0.02 ? Math.sin(P.swayT*11)*0.045*b : 0;
+  const want2 = clamp(b + quiver, 0, 1.05);
+  // Re-stamp only when the pose actually moved. A calm or fully-settled porcupine short-
+  // circuits here and costs nothing at all, which is what makes ~190 quills affordable.
+  if(Math.abs(want2 - P._bakedBristle) > BAKE_EPS) bakeQuills(P, want2);
   // Idle sway — a slow weight-shift on the spot, damped out once it is actually walking so
   // it never fights the gait. Roll only: porcStep owns rotation.y (the heading) and
   // mesh.position, and this must not touch either.

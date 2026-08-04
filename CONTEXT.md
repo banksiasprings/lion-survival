@@ -2903,6 +2903,64 @@ untouched — but the *feel* of the animal changes a lot, so the numbers are her
   `PORC.HEALTH * 0.2`), and the weapon test asserts `damage > 0` rather than death, so none of them had to
   change — which is why they were written that way.
 
+### 🦔 Porcupine — full coverage + ×1.45 size (2026-08-04, Steven: "cover it" / "bigger")
+Quills **64 → 196**, group scale **0.88 → 1.28**. HP 125, spike 18 and every behaviour untouched.
+- ⚠ **THE WHOLE QUILL FIELD IS NOW ONE MESH.** At one mesh per quill, 196 quills is 196 draw calls per
+  animal and ~1,180 for a sextet, against a scene that already runs ~3,800 — not affordable. The field
+  is stamped into a single merged `BufferGeometry`, so the coat is **1 draw call** and the quill count is
+  essentially free. Per-animal meshes went **89 → 26** while quills tripled.
+- ⚠ **Posed by CPU vertex bake, not by morph targets and not by per-quill Groups.** The bristle pose is a
+  pure function of one scalar, so both extremes are stamped at build time (`_restPos`/`_upPos`, plus
+  normals) and `bakeQuills` lerps between them into a `DynamicDrawUsage` attribute. Chosen over morph
+  targets deliberately: a morph/shader path can silently fail to compile and **this environment cannot
+  screenshot WebGL**, whereas an array lerp is verifiable by reading the buffer straight back — which is
+  exactly how it was verified (16,727 of 17,640 floats move; normals move too; returns to rest exactly).
+- ⚠ **Only re-bakes when the pose moved** (`BAKE_EPS` 0.012). A calm animal short-circuits and costs
+  nothing: six calm porcupines are **0.0093 ms/frame**, *cheaper* than the 64-quill version's 0.075 ms
+  because there are no per-quill Object3Ds left to update. Worst case — all six bristling at once, the
+  quiver forcing continuous re-bakes — is **0.458 ms (2.75% of budget)**, and only the player can provoke
+  one, so six at once is not a real scenario.
+- ⚠ **The quill field is planted ON A BODY-SURFACE MODEL**, not in hand-placed rows: `SECTIONS` gives the
+  cross-section at any z and each quill sits at angle θ around that ellipse, with **θ doubling as its
+  outward splay**. That is what makes the coat look grown rather than combed onto the spine. Alternate
+  rows are staggered by half a step or the quills line up into visible columns (corduroy, not fur).
+- ⚠ **REST roll is only 0.34 of the surface normal, flared is 1.20 — past it.** Once the coat covers the
+  whole body, a calm animal posed at the full normal is *already* a spiky ball: it reads as permanently
+  bristled and the aggro tell vanishes into it. Tuned, not incidental — the gap is the entire cue. Tips
+  measure **+19% taller, +38% wider** flared; at rest the coat is 1.33× the body's half-width, flared 1.83×.
+- ⚠ **The geometry's bounding sphere is inflated ×1.35.** It is computed from the REST positions sitting
+  in the buffer, and frustum culling tests that sphere — so a bristling porcupine whose quills grew past
+  its own bounds would pop out of existence. Verified: flared furthest vertex 1.218 vs radius 1.639.
+- **Size:** at 0.88 the body measured **0.75× a wild dog's length**, so "1.4–1.5× wild dog" cannot mean
+  1.45× the dog's linear size — that needs scale 1.70 and lands it **longer than a lion** (3.47),
+  contradicting "still smaller than a lion". Read as ×1.45 of its own former size → **1.28**: 3.33 long,
+  1.87 tall, shorter than a lion and much chunkier. ⚠ **`PORC.BODY_R` 0.5 → 0.73 by hand** — it is the
+  collision radius and does NOT ride the group scale the way `setHitbox`'s Box3 does. `hitR` follows the
+  mesh automatically: **1.406 → 1.931**.
+- ⚠ **`PORC.CONTACT_R` left at 2.4 deliberately.** Effective spike reach is `CONTACT_R + hitR`, so it
+  already grew 3.81 → 4.33 with the hitbox. Scaling CONTACT_R too would take it to ~5.5 — a *gameplay*
+  reach change nobody asked for, distinct from "hitbox + collision match the mesh".
+- Disposal re-verified over 36 animals through both `killObj` and the real dead-loop: **936 = 26×36**
+  geometry frees, every per-animal merged quill geometry disposed **exactly once**, 0 double, 0 leaked,
+  and the `QUILL_TPL` stamp (never in the scene) and shared `QUILL_MAT` never freed. 200 s soak of a
+  sextet: 0 errors, 0 NaN (buffer included), all three states.
+
+### 🧪 Test flake fixed — "bones: distinct named drops"
+The suite was **12/13 or 13/13 by luck**, not 13/13. The bones test asserted on the *absolute* contents of
+`boneDrops` after running four **world-wide** update functions, so a fifth creature dying in that same frame
+(a wild dog worn down by the bramble tests above it) produced 5 drops against 4 expected keys.
+- Drops are now attributed to the four victims by **species + nearest death site**, and anything else is
+  reported as `detail.bystanderDrops` — surfaced, never silently swallowed.
+- ⚠ **An exact position match does NOT work, and a first cut that used one scored every real drop as a
+  bystander.** The update runs the animal's movement *before* it processes the death, so the corpse has
+  already drifted from where the test snapshotted it — **measured at up to 0.70 units in one 0.05 s frame**.
+  Tolerance is 3.0; the four victims are tens of units apart, so it separates them with room to spare.
+- Proven against the real failure, not just a clean run: forcing a second wild dog to die inside the test's
+  own frame now **passes** and reports `bystanderDrops: ["wilddog"]`. Pre-fix that exact case failed.
+- ⚠ **Still not idempotent within one page load** (pre-existing, untouched): each run consumes a lion, a
+  dog, a prey and a cheetah, and cheetahs are scarcest — by run ~2 `cheetahMeshes` is empty and the test's
+  own guard returns "need a lion, dog, prey and cheetah alive". **Run the suite once per page load.**
+
 ### 🐊 The croc grab now actually drags you to the bottom
 Most of this shipped 2026-07-31 and is **preserved**; the missing half was the drag itself.
 - `updateCrocGrab` pinned you **2.6 under the surface wherever it seized you**, and in `GRAB` the croc did not
