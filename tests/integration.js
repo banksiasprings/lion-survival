@@ -483,6 +483,127 @@ test('porcupine: is not immune to any weapon', ()=>{
 });
 
 // =====================================================================
+//  FEATURE 5 — the crocodile hauls you to the bottom of the pond
+// =====================================================================
+// Multi-origin, because the pre-fix bug was invisible from the one origin anybody
+// would test from: grabbed while ALREADY swimming it looked fine, and grabbed on
+// the bank (the lunge case) it held you on dry land with full oxygen forever.
+// Every origin below must end with the player submerged and near the bed.
+test('crocodile: hauls you into deep water and onto the bed, from any grab origin', ()=>{
+  const C = crocMeshes[0];
+  if(!C) return { pass:false, detail:'no crocodile on the map' };
+  const w = C.pool, surf = poolSurfaceY(w);
+  const origins = [
+    ['on the bank (lunge grab)', w.x + w.r + 1.5, w.z],
+    ['in the shallows',          w.x + w.r*0.85,  w.z],
+    ['already in deep water',    w.x + 1.0,       w.z],
+  ];
+  const rows = [];
+  for(const [label, ox, oz] of origins){
+    if(crocGrab.croc) crocEndGrab(false);
+    crocGrab.graceT = 0; C.grabCd = 0; C.health = C.maxHealth;
+    C.pos.set(ox, terrainY(ox,oz), oz); C.mesh.position.copy(C.pos);
+    player.pos.set(ox+0.5, terrainY(ox+0.5,oz)+0.1, oz);
+    player.vel.set(0,0,0); player.onGround = true;
+    player.health = 100; player.hunger = 100; player.oxygen = 100;
+    gameState = 'playing';
+    crocBeginGrab(C);
+    const startDist = Math.hypot(player.pos.x-w.x, player.pos.z-w.z);
+    // ⚠ 10 s, not 5. From the bank it must first be REVERSED into the water before a
+    // single point of oxygen can burn — at 5 s the bank case still had 62 left, which
+    // is correct behaviour and a wrong assertion.
+    for(let f=0; f<600; f++){
+      player.hunger = 100; player.health = 100; gameState = 'playing';
+      updateCrocGrab(1/60); updateOxygen(1/60);
+    }
+    const bed = terrainY(player.pos.x, player.pos.z);
+    const headY = player.pos.y + PLAYER.eyeHeight;
+    rows.push({
+      origin: label,
+      startDistFromCentre: r2(startDist),
+      endDistFromCentre:   r2(Math.hypot(player.pos.x-w.x, player.pos.z-w.z)),
+      inWater: !!poolAt(player.pos.x, player.pos.z),
+      headSubmerged: inWaterAt(player.pos.x, player.pos.z, headY),
+      heightAboveBed: r2(player.pos.y - bed),
+      depthBelowSurface: r2(surf - player.pos.y),
+      oxygen: r2(player.oxygen),
+    });
+  }
+  crocEndGrab(false);
+  const detail = { rows, haulDepth: CROC.HAUL_DEPTH, haulClear: CROC.HAUL_CLEAR };
+  const pass = rows.every(r =>
+    r.inWater && r.headSubmerged &&
+    r.heightAboveBed <= CROC.HAUL_CLEAR + 0.05 && r.heightAboveBed > 0 &&
+    // the player's XZ lerps toward the croc's and never exactly arrives, so the bed
+    // under them reads a few cm shallower than the bed under the croc
+    r.depthBelowSurface >= CROC.HAUL_DEPTH - CROC.HAUL_CLEAR - 0.2 &&
+    r.oxygen === 0);                                 // 2.5x drain empties ~11 s of breath
+  return { pass, detail };
+});
+
+// The counterplay and the lethality both have to survive the haul.
+test('crocodile: you can still mash free, and you drown if you do not', ()=>{
+  const C = crocMeshes[0];
+  if(!C) return { pass:false, detail:'no crocodile on the map' };
+  const w = C.pool;
+  const stage = ()=>{
+    if(crocGrab.croc) crocEndGrab(false);
+    crocGrab.graceT = 0; C.grabCd = 0; C.health = C.maxHealth;
+    C.pos.set(w.x+1, terrainY(w.x+1,w.z), w.z); C.mesh.position.copy(C.pos);
+    player.pos.set(w.x+1.4, terrainY(w.x+1.4,w.z), w.z);
+    player.health = 100; player.hunger = 100; player.oxygen = 100;
+    gameState = 'playing'; crocBeginGrab(C);
+  };
+  const detail = {};
+  // 1) a real 10/s mash frees you
+  stage();
+  let f = 0;
+  while(playerGrabbed() && f < 600){
+    player.hunger=100; gameState='playing';
+    if(f % 6 === 0) crocTapEscape();               // 10 taps/sec
+    updateCrocGrab(1/60); updateOxygen(1/60); f++;
+  }
+  detail.mashedFreeAfterSec = r2(f/60);
+  detail.mashWorked = !playerGrabbed() && f < 600;
+  detail.graceGranted = crocGrab.graceT > 0;
+
+  // 2) …but lazy tapping never does, and you drown instead.
+  // ⚠ "still grabbed at the end" is NOT the assertion: updateCrocGrab releases you when
+  // your health hits 0, so a player who drowned reads as freed. Assert on the OUTCOME —
+  // did the meter ever reach the break threshold, and did you die.
+  stage();
+  let g = 0, drowned = false, peakTaps = 0;
+  while(g < 900){                                   // 15 s
+    player.hunger=100; gameState='playing';
+    if(g % 60 === 0) crocTapEscape();               // 1 tap/sec — far under TAP_DECAY
+    peakTaps = Math.max(peakTaps, crocGrab.taps);
+    updateCrocGrab(1/60); updateOxygen(1/60);
+    if(player.oxygen <= 0 && player.health < 100) drowned = true;
+    if(player.health <= 0) break;
+    g++;
+  }
+  detail.lazyTapPeakMeter = r2(peakTaps);            // never gets near BREAK_TAPS
+  detail.lazyTapsFreed = peakTaps >= CROC.BREAK_TAPS;
+  detail.drownedWhileHeld = drowned;
+  detail.diedInTheJaws = player.health <= 0;
+  detail.oxygenAtEnd = r2(player.oxygen);
+  detail.hpAtEnd = r2(player.health);
+
+  // 3) killing it releases you
+  stage();
+  C.health = 0;
+  updateCrocGrab(1/60);
+  detail.deadCrocReleases = !playerGrabbed();
+
+  if(crocGrab.croc) crocEndGrab(false);
+  crocGrab.graceT = 0;
+  player.health = 100; player.oxygen = 100;
+  const pass = detail.mashWorked && detail.graceGranted && !detail.lazyTapsFreed &&
+               detail.drownedWhileHeld && detail.diedInTheJaws && detail.deadCrocReleases;
+  return { pass, detail };
+});
+
+// =====================================================================
 //  runner
 // =====================================================================
 window.SAVANNAH_TESTS = T;
