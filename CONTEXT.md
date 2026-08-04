@@ -2811,7 +2811,7 @@ Full module on the cheetah/dog template, named per bestiary style (real species 
 - `BRISTLE` flares the quills over ~0.17 s on per-quill pivot Groups, then **back-charges**: moves toward the
   target while facing **away** (`porcStep`'s `faceDir -1`), quills first. Contact = **18** on a per-victim
   cooldown, and every victim is tagged so **its own** retaliation watchdog blames the porcupine, not the player.
-- HP **25** (the wild dog's), charge speed **9** — deliberately well under a sprint, because if walking away
+- HP **25** (the wild dog's) — ⚠ **raised to 125 on 2026-08-04, see below**; charge speed **9** — deliberately well under a sprint, because if walking away
   didn't work "passive" would be a lie. Aggro does **not** time out; it ends on flee (<30% HP) or death.
 - **Interpretive calls:** aggro is permanent-until-flee-or-death (the literal reading, but it makes a provoked
   one persistent); **no predator currently hunts porcupines**, so in practice only the player provokes one —
@@ -2873,6 +2873,35 @@ This commit is `makePorcupine` / `animatePorc` and the dossier mirror, nothing e
 - **Disposal re-verified on the shared pair:** 6 cycles × 6 animals through both `killObj` and the real
   dead-loop — geometry count **flat at 4831**, textures flat, 450 = 25×18 body-geometry frees, **0 double
   disposes**, 0 porcupine groups left behind, and the shared quill geo/material **never** freed.
+
+### 🦔 Porcupine HP 25 → 125 (2026-08-04, Steven: "bump porcupine HP by 100")
+One constant, `PORC.HEALTH`. Spike damage (18), cooldown, speeds, aggro, flee-and-death behaviour all
+untouched — but the *feel* of the animal changes a lot, so the numbers are here rather than left implicit.
+- **Measured damage per weapon vs a real 125/125 porcupine** (through the real `dealKitMelee` /
+  `boomerangStrike` / `updateThrownRocks` paths): **spear ONE-SHOTS (125)**, boomerang **100**, hammer
+  **67**, crossbow bolt **50**, axe **42**, thrown rock **15**.
+- ⚠⚠ **THE HP BUMP DOES NOT AFFECT THE SPEAR, AND CANNOT.** `updateThrownRocks`' porcupine branch reads
+  `P.health -= r.crossbow ? 50 : r.spear ? P.maxHealth : 15*m` — the spear's damage is literally *"all of
+  it"*, an idiom this file uses for the squishy tier (wild dog, bird, cheetah, prey all share it). So the
+  spear one-shots a porcupine at 25 HP, at 125 HP, and at any number anyone sets later. **Left alone
+  deliberately** — retuning a weapon is a balance call, not a side effect of an HP change — but flagged,
+  because it substantially undercuts what a 5× HP bump looks like it should buy.
+- ⚠ **Measurement trap that produced a wrong first table** (and nearly shipped as bestiary copy): probing
+  damage by setting `P.health = 9999` and diffing reports the spear as **25**, because `maxHealth` was still
+  25 and `maxHealth`-relative damage silently scales with the field you *didn't* change. Measure against a
+  genuinely untouched animal, or any `maxHealth`-relative weapon will lie to you.
+- ⚠ At 25 HP a spear **or** a bolt deleted it, so the retaliation mechanic — the entire point of the animal
+  — usually never fired. At 125 only the spear still does, and melee costs 2 hammer swings (36 back) or 3
+  axe swings (**54 back**, over half the player's health).
+- ⚠ **`FLEE_HP` is a FRACTION (0.30), so it scaled by itself** — the flee line moved 7.5 → **37.5**. That
+  means you usually don't pay the full 125: one boomerang or two bolts drops it under the line and it
+  disengages. Keep it fractional; re-expressing it as an absolute would silently unpin it from HP.
+- ⚠ **Copy that had to move with it** (this repo has rotted balance copy behind code twice): the bestiary
+  header `(25 HP)` **and** its tactical paragraph, which advertised "a spear or a crossbow bolt one-shots
+  it" — advice that is now simply false. Both rewritten with the measured table above.
+- Suite still 13/13. Every porcupine test references HP **relatively** (`PORC.HEALTH - 10`,
+  `PORC.HEALTH * 0.2`), and the weapon test asserts `damage > 0` rather than death, so none of them had to
+  change — which is why they were written that way.
 
 ### 🐊 The croc grab now actually drags you to the bottom
 Most of this shipped 2026-07-31 and is **preserved**; the missing half was the drag itself.

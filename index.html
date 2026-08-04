@@ -1998,7 +1998,14 @@ function resetCheetahDay(){
 // happens once something has actually taken health off it.
 const PORC = {
   MAX: 6, PER_DAWN: 2,
-  HEALTH: 25,            // "comparable to a wild dog" — literally the wild dog's 25
+  HEALTH: 125,           // ⚠ Steven 2026-08-04: +100 on the original 25 (which was the wild dog's).
+                         // Consequence worth knowing before tuning anything else: at 25 a single
+                         // spear (25) or bolt (50) deleted it outright, so the retaliation mechanic
+                         // usually never got to happen. At 125 NOTHING one-shots it — boomerang 100
+                         // and hammer 67 are the biggest single hits — and melee costs 2–3 swings at
+                         // 18 back EACH, which is what makes "don't melee me" bite.
+                         // ⚠ FLEE_HP is a FRACTION, so it tracks this automatically (30% of 125 =
+                         // 37.5). Do not re-express it as an absolute.
   BODY_R: 0.5,
   SPEED_FORAGE: 3.2,     // a slow, head-down amble — it is not going anywhere
   SPEED_CHARGE: 9,       // the reverse rush. Slower than a sprint (16) ON PURPOSE:

@@ -158,7 +158,7 @@ The damage is **per crossing, not a tick**: standing in the thorns costs you 20 
 is what punishes you for staying. Step fully out and back in and the fence re-arms after half a second.
 Thorns are on the **ground** — you're clear of them on a roof, on a wall, or up a tree.
 
-### 🦔 Crested porcupine — the "spike-back" *(25 HP)*
+### 🦔 Crested porcupine — the "spike-back" *(125 HP)*
 About the size of a wild dog: a stout, dark-brown, low-slung animal whose back climbs to a **hunch over the
 hips**, with a small pig-snouted head carried near the ground, a pale band across the throat, and a **field of
 cream-tipped banded quills** covering its back and flanks — longest over the rump, with a crest of finer
@@ -173,8 +173,14 @@ Anything in contact takes **18 damage** on a short cooldown, and once provoked i
 nearby**, not just you. It does not calm down: it stops only when it **flees below 30% HP**, or dies.
 
 **So melee is the wrong answer.** Swinging at it means standing on the quills — the blow lands and you take 18
-straight back, every swing. **Ranged is the safe kill**: at 25 HP a spear or a crossbow bolt one-shots it from
-well outside quill range.
+straight back, **every swing**. At 125 HP that is no longer a one-off tax: a hammer needs **2** swings (36
+back) and an axe **3** (54 back — over half your health to kill one animal).
+
+**The spear is the answer.** It one-shots a porcupine outright, at any HP, from well outside quill range —
+you never take a single point back. Everything else now takes several hits: **boomerang 100**, **hammer 67**,
+**crossbow bolt 50**, **axe 42**, thrown **rock 15**. You rarely need the full 125 though — it breaks off and
+flees the moment it drops below **37.5**, so one boomerang or two bolts is usually enough to send it away
+rather than kill it.
 
 Drops a **porcupine quill**. Two arrive with each dawn wave, up to six on the map.
 
