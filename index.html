@@ -1966,6 +1966,7 @@ function updateCheetahs(dt){
     const C=cheetahMeshes[i];
     if(C.health<=0){
       spawnCarcass(C.pos.clone(), 70, 'cheetah');
+      dropBone('cheetah', C.pos);
       killObj(C.mesh); cheetahMeshes.splice(i,1);
       showKillfeed('🐆 The cheetah is down');
     }
@@ -2228,7 +2229,7 @@ function registerControls(){
     if(e.code==='Space' && playerGrabbed()){ crocTapEscape(); return; }
     if(e.code==='Space' && player.inTree) dropFromTree();   // drop off the branch
     if(e.code==='KeyF') throwRock();
-    if(e.code==='KeyE'){ if(!toggleNearestGate() && !eatNearbyBerry() && !eatNearbyCarcass()) doCollect(); }   // gate → berry → carcass → collect
+    if(e.code==='KeyE'){ if(!toggleNearestGate() && !eatNearbyBerry() && !pickUpBone() && !eatNearbyCarcass()) doCollect(); }   // gate → berry → 💀 bone → carcass → collect
     if(e.code==='KeyQ') pouncePrey();                            // hunt: pounce on prey
     // 🎒 T = Take / drop. One key, one item. Full hand → drops; empty hand → picks up
     // the nearest eligible thing (dropped item → carcass meat → berry → held stock).
@@ -2382,7 +2383,9 @@ function doTouchAction(name, btn){
     case 'pounce':  pouncePrey(); break;                                        // == Q
     // ⚠ this MUST mirror the [E] key's full chain. It used to only try carcass→collect,
     // which left gates and berry bushes unreachable on a phone — where Steven plays.
-    case 'eat':     if(!toggleNearestGate() && !eatNearbyBerry() && !eatNearbyCarcass()) doCollect(); break;  // == E
+    // ⚠ MUST mirror the [E] chain exactly. This button silently fell behind twice
+    // before (gates and berry bushes were keyboard-only on the device Steven plays on).
+    case 'eat':     if(!toggleNearestGate() && !eatNearbyBerry() && !pickUpBone() && !eatNearbyCarcass()) doCollect(); break;  // == E
     case 'carry':   if(carried) dropCarried();                                  // == T
                     else if(!tryPickUp()) showKillfeed('🎒 Nothing in reach to pick up'); break;
     case 'name':    tryNameAnimal(); break;                                     // == RMB, 🏷️ worn
@@ -3434,6 +3437,7 @@ function updateLions(dt){
       // Gated on lastHitKind so gorilla/rhino kills across the map can't be farmed.
       if(L.lastHitKind==='player'){ toothCount++; showKillfeed('🦁 Lion down! 🦷 +1 lion tooth'); }
       else showKillfeed('🦁 Lion down!');
+      dropBone('lion', L.pos);
       killObj(L.mesh);
       lionMeshes.splice(i,1);
       kills++;
@@ -3957,7 +3961,8 @@ function updatePrey(dt){
     // A downed elephant drops a tusk (craft material for the Tusk Boomerang). No player-gate:
     // a 300-HP bull that fights back is virtually never killed by anything but the player.
     if(P.species==='elephant'){ tuskCount++; showKillfeed('🐘 Elephant down! 🦴 +1 elephant tusk'); }
-    spawnCarcass(P.pos.clone(), P.food, P.species); killObj(P.mesh); preyMeshes.splice(i,1);
+    spawnCarcass(P.pos.clone(), P.food, P.species); dropBone(P.species, P.pos);
+    killObj(P.mesh); preyMeshes.splice(i,1);
   }}
 
   // keep the ecosystem stocked
@@ -4860,6 +4865,7 @@ function updateGorillas(dt){
   for(let i=gorillaMeshes.length-1; i>=0; i--){
     if(gorillaMeshes[i].health <= 0){
       spawnCorpse(gorillaMeshes[i].pos.clone());
+      dropBone('gorilla', gorillaMeshes[i].pos);   // ⚠ NOT `G` — that is the stale forEach var above
       killObj(gorillaMeshes[i].mesh);
       gorillaMeshes.splice(i,1);
       showKillfeed('🦍 The gorilla is down!');
@@ -5157,6 +5163,7 @@ function updateRhinos(dt){
   for(let i=rhinoMeshes.length-1;i>=0;i--){
     if(rhinoMeshes[i].health<=0){
       spawnCarcass(rhinoMeshes[i].pos.clone(), 90, null);
+      dropBone('rhino', rhinoMeshes[i].pos);
       killObj(rhinoMeshes[i].mesh); rhinoMeshes.splice(i,1);
       hornCount++;
       showKillfeed('🦏 The rhino is down! 🦏 +1 rhino horn');
@@ -5487,7 +5494,7 @@ function updateWildDogs(dt){
   // Downed dog → just vanish (no carcass, no drop — pure challenge). Wiping the whole
   // pack ends the vendetta (a fresh dawn pack starts calm again until you provoke it).
   for(let i=dogMeshes.length-1;i>=0;i--){
-    if(dogMeshes[i].health<=0){ killObj(dogMeshes[i].mesh); dogMeshes.splice(i,1); showKillfeed('🐕 A wild dog is down!'); }
+    if(dogMeshes[i].health<=0){ dropBone('wilddog', dogMeshes[i].pos); killObj(dogMeshes[i].mesh); dogMeshes.splice(i,1); showKillfeed('🐕 A wild dog is down!'); }
   }
   if(wildDogsVendetta && dogMeshes.length===0) wildDogsVendetta=false;
 }
@@ -5758,7 +5765,7 @@ function updateSkyVultures(dt){
   for(let i=skyVultureMeshes.length-1;i>=0;i--){
     const V=skyVultureMeshes[i];
     if(V.health<=0){
-      if(V.state==='LANDED'){ killObj(V.mesh); skyVultureMeshes.splice(i,1); kills++; showKillfeed('🦅 The vulture is down!'); }
+      if(V.state==='LANDED'){ dropBone('vulture', V.pos); killObj(V.mesh); skyVultureMeshes.splice(i,1); kills++; showKillfeed('🦅 The vulture is down!'); }
       else if(V.state!=='RETREAT'){ V.health=1; V.state='RETREAT'; V.stateT=0; V.target=null; V.land=null; showKillfeed('🦅 The wounded vulture screeches and climbs away!'); }
       else { V.health=1; }
     }
@@ -6094,6 +6101,7 @@ function updateMartialEagles(dt){
     const E=eagleMeshes[i];
     if(E.health<=0 && !E.dying){ E.dying=true; E.deathT=0; E.target=null; showKillfeed('🦅 The martial eagle falls out of the sky!'); }
     if(E.dying && (E.pos.y - terrainY(E.pos.x,E.pos.z)) <= 0.4){
+      dropBone('eagle', E.pos);
       killObj(E.mesh); eagleMeshes.splice(i,1); kills++;
     }
   }
@@ -6477,6 +6485,7 @@ function updateSecretaryBirds(dt){
 
   for(let i=secretaryMeshes.length-1;i>=0;i--){
     if(secretaryMeshes[i].health<=0){
+      dropBone('secretary', secretaryMeshes[i].pos);
       killObj(secretaryMeshes[i].mesh); secretaryMeshes.splice(i,1); kills++;
       showKillfeed('🦩 The secretary bird is down!');
     }
@@ -8459,7 +8468,7 @@ function updateSnakes(dt){
       S.dying=true; S.deathT=0; S.target=null; S.stunTimer=0; S.wrap=null;
       showKillfeed(S.v.icon+' The '+S.v.label+' writhes and collapses!');
     }
-    if(S._collapsed){ killObj(S.mesh); snakeMeshes.splice(i,1); kills++; }
+    if(S._collapsed){ dropBone(snakeBoneKey(S), S.pos); killObj(S.mesh); snakeMeshes.splice(i,1); kills++; }
   }
 }
 // Push the new head position onto the trail (only when it actually moved) + trim to body length.
@@ -10258,6 +10267,7 @@ function updateCrocodiles(dt){
     const C = crocMeshes[i];
     if(C.health <= 0){
       if(crocGrab.croc===C) crocEndGrab(true);
+      dropBone('crocodile', C.pos);
       killObj(C.mesh); crocMeshes.splice(i,1);
       showKillfeed('🐊 The crocodile is dead.');
       continue;
@@ -10533,6 +10543,145 @@ function clearCarry(){
   carried = null;
   droppedItems.forEach(d=>killObj(d.mesh));
   droppedItems.length = 0;
+}
+
+// =====================================================================
+//  💀 BONE & MATERIAL DROPS  (2026-08-04)
+// =====================================================================
+// Steven: "elephants already drop tusks. Extend so all kill-eligible creatures drop a
+// coloured bone/material as future weapon-crafting material… name by species ('wild dog
+// bone', 'green cobra fang')… pickup only, no behaviour yet — crafting comes later."
+//
+// ⚠ THIS IS A SECOND, SEPARATE MATERIAL SYSTEM — deliberately NOT folded into the three
+// existing craft counters (🦷 lion tooth / 🦴 elephant tusk / 🦏 rhino horn). Those are
+// SPENT by live recipes (necklace, boomerang, crossbow-per-shot) and are pure numbers
+// with no world object; re-pointing them would silently re-tune a shipped economy.
+// Every existing drop still fires exactly as before — a lion gives a tooth AND a bone,
+// an elephant a tusk AND a bone.
+//
+// ⚠ A bone is a PHYSICAL OBJECT lying where the animal fell, not a counter, because
+// "coloured" only means something if you can see it and "pickup only" implies something
+// to pick up. It rides the existing [E] chain and the killObj disposal path.
+const BONE = {
+  MAX:    40,     // world cap. The ecosystem kills plenty on its own, so this is a real
+                  // limit, not a formality: the OLDEST drop is freed to make room.
+  REACH:  3.4,    // == CARRY_REACH, so "close enough to pick up" means one thing
+  ICON:  '💀',    // ⚠ NOT 🦴 — that is already the elephant tusk's icon, and two 🦴
+                  // counters in one HUD would be unreadable.
+};
+// Species → what it leaves behind. Colours are Steven's list; the ones he did not name
+// fall under his "rhino/warthog/etc → skin-coloured".
+// ⚠ "Hyenas → dark brown" is in the brief but THERE IS NO HYENA IN THIS GAME and never
+// has been. Not invented — flagged. The cheetah below is its own animal, not a stand-in.
+const BONE_KINDS = {
+  lion:        { label:'lion bone',           colour:0xd8c07a, form:'bone' },  // yellow/tan
+  wilddog:     { label:'wild dog bone',       colour:0x8a7f6a, form:'bone' },  // grey/brown
+  cheetah:     { label:'cheetah bone',        colour:0xc9a869, form:'bone' },
+  gorilla:     { label:'gorilla bone',        colour:0x6b6257, form:'bone' },
+  rhino:       { label:'rhino bone',          colour:0xbfb4a4, form:'bone' },  // skin
+  crocodile:   { label:'crocodile bone',      colour:0x4a5a32, form:'bone' },  // dark green/olive
+  vulture:     { label:'vulture bone',        colour:0x54585c, form:'bone' },  // dark grey
+  eagle:       { label:'martial eagle bone',  colour:0x5c5750, form:'bone' },
+  secretary:   { label:'secretary bird bone', colour:0x60625e, form:'bone' },
+  // prey — "rhino/warthog/etc → skin-coloured", with the two Steven singled out
+  giraffe:     { label:'giraffe bone',        colour:0xe8dcc0, form:'bone' },  // cream/beige
+  elephant:    { label:'elephant bone',       colour:0xbfb4a4, form:'bone' },
+  zebra:       { label:'zebra bone',          colour:0xcfc3ae, form:'bone' },
+  wildebeest:  { label:'wildebeest bone',     colour:0xcfc3ae, form:'bone' },
+  gazelle:     { label:'gazelle bone',        colour:0xcfc3ae, form:'bone' },
+  impala:      { label:'impala bone',         colour:0xcfc3ae, form:'bone' },
+  warthog:     { label:'warthog bone',        colour:0xcfc3ae, form:'bone' },  // skin
+  kudu:        { label:'kudu bone',           colour:0xcfc3ae, form:'bone' },
+  // serpents — a fang, not a bone
+  python:      { label:'python fang',         colour:0xd6c092, form:'fang' },
+  cobra:       { label:'cobra fang',          colour:0xd6c092, form:'fang' },  // tan — "cobra (normal)"
+  cobra_green: { label:'green cobra fang',    colour:0x76d13a, form:'fang' },  // ☑ Steven called this out
+  worm:        { label:'pink worm hide',      colour:0xe08fa8, form:'hide' },  // a worm has no bones
+};
+let boneDrops  = [];    // { key, label, mesh, pos } — physical remains lying on the map
+let boneCounts = {};    // key → how many you hold. RUN-SCOPED, like tooth/tusk/horn.
+
+// A serpent's drop depends on its VARIANT and, for the cobra, its colour morph.
+// ⚠ Only the acid morph gives the green fang: Steven distinguished exactly two cases,
+// "cobra (normal)" and "green cobra". Crimson / violet / gold therefore drop the plain
+// tan fang today. Giving each morph its own fang colour is one line here if wanted.
+function snakeBoneKey(S){
+  const v = S.v && S.v.key;
+  if(v === 'cobra') return (S.colour && S.colour.id === 'acid') ? 'cobra_green' : 'cobra';
+  return v === 'worm' ? 'worm' : 'python';
+}
+// The remains themselves. Per-drop geometry + material so killObj frees the lot and no
+// two drops can share a resource that disposing one would yank from the other.
+function makeBoneMesh(kind){
+  const g = new THREE.Group();
+  const m = new THREE.MeshLambertMaterial({ color: kind.colour });
+  if(kind.form === 'fang'){
+    const f = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.52, 7), m);
+    f.rotation.z = Math.PI/2 + 0.25; f.position.y = 0.1; f.castShadow = true; g.add(f);
+  } else if(kind.form === 'hide'){
+    const h = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.07, 0.44), m);
+    h.rotation.y = 0.4; h.position.y = 0.05; h.castShadow = true; g.add(h);
+  } else {
+    // classic long bone: a shaft with a knob at each end
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.62, 6), m);
+    shaft.rotation.z = Math.PI/2; shaft.position.y = 0.1; shaft.castShadow = true; g.add(shaft);
+    for(const sx of [-0.33, 0.33]){
+      const k = new THREE.Mesh(new THREE.SphereGeometry(0.115, 6, 5), m);
+      k.position.set(sx, 0.1, 0); k.scale.set(1, 0.85, 1.15); g.add(k);
+    }
+  }
+  return g;
+}
+// Called from every creature's dead-loop. `key` names the species explicitly rather
+// than being sniffed from list membership, so a new animal that forgets to drop is a
+// visible omission at its own death site rather than a silent fallback.
+function dropBone(key, pos){
+  const kind = BONE_KINDS[key];
+  if(!kind || !pos) return null;
+  // Cap: free the OLDEST so a long run can't accumulate meshes without bound. The
+  // ecosystem kills far more than the player does, so this is load-bearing.
+  while(boneDrops.length >= BONE.MAX){
+    const old = boneDrops.shift(); killObj(old.mesh);
+  }
+  const g = makeBoneMesh(kind);
+  const gy = terrainY(pos.x, pos.z);
+  g.position.set(pos.x, gy + 0.12, pos.z);
+  g.rotation.y = rand(0, Math.PI*2);
+  g.name = 'bonedrop';
+  scene.add(g);
+  const d = { key, label:kind.label, mesh:g, pos:new THREE.Vector3(pos.x, gy, pos.z) };
+  boneDrops.push(d);
+  return d;
+}
+// [E] near a drop → it goes on the tally. Wired into the E chain ahead of the carcass,
+// so one press takes the bone and the next starts eating; behind it, eatNearbyCarcass
+// would keep succeeding while food remained and the bone could never be reached.
+function pickUpBone(){
+  for(let i=boneDrops.length-1;i>=0;i--){
+    const d = boneDrops[i];
+    if(Math.hypot(d.pos.x-player.pos.x, d.pos.z-player.pos.z) > BONE.REACH) continue;
+    killObj(d.mesh); boneDrops.splice(i,1);
+    boneCounts[d.key] = (boneCounts[d.key]||0) + 1;
+    showKillfeed(BONE.ICON+' Picked up a '+d.label+' ('+boneCounts[d.key]+')');
+    playSound('collect');
+    return true;
+  }
+  return false;
+}
+function totalBones(){ let n=0; for(const k in boneCounts) n += boneCounts[k]; return n; }
+// "3 lion bones · 1 green cobra fang" — only what you actually hold.
+function boneTally(sep){
+  const out = [];
+  for(const k in boneCounts){
+    const n = boneCounts[k]; if(!n) continue;
+    const kind = BONE_KINDS[k]; if(!kind) continue;
+    out.push(n + ' ' + kind.label + (n===1 ? '' : 's'));
+  }
+  return out.join(sep || ' · ');
+}
+function clearBoneDrops(){
+  boneDrops.forEach(d=>killObj(d.mesh));
+  boneDrops.length = 0;
 }
 
 function kitPlaceWall(){      return placeKitWall(false); }
@@ -11189,6 +11338,14 @@ function renderShop(){
                    ' · 🦴 '+tuskCount+' elephant '+(tuskCount===1?'tusk':'tusks')+
                    ' · 🦏 '+hornCount+' rhino '+(hornCount===1?'horn':'horns');
   row.appendChild(mats);
+  // 💀 Bones & materials — the per-species tally. Nothing spends these yet (Steven:
+  // "pickup only, no behaviour yet — crafting comes later"), so this readout is the
+  // whole of their UI. Hidden until you actually hold one.
+  if(totalBones() > 0){
+    const bones=document.createElement('div'); bones.className='lo-lab'; bones.style.marginTop='4px';
+    bones.textContent = BONE.ICON+' BONES & MATERIALS — '+boneTally();
+    row.appendChild(bones);
+  }
 
   // Catalogue grid
   const grid = document.getElementById('shop-grid');
@@ -11640,6 +11797,10 @@ function updateHUD(){
   if(toothCount>0) mats += `<br>🦷 Teeth: ${toothCount}`;
   if(tuskCount>0)  mats += (toothCount>0?' &nbsp; ':'<br>')+`🦴 Tusks: ${tuskCount}`;
   if(hornCount>0)  mats += ((toothCount>0||tuskCount>0)?' &nbsp; ':'<br>')+`🦏 Horns: ${hornCount}`;
+  // 💀 Bones are a separate pile — the HUD shows only the total (the full species
+  // breakdown lives in the shop, where there is room for it).
+  const nBones = totalBones();
+  if(nBones>0) mats += `<br>${BONE.ICON} Bones: ${nBones}`;
   document.getElementById('topright').innerHTML =
     `${dn.isDay?'☀️ DAY':'🌙 NIGHT'} ${fmtTime(Math.max(0,timeLeft))}<br>`+
     (venomed?`<span style="color:#7ce05a">☠️ POISONED ${Math.ceil(player.poisonT)}s</span> <span style="opacity:0.6;font-size:11px">— water cures</span><br>`:'')+
@@ -12041,6 +12202,8 @@ function resetGame(){
   toothCount = 0;    // craft materials are run-scoped (the crafted item, once unlocked, persists across runs)
   tuskCount  = 0;
   hornCount  = 0;
+  clearBoneDrops();  // 💀 free every set of remains lying on the map…
+  boneCounts = {};   // …and empty the pouch. Run-scoped, exactly like the three above.
   scopeHeld  = false; scopeToggle = false;                   // drop any held/toggled crossbow scope on restart
   crouchToggle = false;                                      // stand up on restart (clear the crouch tap-toggle)
   if(camera){ camera.fov = BASE_FOV; camera.updateProjectionMatrix(); }

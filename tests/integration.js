@@ -212,6 +212,114 @@ test('walls: shop cards quote the live cap', ()=>{
 });
 
 // =====================================================================
+//  FEATURE 3 — every creature drops its OWN coloured, species-named remains
+// =====================================================================
+// The multi-instance assertion: kill several DIFFERENT species in the same frame and
+// require N distinct drops with N distinct labels. A build where the drop table were
+// shared, cached or last-write-wins passes a one-species test and fails this.
+test('bones: killing several species leaves several distinct named drops', ()=>{
+  clearBoneDrops(); boneCounts = {};
+  pinPlayer();
+  const detail = {};
+
+  // Real deaths through the real dead-loops, not dropBone() called by hand.
+  const victims = [];
+  const L = lionMeshes[0];
+  const D = dogMeshes[0];
+  const P = preyMeshes.find(p=>p.species && BONE_KINDS[p.species]);
+  const C = cheetahMeshes[0];
+  if(!L || !D || !P || !C) return { pass:false, detail:'need a lion, dog, prey and cheetah alive' };
+  victims.push(['lion', L], ['wilddog', D], [P.species, P], ['cheetah', C]);
+  for(const [,o] of victims) o.health = 0;
+
+  updateLions(0.05); updateWildDogs(0.05); updatePrey(0.05); updateCheetahs(0.05);
+
+  const got = boneDrops.map(d=>d.key);
+  detail.expectedKeys = victims.map(v=>v[0]).sort();
+  detail.droppedKeys  = [...got].sort();
+  detail.labels       = boneDrops.map(d=>d.label);
+  detail.distinctMeshes = new Set(boneDrops.map(d=>d.mesh.uuid)).size;
+
+  // Every drop must be its OWN mesh with its OWN material instance — a shared material
+  // would mean disposing one drop yanks the colour out from under the others.
+  const mats = boneDrops.map(d=>{ let m=null; d.mesh.traverse(o=>{ if(o.isMesh && !m) m=o.material; }); return m; });
+  detail.distinctMaterials = new Set(mats.map(m=>m && m.uuid)).size;
+  detail.colours = boneDrops.map((d,i)=>({ key:d.key, hex:'0x'+mats[i].color.getHexString(),
+                                           want:'0x'+new THREE.Color(BONE_KINDS[d.key].colour).getHexString() }));
+  detail.coloursCorrect = detail.colours.every(c=>c.hex === c.want);
+
+  const pass = detail.droppedKeys.join(',') === detail.expectedKeys.join(',') &&
+               detail.distinctMeshes === victims.length &&
+               detail.distinctMaterials === victims.length &&
+               detail.coloursCorrect;
+  clearBoneDrops();
+  return { pass, detail };
+});
+
+// Steven called this one out by name.
+test('bones: the green cobra drops a GREEN fang, other morphs a tan one', ()=>{
+  const fake = id => ({ v: SNAKE_VARIANTS.cobra, colour: COBRA_COLORS.find(c=>c.id===id) });
+  const detail = {
+    acid:     snakeBoneKey(fake('acid')),
+    midnight: snakeBoneKey(fake('midnight')),
+    gold:     snakeBoneKey(fake('gold')),
+    python:   snakeBoneKey({ v: SNAKE_VARIANTS.python }),
+    worm:     snakeBoneKey({ v: SNAKE_VARIANTS.worm }),
+  };
+  detail.greenLabel  = BONE_KINDS[detail.acid].label;
+  detail.greenColour = '0x'+new THREE.Color(BONE_KINDS.cobra_green.colour).getHexString();
+  detail.tanLabel    = BONE_KINDS[detail.midnight].label;
+  // green must actually BE green: dominant channel is G, and clearly so
+  const g = new THREE.Color(BONE_KINDS.cobra_green.colour);
+  detail.isActuallyGreen = g.g > g.r && g.g > g.b;
+  const pass = detail.acid === 'cobra_green' && detail.midnight === 'cobra' &&
+               detail.python === 'python' && detail.worm === 'worm' &&
+               detail.greenLabel === 'green cobra fang' && detail.isActuallyGreen;
+  return { pass, detail };
+});
+
+// Pickup tallies per species, disposes the mesh, and the world cap frees the OLDEST
+// rather than growing without bound (the ecosystem kills far more than the player does).
+test('bones: pickup tallies + disposes, and the world cap evicts the oldest', ()=>{
+  clearBoneDrops(); boneCounts = {};
+  pinPlayer();
+  const detail = {};
+  const px = player.pos.x, pz = player.pos.z;
+
+  dropBone('lion', new THREE.Vector3(px+1, 0, pz));
+  dropBone('lion', new THREE.Vector3(px+1.4, 0, pz));
+  dropBone('crocodile', new THREE.Vector3(px+1.8, 0, pz));
+  const sceneBefore = scene.children.length;
+  detail.tookA = pickUpBone(); detail.tookB = pickUpBone(); detail.tookC = pickUpBone();
+  detail.tookD = pickUpBone();                       // nothing left in reach
+  detail.counts = JSON.parse(JSON.stringify(boneCounts));
+  detail.dropsLeft = boneDrops.length;
+  detail.sceneFreed = sceneBefore - scene.children.length;   // 3 groups removed
+  detail.tally = boneTally();
+  detail.total = totalBones();
+
+  // Cap: push well past BONE.MAX and require the array to hold exactly the cap, with
+  // every evicted mesh detached from the scene (not merely dropped from the array).
+  clearBoneDrops();
+  const sceneAtCapStart = scene.children.length;
+  const first = dropBone('lion', new THREE.Vector3(200, 0, 200));
+  for(let i=0;i<BONE.MAX + 15;i++) dropBone('zebra', new THREE.Vector3(200+i*0.5, 0, 210));
+  detail.cap = BONE.MAX;
+  detail.heldAtCap = boneDrops.length;
+  detail.oldestEvicted = boneDrops.indexOf(first) < 0;
+  detail.oldestDetached = !first.mesh.parent;
+  detail.sceneDelta = scene.children.length - sceneAtCapStart;   // == BONE.MAX
+
+  const pass = detail.tookA && detail.tookB && detail.tookC && !detail.tookD &&
+               detail.counts.lion === 2 && detail.counts.crocodile === 1 &&
+               detail.total === 3 && detail.dropsLeft === 0 && detail.sceneFreed === 3 &&
+               detail.heldAtCap === BONE.MAX && detail.oldestEvicted &&
+               detail.oldestDetached && detail.sceneDelta === BONE.MAX;
+  clearBoneDrops(); boneCounts = {};
+  return { pass, detail };
+});
+
+// =====================================================================
 //  runner
 // =====================================================================
 window.SAVANNAH_TESTS = T;
