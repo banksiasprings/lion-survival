@@ -159,14 +159,18 @@ is what punishes you for staying. Step fully out and back in and the fence re-ar
 Thorns are on the **ground** — you're clear of them on a roof, on a wall, or up a tree.
 
 ### 🦔 Crested porcupine — the "spike-back" *(25 HP)*
-About the size of a wild dog, with a **bristling field of banded quills** down its back and a long crest over
-the shoulders. **It will never start a fight.** Left alone it just trundles about foraging — it does not hunt,
-does not track you, and its quills are harmless while they're lying flat. **You can walk straight past one.**
+About the size of a wild dog: a stout, dark-brown, low-slung animal whose back climbs to a **hunch over the
+hips**, with a small pig-snouted head carried near the ground, a pale band across the throat, and a **field of
+cream-tipped banded quills** covering its back and flanks — longest over the rump, with a crest of finer
+bristles running from the crown to the shoulders. **It will never start a fight.** Left alone it just trundles
+about foraging, swaying gently on the spot — it does not hunt, does not track you, and its quills are harmless
+while they're lying flat. **You can walk straight past one.**
 
-**Hit it once and that changes permanently.** The quills snap upright — that's your warning, and the radar dot
-goes from dull olive to hot orange — and it comes at you **backwards**, rump and quills first, the way a real
-porcupine does. Anything in contact takes **18 damage** on a short cooldown, and once provoked it will go for
-**anything nearby**, not just you. It does not calm down: it stops only when it **flees below 30% HP**, or dies.
+**Hit it once and that changes permanently.** The whole coat stands up and **fans out** — the animal visibly
+swells, roughly a third wider, and the quills shiver — that's your warning, and the radar dot goes from dull
+olive to hot orange. Then it comes at you **backwards**, rump and quills first, the way a real porcupine does.
+Anything in contact takes **18 damage** on a short cooldown, and once provoked it will go for **anything
+nearby**, not just you. It does not calm down: it stops only when it **flees below 30% HP**, or dies.
 
 **So melee is the wrong answer.** Swinging at it means standing on the quills — the blow lands and you take 18
 straight back, every swing. **Ranged is the safe kill**: at 25 HP a spear or a crossbow bolt one-shots it from

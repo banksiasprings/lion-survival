@@ -2826,6 +2826,53 @@ Full module on the cheetah/dog template, named per bestiary style (real species 
   than copying it — one rasteriser in that folder, and a second copy would drift.
 - 50 meshes / ~250 draw calls for six — under the cobra's 60, and `PORC.MAX` 6 matches `SNAKE.MAX` 6.
   200 s soak: 0 errors, 0 NaN, all three states exercised, 1.36 ms/frame. Disposal 0/0/0.
+  *(Mesh and quill numbers superseded by the reskin below — behaviour is unchanged.)*
+
+### 🦔 Porcupine RESKIN — the look, not the behaviour (2026-08-04, follow-up)
+Steven: *"it doesn't look good yet."* It didn't: the body was three big spheres in a row, which from any angle
+read as **a snowman lying down**, and 38 quills all sat within ±0.37 of the centreline. **Every gameplay number
+above is untouched** — HP 25, spike 18, speeds, the HP-drop watchdog, the back-charge, aggro-until-flee-or-death.
+This commit is `makePorcupine` / `animatePorc` and the dossier mirror, nothing else.
+- **Silhouette.** Five graded ellipsoids along a *rising* spine so the back climbs to its high point over the
+  **HIPS** — the rearward hunch is the animal's whole shape, and the old build put its mass at the shoulders.
+  Small pig-snouted head carried low, tiny side-set eyes (not the old forehead-mounted pair), ear nubs, orange
+  incisors, a pale **throat collar** (the field mark), dark stubby legs with foot pads, stub tail.
+- ⚠ **ONE shared, vertex-coloured quill geometry + material for the whole species**, both `userData.keep = true`
+  — a module singleton like `FLASH_MAT`. Every quill was building its **own** `ConeGeometry` before (38 per
+  animal, 228 live for a sextet); now a **unit** cone is scaled per-quill for length/thickness. Geometries per
+  animal **50 → 26** even though meshes went 50 → 89.
+- ⚠ **Banding is per-VERTEX, and the flat runs must be DOUBLED UP.** Vertex colours Gouraud-interpolate up the
+  shaft, so any colour given a single ring averages into its neighbours — the first cut read as a uniformly
+  pale needle with a dirty root. 7 rings: solid dark root, cream shaft, one dark band, **solid pale outer
+  third**. The pale tip is the half that matters; it's what separates a quill from the dark pelt behind it.
+- ⚠ **Quills now carry a ROLL as well as a pitch** (`restZ`/`upZ`), laid out as **arcs across the back** with
+  `spread` reaching 0.50 against a hip half-width of 0.57. Held at ±0.38 the rear view — *the view a back-charge
+  gives you* — was a bare egg in a spiky hat. **Roll sign is negative**: a Z-rotation sends +Y toward −X, so a
+  quill on the +X flank needs a negative `rotation.z` to splay outward.
+- ⚠ **Euler order is load-bearing now that two components are used.** `'XYZ'` builds Rx·Ry·Rz, so the ROLL
+  applies first and the pitch then sweeps the already-splayed quill back. The python mirror's `TF.apply` goes
+  x→y→z, so it must **nest** the two (roll innermost); a single `TF(rot=(rx,0,rz))` composes them the other way
+  and the fan comes out wrong.
+- **Aggro cue.** Pitch and splay lerp together off the one `bristle` value, so a provoked one *swells* rather
+  than merely tilting: quill tips **+19% taller, +32% wider**. Plus a `swayT`-driven **shiver** while bristling
+  (alternating `phase` per quill so the coat shimmers, ×2.4 on the tail rattle quills) and a slow idle **sway**
+  when calm. ⚠ The sway is **roll only** — `porcStep` owns `rotation.y` and `mesh.position`, and the sway must
+  never fight either.
+- ⚠ **hitR is pinned at 1.406, byte-identical to the shipped value**, because spike reach is
+  `PORC.CONTACT_R + hitR`. `setHitbox` takes the mesh half-extent and the **nose pad** is the furthest point
+  from centre, so its z (1.2585) is a tuned constant, not a styling choice — rump quills deliberately stop
+  short of it. A reskin must not quietly re-tune a hitbox.
+- ⚠ **Hit-flash switched to `traverse`** at both the origMat sweep and the flash loop: quills are nested inside
+  their pivot Groups, so the old `children.forEach` never gave them an origMat and a struck porcupine flashed
+  its body while its most visible feature stayed cold.
+- **Cost.** 89 meshes / 64 quills / 26 geometries / 5,784 tris; **89 draw calls per fully-visible animal**
+  (534 for a sextet all on screen, which the 500×500 map never actually produces). Under the crocodile's 102
+  meshes, and shadow casters went **46 → 19** per animal (quills don't cast — a needle's shadow is invisible
+  and 6×64 of them re-render into the shadow map for nothing). 200 s soak of a full sextet through all three
+  states: **0 errors, 0 NaN, 0.075 ms/frame (0.45% of the 16.67 ms budget)**.
+- **Disposal re-verified on the shared pair:** 6 cycles × 6 animals through both `killObj` and the real
+  dead-loop — geometry count **flat at 4831**, textures flat, 450 = 25×18 body-geometry frees, **0 double
+  disposes**, 0 porcupine groups left behind, and the shared quill geo/material **never** freed.
 
 ### 🐊 The croc grab now actually drags you to the bottom
 Most of this shipped 2026-07-31 and is **preserved**; the missing half was the drag itself.
