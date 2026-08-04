@@ -2736,3 +2736,120 @@ Already shipped in `9f342b1`; this batch closes the remaining spec points:
 - 0 console errors.
 
 Each phase is an independent commit so it can be iterated in isolation.
+
+
+## 🌿 Bramble per-fence damage · 🧱 wall cap 100 · 💀 bone drops · 🦔 porcupine · 🐊 croc haul (2026-08-04)
+Five items in five commits. **First session with a durable test file**: `tests/integration.js`, 13 tests,
+injected into the live page (`fetch(...).then(eval)` → `runSavannahTests()`). Its governing rule is that
+**every test drives MULTIPLE instances through the real per-frame update and asserts the total**, because a
+single-instance smoke test is exactly what let the bramble bug ship.
+
+### 🐛 Bug — a line of bramble fences was worth ONE fence
+`updateBrambles` kept **one cooldown per VICTIM** (`e._brambleCd`) and `brambleAt()` returned only the
+**first** overlapping fence, so the first fence armed a shared timer and every other fence was free.
+Measured on the old build: five fences 3.0 apart scored **60 at a walk and 20 at a sprint** — the 20 is
+exactly what Steven reported.
+- Cooldowns are now keyed **per (victim, fence)**: `e._brambleCds[fenceId]`, fences carry an incrementing
+  `id`. ⚠ `_brambleId` is deliberately **not** reset by `resetGame` — monotonic ids mean a fresh fence can
+  never inherit a live cooldown a victim still holds against a disposed one.
+- ⚠ **The rule is once per CROSSING, not a timed tick.** A fence's timer is *refreshed every frame you are
+  inside it* and only decays once you leave. This is the only model that satisfies all three of Steven's
+  statements at once: crossing a 3.0-wide fence takes 0.54 s at a walk and 0.19 s at a sprint, so a plain
+  0.5 s cooldown scores those as **40 and 20** — not 20 and 20. It also preserves his stated *reason* for
+  wanting a cooldown ("so proximity doesn't chunk a stationary player"): parking in thorns costs 20 once,
+  and the half-speed slow is what punishes standing. `RECHARGE` 1.2 → **0.5** is then the floor that stops
+  edge-dancing for free damage.
+- Verified: walk **100**, sprint **100**, one fence **20**, parked 5 s **20**, out-and-back **20**; a lion
+  crossing five takes **5 separate bites** totalling 100.
+- ⚠ **Test-methodology note (this one mimics the real bug).** The animal assertion first read the lion's HP
+  before/after and scored a *correct* build as 60 — because a lion carries **58 HP** and five fences are
+  100, so it dies after three. Accumulate the damage and top the victim up each frame; never read end-HP
+  when the expected damage exceeds the pool.
+
+### 🧱 Wall cap 50 → 100
+Kept the **refuse-on-overflow** UX (the 101st returns false, prints the limit, charges nothing) over
+auto-removing the oldest — silently demolishing a wall the player paid for is the same mistake the
+unequip-clears-your-walls bug made on 2026-07-30i.
+- ⚠ **`KIT_WALL_MAX` and `KIT_GATE_MAX` moved UP next to `SHOP_ITEMS`** so the three shop cards can
+  interpolate them. That copy has rotted behind the code **twice** (it still read "up to 10" after the cap
+  became 50). They *must* be declared above the catalogue, not beside the wall module 9000 lines down:
+  `SHOP_ITEMS` is built at load time and reading a `const` from above its declaration is a **TDZ crash that
+  kills the whole bootstrap** — the same trap `venomDuration()` hit.
+- Perf, measured **interleaved with medians** (5 reps × 300 frames, animal population held at ~111):
+  **0 walls 1.096 ms · 50 walls 1.130 ms · 100 walls 1.812 ms (+0.716, 10.9% of the 16.67 ms budget)**.
+  ⚠ A first run that did not interleave drifted 126 → 115 animals between rows and produced **negative
+  per-wall costs**. Interleave, or the population confound eats the signal.
+
+### 💀 Bone & material drops — every creature, all 11 dead-loops
+`BONE_KINDS` / `boneDrops[]` / `boneCounts{}` / `dropBone()` / `pickUpBone()`, module sited after the carry
+system. `[E]` chain is now **gate → berry → 💀 bone → carcass → collect**.
+- ⚠ **A SECOND, separate material system.** Not folded into 🦷 tooth / 🦴 tusk / 🦏 horn — those are *spent*
+  by live recipes and re-pointing them would silently re-tune a shipped economy. A lion gives a tooth **and**
+  a bone; an elephant a tusk **and** a bone. Nothing existing moved.
+- Physical objects, not counters, because "coloured" only means something if you can see it. Per-drop
+  geometry + material so `killObj` frees each independently.
+- ⚠ Bone sits **ahead of the carcass** in the `[E]` chain deliberately: behind it, `eatNearbyCarcass` keeps
+  succeeding while food remains and the bone can never be reached. The **phone EAT button got the same chain
+  in the same edit** — it has silently fallen behind twice.
+- ⚠ Icon is **💀, not 🦴** — the elephant tusk already owns 🦴 and two of them in one HUD is unreadable.
+- **Interpretive calls:** (a) *"Hyenas → dark brown"* is in the brief but **there is no hyena in this game
+  and never has been** — not invented, flagged; the cheetah has its own entry and is not a stand-in.
+  (b) Only the **acid** morph gives the green fang — Steven distinguished exactly two cases, "cobra (normal)"
+  and "green cobra", so crimson/violet/gold drop the tan one (one line in `BONE_KINDS` to change).
+  (c) Run-scoped, matching the three sibling counters. (d) **Not player-gated**, so the ecosystem litters the
+  map too — `BONE.MAX` 40 frees the oldest, and a 150 s soak accumulated **26**, so the cap is load-bearing.
+- Disposal: 18 geometries over 3 cycles, each `dispose` **exactly once**, 0 missed, 0 double. Materials fire
+  once *per mesh sharing them* (3× for a bone's 3 meshes) — the documented idempotent-dispose pattern, never
+  zero.
+
+### 🦔 Crested porcupine — the "spike-back"
+Full module on the cheetah/dog template, named per bestiary style (real species names throughout).
+`PORC` / `porcupineMeshes[]` / `makePorcupine` / `porcStep` / `updatePorcupines`.
+- ⚠ **The defining property is that it never starts anything.** `FORAGE` has **no target scan at all** — it
+  cannot see you and its quills are inert. The single trigger is an **HP-drop watchdog** (the lions' pattern),
+  so "passive until attacked" is structural rather than something each weapon must honour.
+- `BRISTLE` flares the quills over ~0.17 s on per-quill pivot Groups, then **back-charges**: moves toward the
+  target while facing **away** (`porcStep`'s `faceDir -1`), quills first. Contact = **18** on a per-victim
+  cooldown, and every victim is tagged so **its own** retaliation watchdog blames the porcupine, not the player.
+- HP **25** (the wild dog's), charge speed **9** — deliberately well under a sprint, because if walking away
+  didn't work "passive" would be a lie. Aggro does **not** time out; it ends on flee (<30% HP) or death.
+- **Interpretive calls:** aggro is permanent-until-flee-or-death (the literal reading, but it makes a provoked
+  one persistent); **no predator currently hunts porcupines**, so in practice only the player provokes one —
+  both the ethology and the smallest safe change, and the spike pass already covers creatures so wiring a
+  predator in later needs nothing here; prey do **not** fear it (it is not a predator).
+- ⚠ **Drive-by fix, same bug class as the croc/cheetah invulnerability:** the boomerang's strike list had
+  **no cheetah and no crocodile**, and `boomerangStrike` had **no trailing else**. Both added plus a generic
+  tail, so the next animal is unpolished rather than immune.
+- ⚠ **The offline render caught a real bug.** Quills leaned **forward over the animal's face**: a positive
+  `rotation.x` tips +Y toward **+Z**, and +Z is the nose (head z=1.26, tail z=-0.86). Now negated, commented
+  at both sites. `dossiers/render_porcupine.py` **imports the shared projector from `render_croc.py`** rather
+  than copying it — one rasteriser in that folder, and a second copy would drift.
+- 50 meshes / ~250 draw calls for six — under the cobra's 60, and `PORC.MAX` 6 matches `SNAKE.MAX` 6.
+  200 s soak: 0 errors, 0 NaN, all three states exercised, 1.36 ms/frame. Disposal 0/0/0.
+
+### 🐊 The croc grab now actually drags you to the bottom
+Most of this shipped 2026-07-31 and is **preserved**; the missing half was the drag itself.
+- `updateCrocGrab` pinned you **2.6 under the surface wherever it seized you**, and in `GRAB` the croc did not
+  move at all. After a **LUNGE** that means it grabs you on the bank and holds you there — measured before the
+  fix: **3 s held 26.8 m from the pond centre, `inWater` false, oxygen 100 the whole time.** A bank grab was a
+  pure damage lock and the whole drown mechanic silently did nothing in the case the lunge makes most likely.
+- Now it **reverses into its own pond** until the water under it is `HAUL_DEPTH` 3.6 deep, and pins you
+  `HAUL_CLEAR` 0.8 off the bed. It stops as soon as it is deep enough — nearest deep water, not a parade to
+  the exact centre.
+- ⚠ **Two invariants re-checked, because the haul moves the croc outside `crocClampToPond`:** it is still
+  **bound to its pond** (the haul only ever moves toward the centre, so it can only *reduce* the distance —
+  max **1.43** past the rim on a forced bank grab, **1.58** across a 150 s soak, against a 7.0 limit), and it
+  **cannot drag you through a wall** (the haul runs the same exact `segCrossesWall` swept guard its ordinary
+  movement uses, or it would undo the shelter contract fixed on 2026-07-31 — **0 crossings**).
+- Traced under the real `animate()` loop from a bank grab: t=0 croc **1.43 past the rim**, player on dry land →
+  t=1 **2.77 inside**, player in water → settles **12.9 inside** by t=3.9 → oxygen then burns 100 → 82 → 59 → 37.
+  The ~3.5 s before your head goes under is a genuine window to mash out that a deep-water grab does not give you.
+- Counterplay intact: a real 10/s mash frees you in **1.22 s** with the 3 s grace; 1 tap/sec never gets the
+  meter past **1 of 9** and you die in the jaws; killing the croc still releases you.
+- ⚠ **Test-methodology note:** "still grabbed at the end" is **not** a valid assertion for the lazy-tap case —
+  `updateCrocGrab` releases you when your health hits 0, so a player who *drowned* reads as *freed*. Assert on
+  the outcome (peak meter never reaching `BREAK_TAPS`, and `health <= 0`).
+
+### Verified
+13/13 integration tests, 0 console errors, live build re-checked on the deployed Pages URL (game starts, 30
+real `animate()` frames, all five features present with correct values).

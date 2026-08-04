@@ -119,9 +119,12 @@ through one either. Leave a gate **open** and it will come straight through. (Bo
 croc lying **motionless on the bottom is invisible to them** — that's the ambush, and it's why animals still
 come down to drink.
 
-**If it gets you:** it **grabs you, drags you under**, and starts the **death roll — 20 damage every 1.35 s,
-and your air burns 2.5× faster**, turning ~11 seconds of breath into about 4. You can still look around but
-you **cannot swim away**.
+**If it gets you:** it **grabs you and hauls you to the bottom of its pond.** Wherever it seized you — even
+out on the bank after a lunge — it **reverses into deep water**, taking you with it, and pins you just off the
+bed. Then the **death roll: 20 damage every 1.35 s, and your air burns 2.5× faster**, turning ~11 seconds of
+breath into about 4. You can still look around but you **cannot swim away**.
+⚠ A **bank grab gives you a few seconds** before your head actually goes under — that's your best window to
+mash out. Get taken in deep water and the drowning clock starts immediately.
 **To break free: MASH — [SPACE], or tap anywhere on a phone.** Nine taps, but the meter *bleeds away*, so
 casual tapping will never get there; a proper mash frees you in about a second. You then get **3 seconds of
 grace** to get out of the water. Killing the croc also makes it let go.
@@ -134,17 +137,59 @@ Cobra venom sticks to a croc **basking on the bank** but can't reach one **under
 - 🐆 **Cheetah** — a **yellow dot with a black centre**. Four other things on the radar are gold (idle lions,
   gold cobras, the martial eagle) but every one of those is a *solid* dot — the cheetah is the only ring with a
   dark middle. It goes **white-hot** the moment it starts its sprint.
+- 🦔 **Crested porcupine** — a small **dull olive** dot, deliberately drab: it isn't a threat until you make it
+  one. It turns **hot orange** the instant it bristles, which is the only warning you get that you provoked it.
 
 ### 🐆 A wounded cheetah runs and hides
 Drop a cheetah below **26 HP** and it breaks off — even mid-sprint — and **runs for tall grass** well away from
 whatever hurt it, where it lies up and heals back to 56 before hunting again. Let it go and you'll see it
 again; chase it down and you won't.
 
-### 🌿 Your own bramble fence will cut you
+### 🌿 Your own bramble fence will cut you — and a LINE of them stacks
 The fence is **symmetric**: **20 damage** to whatever walks into it and **half speed** while you're inside —
 **and that includes you**. Push back through your own line and it costs you 20 HP and slows you to a crawl, so
-where you put it matters. It re-pricks the same victim every 1.2 s, and stepping out stops it immediately.
+where you put it matters.
+
+**Every fence counts separately.** Walk a line of five and you take **100** — 20 from each, at any speed. (It
+used to be 20 total for the whole line: one shared cooldown meant only the first fence you touched ever
+scored. Fixed 2026-08-04, so a wall of thorns is finally worth what you paid for it.)
+
+The damage is **per crossing, not a tick**: standing in the thorns costs you 20 **once**, and the half-speed
+is what punishes you for staying. Step fully out and back in and the fence re-arms after half a second.
 Thorns are on the **ground** — you're clear of them on a roof, on a wall, or up a tree.
+
+### 🦔 Crested porcupine — the "spike-back" *(25 HP)*
+About the size of a wild dog, with a **bristling field of banded quills** down its back and a long crest over
+the shoulders. **It will never start a fight.** Left alone it just trundles about foraging — it does not hunt,
+does not track you, and its quills are harmless while they're lying flat. **You can walk straight past one.**
+
+**Hit it once and that changes permanently.** The quills snap upright — that's your warning, and the radar dot
+goes from dull olive to hot orange — and it comes at you **backwards**, rump and quills first, the way a real
+porcupine does. Anything in contact takes **18 damage** on a short cooldown, and once provoked it will go for
+**anything nearby**, not just you. It does not calm down: it stops only when it **flees below 30% HP**, or dies.
+
+**So melee is the wrong answer.** Swinging at it means standing on the quills — the blow lands and you take 18
+straight back, every swing. **Ranged is the safe kill**: at 25 HP a spear or a crossbow bolt one-shots it from
+well outside quill range.
+
+Drops a **porcupine quill**. Two arrive with each dawn wave, up to six on the map.
+
+### 💀 Everything that dies leaves bones — pick them up
+**Every creature in the game now drops a coloured, species-named keepsake** where it fell: a *lion bone*, a
+*wild dog bone*, a *crocodile bone*, a *giraffe bone*, a *python fang*, a *pink worm hide*, a *porcupine
+quill*. Colours follow the animal — croc bones are olive, giraffe cream, vulture dark grey, rhino and the
+plains herbivores a pale skin tone. **An acid-green cobra drops a bright GREEN fang**; every other cobra morph
+gives the ordinary tan one.
+
+Walk up and press **[E]** (or the phone's **EAT** button) to add one to your pouch. The count shows in the
+top-right, and the full per-species tally is in the **Shop**, under **BONES & MATERIALS**.
+
+⚠ **They don't do anything yet.** This is material for weapon crafting that hasn't been built — for now they
+are purely collectible. They're **run-scoped** like teeth, tusks and horns, so dying loses them.
+⚠ The existing craft drops are **unchanged and still separate**: a lion still gives you a 🦷 tooth *and* a
+bone, an elephant a 🦴 tusk *and* a bone. Nothing you spend on the necklace, boomerang or crossbow moved.
+⚠ The **ecosystem drops them too**, not just your kills — so bones accumulate wherever animals have been
+fighting. The map holds the **40 most recent**; older ones are cleared away.
 
 ### 🏠 A roof is real overhead cover
 Stand **under** a roof and a **sky vulture dive (30)** or a **martial eagle stoop (25)** is turned away
@@ -199,8 +244,10 @@ Unlocks are **free** (no currency yet) and — like the equipped loadout — **p
 - 🌀 **Smoke Screen** — near-invisible (visMul ×0.15) for 6 s, 30 s cooldown.
 - 🦅 **Eagle Eye** — minimap zooms to the whole map and reveals **every** animal for 8 s, 20 s cooldown.
 - 🗡️ **Spear** — hurl a flint spear (heavy ranged damage), no crafting needed, 3 s cooldown.
-- 🪵 **Palisade Wall** — drop a **permanent** wooden barrier for cover (up to **50** walls up at once), **no cooldown** — materials are the only gate. Blocks animals; the gorilla & elephant still smash through. 120 HP (axe fells in 3, hammer in 2).
-- 🧱 **Stone Wall** — drop a **permanent** stone barrier the gorilla & elephant **cannot smash** — only a Hammer brings it down. Shares the same **50**-wall cap, **no cooldown**. 200 HP (hammer fells in 3).
+- 🪵 **Palisade Wall** — drop a **permanent** wooden barrier for cover (up to **100** walls up at once), **no cooldown** — materials are the only gate. Blocks animals; the gorilla & elephant still smash through. 120 HP (axe fells in 3, hammer in 2).
+- 🧱 **Stone Wall** — drop a **permanent** stone barrier the gorilla & elephant **cannot smash** — only a Hammer brings it down. Shares the same **100**-wall cap, **no cooldown**. 200 HP (hammer fells in 3).
+  ⚠ The cap is a **world** cap: wood and stone draw on the same 100. Try to place the 101st and it simply
+  refuses and charges you nothing — nothing you already paid for is ever demolished to make room.
 - 🪝 **Grappling Hook** — reel up into a climbable tree or yank toward any surface in range (same as the tool grapple).
 - 🏷️ **Name Tag** *(accessory, 6 coins)* — while worn, **[RMB]** (phone: the 🏷️ NAME button) on any animal
   within 30 units names it. It offers **"Bob"** by default — just press Enter — or type your own, up to 24
