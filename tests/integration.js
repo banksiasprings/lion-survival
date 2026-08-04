@@ -320,6 +320,169 @@ test('bones: pickup tallies + disposes, and the world cap evicts the oldest', ()
 });
 
 // =====================================================================
+//  FEATURE 4 — the crested porcupine ("spike-back")
+// =====================================================================
+function clearPorcs(){ [...porcupineMeshes].forEach(P=>killObj(P.mesh)); porcupineMeshes.length = 0; }
+function spawnPorcAt(x,z){ const P = makePorcupine(x,z); P.pos.set(x, terrainY(x,z), z);
+                           P.mesh.position.copy(P.pos); return P; }
+
+// THE MULTI-INSTANCE ASSERTION for this feature: provoke ONE of five and the other four
+// must stay asleep. A build that hung aggro on a module-level flag (the way the wild dog
+// vendetta legitimately does) passes a one-porcupine test and fails this one.
+test('porcupine: provoking one does not wake the other four', ()=>{
+  clearPorcs(); pinPlayer();
+  const ps = [];
+  for(let i=0;i<5;i++) ps.push(spawnPorcAt(player.pos.x + 6 + i*4, player.pos.z));
+  // everything is passive to start with
+  for(let f=0; f<120; f++){ pinPlayer(); updatePorcupines(1/60); }
+  const detail = { statesBefore: ps.map(p=>p.state), playerDamageWhilePassive: 100 - player.health };
+
+  // hit exactly one, through the real weapon path
+  ps[2].health -= 5; ps[2].lastHitBy = player; ps[2].lastHitKind = 'player';
+  for(let f=0; f<30; f++){ pinPlayer(false); updatePorcupines(1/60); }
+  detail.statesAfter = ps.map(p=>p.state);
+  detail.bristleFlare = ps.map(p=>+p.bristle.toFixed(2));
+  detail.onlyOneBristled = ps.filter(p=>p.state==='BRISTLE').length === 1 &&
+                           ps[2].state === 'BRISTLE';
+  // …and the quills of the provoked one actually moved, while a calm one's did not
+  detail.provokedQuillsUp = ps[2].bristle > 0.9;
+  detail.calmQuillsDown   = ps[0].bristle < 0.05;
+
+  // per-porcupine spike cooldowns are independent too
+  detail.independentCooldowns = ps.every((p,i)=> i===2 ? true : p.spikeCds.size === 0);
+
+  const pass = detail.statesBefore.every(s=>s==='FORAGE') &&
+               detail.playerDamageWhilePassive === 0 &&
+               detail.onlyOneBristled && detail.provokedQuillsUp &&
+               detail.calmQuillsDown && detail.independentCooldowns;
+  clearPorcs();
+  return { pass, detail };
+});
+
+// Passive by default, and the spikes are inert until provoked.
+test('porcupine: passive until attacked, then spikes on contact', ()=>{
+  clearPorcs(); pinPlayer();
+  const detail = {};
+  // Stand ON one for 3 s while it is calm — it must never touch the player.
+  const P = spawnPorcAt(player.pos.x + 1.0, player.pos.z);
+  for(let f=0; f<180; f++){ pinPlayer(false); updatePorcupines(1/60); }
+  detail.damageWhileCalm = 100 - player.health;
+  detail.stateWhileCalm = P.state;
+
+  // ⚠ It has been FORAGING for those 3 s, so it has ambled off — put it back within
+  // arm's reach before swinging, or we are only measuring how long it takes to walk
+  // back. (First run of this test failed for exactly that reason.)
+  P.pos.set(player.pos.x + 1.0, terrainY(player.pos.x+1.0, player.pos.z), player.pos.z);
+  P.mesh.position.copy(P.pos);
+  player.health = 100;
+  dealKitMelee({ kind:'porcupine', o:P }, 10, MELEE_TOOL.hammer);
+  detail.porcHpAfterMelee = P.health;
+  detail.bristledOnMelee = P.state === 'BRISTLE';
+  for(let f=0; f<6; f++){ pinPlayer(false); updatePorcupines(1/60); }
+  detail.spikeDamageBack = 100 - player.health;
+
+  // …and it is on a per-victim cooldown, not a per-frame shredder.
+  const afterFirst = player.health;
+  for(let f=0; f<12; f++){ pinPlayer(false); updatePorcupines(1/60); }   // 0.2 s
+  detail.noDoubleDipInsideCooldown = (afterFirst - player.health) === 0;
+  // …but it does come round again once the cooldown expires
+  for(let f=0; f<70; f++){ pinPlayer(false); updatePorcupines(1/60); }   // past SPIKE_CD
+  detail.spikesAgainAfterCooldown = (afterFirst - player.health) === PORC.SPIKE_DMG;
+
+  const pass = detail.damageWhileCalm === 0 && detail.stateWhileCalm === 'FORAGE' &&
+               detail.porcHpAfterMelee === PORC.HEALTH - 10 && detail.bristledOnMelee &&
+               detail.spikeDamageBack === PORC.SPIKE_DMG &&
+               detail.noDoubleDipInsideCooldown && detail.spikesAgainAfterCooldown;
+  clearPorcs();
+  return { pass, detail };
+});
+
+// "When hit, runs backwards into the attacker."
+test('porcupine: back-charges rump-first, and flees when nearly dead', ()=>{
+  clearPorcs(); pinPlayer();
+  const detail = {};
+  const P = spawnPorcAt(player.pos.x + 14, player.pos.z);
+  P.health -= 5; P.lastHitBy = player; P.lastHitKind = 'player';
+  const d0 = Math.hypot(P.pos.x-player.pos.x, P.pos.z-player.pos.z);
+  let facingAwaySamples = 0, moved = 0, settledAway = 0, settled = 0;
+  for(let f=0; f<90; f++){
+    pinPlayer(false);
+    const bx=P.pos.x, bz=P.pos.z;
+    updatePorcupines(1/60);
+    const step = Math.hypot(P.pos.x-bx, P.pos.z-bz);
+    if(step > 1e-4){
+      moved++;
+      // travelling toward the player…
+      const tvx=(P.pos.x-bx)/step, tvz=(P.pos.z-bz)/step;
+      // …while the body points the other way (heading is the +Z-forward yaw convention)
+      const fx=Math.sin(P.heading), fz=Math.cos(P.heading);
+      const away = (tvx*fx + tvz*fz) < 0;
+      if(away) facingAwaySamples++;
+      // ⚠ Assert on the STEADY state, not the whole charge. The heading lerps at 4/s,
+      // so it spends the first ~0.25 s physically turning round and is legitimately not
+      // rump-first yet. Counting those frames caps a correct build at ~89%.
+      if(f >= 20){ settled++; if(away) settledAway++; }
+    }
+  }
+  const d1 = Math.hypot(P.pos.x-player.pos.x, P.pos.z-player.pos.z);
+  detail.closedFrom = r2(d0); detail.closedTo = r2(d1);
+  detail.movedFrames = moved;
+  detail.rumpFirstPct = moved ? Math.round(facingAwaySamples/moved*100) : 0;
+  detail.rumpFirstPctAfterTurn = settled ? Math.round(settledAway/settled*100) : 0;
+  detail.chargeSpeedUnderSprint = PORC.SPEED_CHARGE < 16;   // walking away must always work
+
+  // low HP → it breaks off
+  P.health = PORC.HEALTH * 0.2;
+  for(let f=0; f<40; f++){ pinPlayer(false); updatePorcupines(1/60); }
+  detail.stateWhenNearlyDead = P.state;
+  const dFlee = Math.hypot(P.pos.x-player.pos.x, P.pos.z-player.pos.z);
+  detail.fledAway = dFlee > d1;
+
+  const pass = d1 < d0 - 4 && detail.rumpFirstPctAfterTurn === 100 &&
+               detail.chargeSpeedUnderSprint &&
+               detail.stateWhenNearlyDead === 'FLEE' && detail.fledAway;
+  clearPorcs();
+  return { pass, detail };
+});
+
+// Every player weapon must reach it. A missing branch here is what made the crocodile
+// and the cheetah invulnerable for weeks — silently, with no error.
+test('porcupine: is not immune to any weapon', ()=>{
+  clearPorcs(); pinPlayer();
+  const hits = {};
+  const tryHit = (name, fn)=>{
+    clearPorcs();
+    const P = spawnPorcAt(player.pos.x + 3, player.pos.z);
+    const before = P.health;
+    fn(P);
+    hits[name] = r2(before - P.health);
+  };
+  tryHit('hammer', P=>dealKitMelee({kind:'porcupine',o:P}, 67, MELEE_TOOL.hammer));
+  tryHit('axe',    P=>dealKitMelee({kind:'porcupine',o:P}, 42, MELEE_TOOL.axe));
+  tryHit('boomerang', P=>boomerangStrike('porcupine', P));
+  // projectiles go through the real updateThrownRocks path
+  const proj = (opts, name)=> tryHit(name, P=>{
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.1,4,3), new THREE.MeshBasicMaterial());
+    m.position.set(P.pos.x, P.pos.y + 0.5, P.pos.z); scene.add(m);
+    thrownRocks.push(Object.assign({ mesh:m, vel:new THREE.Vector3(0,0,0.01), dist:0, mult:1 }, opts));
+    updateThrownRocks(1/60);
+  });
+  proj({ spear:true }, 'spear');
+  proj({ crossbow:true }, 'bolt');
+  proj({}, 'rock');
+  // the aim scan must also find it, or melee never targets it in the first place
+  clearPorcs();
+  const P = spawnPorcAt(player.pos.x + 2, player.pos.z);
+  camera.position.set(player.pos.x, player.pos.y+1.7, player.pos.z);
+  camera.lookAt(P.pos.x, P.pos.y+0.5, P.pos.z);
+  const aim = nearestAnimalInFront(26, 0.5);
+  const detail = { damageByWeapon:hits, aimFindsIt: !!(aim && aim.kind==='porcupine') };
+  const pass = Object.values(hits).every(v=>v > 0) && detail.aimFindsIt;
+  clearPorcs(); thrownRocks.length = 0;
+  return { pass, detail };
+});
+
+// =====================================================================
 //  runner
 // =====================================================================
 window.SAVANNAH_TESTS = T;

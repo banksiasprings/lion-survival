@@ -575,6 +575,7 @@ let kitWalls  = [];                 // { mesh } permanent Palisade Wall chunks (
 let kitGates  = [];                 // { mesh, swing, open } hinged Palisade Gates — see the gate module
 let berryBushes = [];               // 🫐 { mesh, pos, berries[], picked } — see the berry module
 let cheetahMeshes = [];             // 🐆 the fastest thing alive — see the cheetah module
+let porcupineMeshes = [];           // 🦔 crested porcupine ("spike-back") — passive until hit
 let kitBrambles = [];               // 🌿 bramble fences — NOT in wallMeshes (they slow, they don't block)
 let kitRoofs   = [];                // 🏠 { mesh, aabb } flat walkable roofs — see the roof module
 // 🎒 CARRY — the single-slot hand. Steven: "make a button so you can pick up rocks and
@@ -1978,6 +1979,297 @@ function resetCheetahDay(){
 }
 
 // =====================================================================
+//  🦔 CRESTED PORCUPINE  ("spike-back")  (2026-08-04)
+// =====================================================================
+// Steven: "size of a wild dog, visible spikes on back, passive by default — only
+// attacks when attacked. Attackers take spike damage on contact (~15-20). When hit it
+// runs BACKWARDS into the attacker. Once attacked it attacks anything nearby until it
+// flees or dies. Health comparable to a wild dog."
+//
+// Named per bestiary style (real species names throughout — sand python, martial eagle,
+// secretary bird), so the spike-back is a CRESTED PORCUPINE. Built on the cheetah's
+// module shape (config → mesh → spawn → step → FSM → dead-loop) so it rides every
+// existing seam: setHitbox / attachHealthBar, killObj disposal, the floating HP bar,
+// healAllAnimals, the dawn wave, the minimap, name tags, brambles, the bone drop, and
+// every player weapon path.
+//
+// ⚠ THE DEFINING PROPERTY IS THAT IT NEVER STARTS ANYTHING. In FORAGE it has no target
+// scan at all — it cannot see you, and its spikes are inert. Everything below only
+// happens once something has actually taken health off it.
+const PORC = {
+  MAX: 6, PER_DAWN: 2,
+  HEALTH: 25,            // "comparable to a wild dog" — literally the wild dog's 25
+  BODY_R: 0.5,
+  SPEED_FORAGE: 3.2,     // a slow, head-down amble — it is not going anywhere
+  SPEED_CHARGE: 9,       // the reverse rush. Slower than a sprint (16) ON PURPOSE:
+                         // walking away must always beat it, or "passive" is a lie.
+  SPEED_FLEE:   11,
+  SPIKE_DMG:    18,      // Steven's "~15-20", on contact
+  SPIKE_CD:    1.0,      // per victim, so a shared contact isn't a per-frame shredder
+  CONTACT_R:   2.4,      // close enough to be ON the quills
+  AGGRO_R:      18,      // "anything nearby" once it has been provoked
+  CHARGE_GIVEUP: 34,     // …but it will not follow one target across the map
+  FLEE_HP:    0.30,      // "until it flees or dies" — this is the flees half
+  BRISTLE_RATE: 6.0,     // quills snap up in ~0.17 s, settle slowly
+};
+function makePorcupine(x, z){
+  const g = new THREE.Group();
+  const hide  = new THREE.MeshLambertMaterial({color:0x3a2f26});   // coarse dark brown pelt
+  const belly = new THREE.MeshLambertMaterial({color:0x5a4c3e});
+  const dark  = new THREE.MeshLambertMaterial({color:0x120e0a});   // eyes / nose
+  const quilA = new THREE.MeshLambertMaterial({color:0xe8dfc6});   // banded quills — pale…
+  const quilB = new THREE.MeshLambertMaterial({color:0x14100c});   // …and near-black
+  const sph=(r,m,px,py,pz,sx,sy,sz)=>{ const o=new THREE.Mesh(new THREE.SphereGeometry(r,8,7),m);
+    o.position.set(px,py,pz); if(sx) o.scale.set(sx,sy,sz); o.castShadow=true; g.add(o); return o; };
+
+  // Low, broad, humped body — a porcupine is a wedge that widens toward the rump.
+  sph(0.42, hide, 0,0.46, 0.30, 1.00,0.92,1.15);   // shoulders
+  sph(0.50, hide, 0,0.50,-0.34, 1.18,1.00,1.20);   // haunches — the widest point
+  sph(0.40, belly,0,0.30,-0.02, 1.05,0.55,1.55);   // pale underside
+  // Blunt rodent head on a short neck.
+  sph(0.26, hide, 0,0.48, 0.86, 1.00,0.90,1.05);
+  sph(0.15, belly,0,0.42, 1.12, 0.90,0.80,1.10);   // muzzle
+  sph(0.055,dark, 0,0.44, 1.26);                    // nose
+  sph(0.045,dark,-0.11,0.57,1.02); sph(0.045,dark,0.11,0.57,1.02);
+  // Stubby legs — a porcupine trundles.
+  const legs=[];
+  [[-0.24,0.34],[0.24,0.34],[-0.28,-0.42],[0.28,-0.42]].forEach(([lx,lz])=>{
+    const l=new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.075,0.38,6), hide);
+    l.position.set(lx,0.19,lz); l.userData.baseY=0.19; legs.push(l); g.add(l);
+  });
+
+  // ⚠ THE SPIKES — the whole point of the animal, so they are not decoration.
+  // Every quill is parented to its own pivot Group at the point it leaves the skin, and
+  // the pivot carries `restX` (laid back along the body) and `upX` (flared to vertical).
+  // animatePorc lerps between them off one 0..1 `bristle` value — the same pattern the
+  // secretary bird's crest uses, so a flared porcupine reads instantly at distance.
+  const quills=[];
+  const addQuill=(px,py,pz, len, rad, lean, mat)=>{
+    const pivot = new THREE.Group(); pivot.position.set(px,py,pz);
+    const q = new THREE.Mesh(new THREE.ConeGeometry(rad, len, 5), mat);
+    q.position.y = len*0.5; q.castShadow = true;      // grow upward out of the pivot
+    pivot.add(q);
+    // ⚠ NEGATED. `lean` reads as "how far back it sweeps", but a POSITIVE rotation.x
+    // tips +Y toward +Z — and +Z is the NOSE here (head z=1.26, tail z=-0.86). The
+    // first cut used it unsigned and every quill lay forward over the animal's face;
+    // caught in dossiers/render_porcupine.py, which is what that sheet is for.
+    pivot.userData.restX = -lean;                      // swept back along the spine
+    pivot.userData.upX   = -lean*0.18;                 // …and nearly upright when flared
+    pivot.rotation.x = -lean;
+    g.add(pivot); quills.push(pivot);
+    return pivot;
+  };
+  // Long neck/shoulder CREST — the "crested" in crested porcupine.
+  for(let i=0;i<7;i++){
+    const t = i/6, sx = (i%2?1:-1)*0.055*(1-t);
+    addQuill(sx, 0.66-0.02*i, 0.74-t*0.42, 0.62-t*0.10, 0.030, 0.95, i%2?quilA:quilB);
+  }
+  // The back-and-rump field — five rows, longest over the hips, banded pale/dark.
+  for(let row=0; row<5; row++){
+    const z = 0.34 - row*0.30;
+    const n = 4 + (row>0 && row<4 ? 2 : 0);
+    for(let i=0;i<n;i++){
+      const sx = (i-(n-1)/2) * 0.155;
+      const len = 0.34 + row*0.10 + Math.random()*0.08;
+      addQuill(sx*0.95, 0.72 - Math.abs(sx)*0.30, z, len, 0.028,
+               0.78 - row*0.06, ((row+i)%2) ? quilA : quilB);
+    }
+  }
+  // Rattle quills on the stub tail — hollow, and what a real one shakes as a warning.
+  for(let i=0;i<5;i++)
+    addQuill((i-2)*0.075, 0.52, -0.86, 0.30, 0.036, 1.25, i%2?quilA:quilB);
+
+  g.children.forEach(c=>{ if(c.isMesh) c.userData.origMat = c.material; });
+  const ty = terrainY(x,z);
+  g.position.set(x,ty,z); g.scale.setScalar(0.88); g.name='porcupine';   // ~a wild dog
+  scene.add(g);
+  const P = { mesh:g, legs, quills, pos:new THREE.Vector3(x,ty,z),
+    health:PORC.HEALTH, maxHealth:PORC.HEALTH,
+    state:'FORAGE',                     // FORAGE | BRISTLE | FLEE
+    heading:rand(0,Math.PI*2), stunTimer:0, flashTimer:0,
+    target:null, targetKind:null,
+    bristle:0,                          // 0..1 quill flare, drives the pose
+    spikeCds:new Map(),                 // victim → seconds until it can be spiked again
+    forageSpot:null, forageT:0, legPhase:Math.random()*6.28, _lastSpeed:0,
+    lastHitBy:null, lastHitKind:null, _prevHealth:PORC.HEALTH };
+  g.rotation.y = P.heading;
+  setHitbox(P); attachHealthBar(P); porcupineMeshes.push(P);
+  return P;
+}
+function spawnPorcupine(){
+  const a=rand(0,Math.PI*2), r=rand(50,90);
+  return makePorcupine(clamp(player.pos.x+Math.cos(a)*r,-MAPR,MAPR),
+                       clamp(player.pos.z+Math.sin(a)*r,-MAPR,MAPR));
+}
+// Quill flare + a trundling gait. `face` is the direction the BODY points, which during
+// a back-charge is the opposite of the direction of travel — that is the animation half
+// of "runs backwards into the attacker".
+function animatePorc(P, dt){
+  const want = (P.state==='BRISTLE') ? 1 : 0;
+  P.bristle += (want - P.bristle) * Math.min(1, PORC.BRISTLE_RATE*dt);
+  for(const q of P.quills)
+    q.rotation.x = q.userData.restX + (q.userData.upX - q.userData.restX) * P.bristle;
+  P.legPhase += dt*(3 + (P._lastSpeed||0)*0.55);
+  P.legs.forEach((l,i)=>{ l.position.y = (l.userData.baseY||0.19)
+    + Math.sin(P.legPhase + i*Math.PI/2)*0.05; });
+}
+// Movement. Same exact swept slab guard every other ground mover uses, so it can never
+// tunnel a wall, plus the shared MTV resolver for resting contact.
+// ⚠ `faceDir` is separate from the direction of travel on purpose: pass -1 to reverse
+// into the target with the quills leading.
+function porcStep(P, tx, tz, speed, dt, faceDir){
+  speed *= waterSpeedMul(P.pos.x, P.pos.z)*brambleSpeedMul(P.pos.x, P.pos.z);
+  const bx=P.pos.x, bz=P.pos.z, dx=tx-bx, dz=tz-bz, d=Math.hypot(dx,dz);
+  if(d>0.001){ const step=Math.min(speed*dt,d); P.pos.x+=dx/d*step; P.pos.z+=dz/d*step; }
+  P.pos.x=clamp(P.pos.x,-HALF+1,HALF-1); P.pos.z=clamp(P.pos.z,-HALF+1,HALF-1);
+  if(segCrossesWall(bx,bz, P.pos.x,P.pos.z, PORC.BODY_R)){ P.pos.x=bx; P.pos.z=bz; }
+  collideWalls(P.pos, PORC.BODY_R); collideStoneWalls(P.pos, PORC.BODY_R);
+  P.pos.y = terrainY(P.pos.x,P.pos.z); P.mesh.position.copy(P.pos);
+  const fd = (faceDir === -1) ? -1 : 1;
+  const a = Math.atan2((tx-bx)*fd, (tz-bz)*fd); let dd = a-P.heading;
+  while(dd>Math.PI)dd-=Math.PI*2; while(dd<-Math.PI)dd+=Math.PI*2;
+  P.heading += dd*Math.min(1, 4.0*dt); P.mesh.rotation.y = P.heading;
+  P._lastSpeed = speed;
+}
+// Every list a bristling porcupine can spike. Deliberately does NOT include prey — a
+// zebra blundering into one is not the fight this animal is for.
+function porcFoeLists(){
+  return [[lionMeshes,'lion'], [dogMeshes,'dog'], [cheetahMeshes,'cheetah'],
+          [gorillaMeshes,'gorilla'], [rhinoMeshes,'rhino'], [crocMeshes,'crocodile']];
+}
+// ⚠ THE SPIKES ARE THE RETALIATION, and they only exist while it is bristling. Anything
+// in contact takes SPIKE_DMG on its own per-victim cooldown. Tagging lastHitBy/lastHitKind
+// means each victim's OWN retaliation watchdog fires, so a spiked lion blames the
+// porcupine and not the player — the same discipline the venom spit needed.
+function porcSpikeContact(P, dt){
+  for(const [v,t] of P.spikeCds){ const n=t-dt; if(n<=0) P.spikeCds.delete(v); else P.spikeCds.set(v,n); }
+  if(P.state !== 'BRISTLE') return;
+  const R = PORC.CONTACT_R + (P.hitR||0.6);
+  // the player, if they are standing on it and actually reachable
+  if(gameState==='playing' && player.health>0 && !playerOffGround() &&
+     !segHitsWall(P.pos.x,P.pos.z, player.pos.x,player.pos.z) &&
+     Math.hypot(player.pos.x-P.pos.x, player.pos.z-P.pos.z) < R && !P.spikeCds.has(player)){
+    P.spikeCds.set(player, PORC.SPIKE_CD);
+    player.health -= PORC.SPIKE_DMG;
+    const ax=player.pos.x-P.pos.x, az=player.pos.z-P.pos.z, al=Math.hypot(ax,az)||1;
+    player.knockback.x=(ax/al)*7; player.knockback.z=(az/al)*7;
+    player.lastHitBy = P; player.lastHitKind = 'porcupine';
+    shakeTime=Math.max(shakeTime,0.22); shakeAmt=0.006; playSound('spotted');
+    showKillfeed('🦔 The porcupine drives its quills into you! (-'+PORC.SPIKE_DMG+')');
+  }
+  for(const [list,kind] of porcFoeLists()){
+    if(!list) continue;
+    for(const o of list){
+      if(!(o.health>0) || o.dying || P.spikeCds.has(o)) continue;
+      if(Math.hypot(o.pos.x-P.pos.x, o.pos.z-P.pos.z) > R + (o.hitR||0.6)) continue;
+      P.spikeCds.set(o, PORC.SPIKE_CD);
+      o.health -= PORC.SPIKE_DMG; o.flashTimer = 0.2;
+      o.lastHitBy = P; o.lastHitKind = 'porcupine';   // its own watchdog blames the quills
+      if(kind==='rhino'){ o.target=P; o.targetKind='porcupine'; }
+      if(o.health<=0) showKillfeed('🦔 The porcupine\'s quills killed the '+kind+'!');
+    }
+  }
+}
+// Once provoked it goes for "anything nearby" — nearest wins, player included.
+function porcPickTarget(P){
+  let best=null, bd=PORC.AGGRO_R;
+  if(gameState==='playing' && player.health>0 && !playerOffGround()){
+    const d = Math.hypot(player.pos.x-P.pos.x, player.pos.z-P.pos.z);
+    if(d<bd){ bd=d; best={ent:player, kind:'player'}; }
+  }
+  for(const [list,kind] of porcFoeLists()){
+    if(!list) continue;
+    for(const o of list){
+      if(!(o.health>0) || o.dying) continue;
+      const d = Math.hypot(o.pos.x-P.pos.x, o.pos.z-P.pos.z);
+      if(d<bd){ bd=d; best={ent:o, kind}; }
+    }
+  }
+  return best;
+}
+function updatePorcupines(dt){
+  if(gameState!=='playing') return;
+  porcupineMeshes.forEach(P=>{
+    if(P.flashTimer>0){ P.flashTimer-=dt; const f=P.flashTimer>0;
+      P.mesh.children.forEach(c=>{ if(c.isMesh) c.material = f?FLASH_MAT:c.userData.origMat; }); }
+
+    // ⚠ THE ONE TRIGGER. An HP-drop watchdog, exactly like the lions' — every damage
+    // site in the game already tags lastHitBy/lastHitKind, so no attack path present or
+    // future has to remember to wake a porcupine up. This is also what makes "passive
+    // until attacked" structural rather than a rule each weapon has to honour.
+    if(P.health < P._prevHealth - 0.001 && P.state !== 'FLEE'){
+      if(P.state !== 'BRISTLE' && Math.hypot(player.pos.x-P.pos.x, player.pos.z-P.pos.z) < 50)
+        showKillfeed('🦔 The porcupine bristles and turns on you!');
+      P.state = 'BRISTLE';
+      if(P.lastHitBy){ P.target = P.lastHitBy;
+        P.targetKind = (P.lastHitKind==='player' || P.lastHitBy===player) ? 'player' : P.lastHitKind; }
+    }
+    P._prevHealth = P.health;
+
+    porcSpikeContact(P, dt);
+    animatePorc(P, dt);
+    if((P.stunTimer||0) > 0){ P.stunTimer-=dt; P._lastSpeed=0; return; }
+
+    // ---- FLEE: "until it flees or dies" — the off-ramp for a losing fight.
+    if(P.state!=='FLEE' && P.health>0 && P.health < PORC.HEALTH*PORC.FLEE_HP){
+      P.state='FLEE'; P.target=null; P.forageSpot=null;
+    }
+    if(P.state==='FLEE'){
+      const th = (P.lastHitBy && P.lastHitBy.pos) ? P.lastHitBy.pos : player.pos;
+      const dx=P.pos.x-th.x, dz=P.pos.z-th.z, l=Math.hypot(dx,dz)||1;
+      porcStep(P, clamp(P.pos.x+dx/l*30,-MAPR,MAPR), clamp(P.pos.z+dz/l*30,-MAPR,MAPR),
+               PORC.SPEED_FLEE, dt, 1);
+      return;
+    }
+
+    // ---- BRISTLE: provoked. Reverses into whatever is nearest until it flees or dies.
+    if(P.state==='BRISTLE'){
+      const t = P.target;
+      const alive = P.targetKind==='player'
+        ? (player.health>0 && !playerOffGround())
+        : (t && t.health>0 && !t.dying);
+      const tp = P.targetKind==='player' ? player.pos : (t && t.pos);
+      // target gone, or dragged us too far → re-pick from whatever is nearby. Aggro
+      // itself does NOT time out (Steven: "until it flees or dies").
+      if(!alive || !tp || Math.hypot(tp.x-P.pos.x, tp.z-P.pos.z) > PORC.CHARGE_GIVEUP){
+        const pick = porcPickTarget(P);
+        if(pick){ P.target = pick.ent; P.targetKind = pick.kind; }
+        else { P._lastSpeed = 0; return; }          // stays bristling, waits
+      }
+      const gp = P.targetKind==='player' ? player.pos : P.target.pos;
+      const d = Math.hypot(gp.x-P.pos.x, gp.z-P.pos.z);
+      // ⚠ THE BACK-CHARGE. It moves TOWARD the target while FACING AWAY (faceDir -1),
+      // so the quills go in first — which is exactly what a real porcupine does and
+      // why the mesh's crest and rump field are the parts that reach you.
+      if(d > PORC.CONTACT_R*0.8) porcStep(P, gp.x, gp.z, PORC.SPEED_CHARGE, dt, -1);
+      else { P._lastSpeed = 0; porcStep(P, gp.x, gp.z, 0, dt, -1); }   // hold, quills on
+      return;
+    }
+
+    // ---- FORAGE: the default, and it has NO target scan. It cannot see you.
+    P.forageT -= dt;
+    if(!P.forageSpot || P.forageT<=0){
+      P.forageSpot = { x: clamp(P.pos.x+rand(-16,16),-MAPR,MAPR),
+                       z: clamp(P.pos.z+rand(-16,16),-MAPR,MAPR) };
+      P.forageT = rand(5,12);
+    }
+    const s = P.forageSpot;
+    if(Math.hypot(s.x-P.pos.x, s.z-P.pos.z) > 1.4) porcStep(P, s.x, s.z, PORC.SPEED_FORAGE, dt, 1);
+    else P._lastSpeed = 0;
+  });
+  // dead-loop
+  for(let i=porcupineMeshes.length-1;i>=0;i--){
+    const P=porcupineMeshes[i];
+    if(P.health<=0){
+      dropBone('porcupine', P.pos);
+      spawnCarcass(P.pos.clone(), 30, 'porcupine');
+      killObj(P.mesh); porcupineMeshes.splice(i,1);
+      showKillfeed('🦔 The porcupine is down');
+    }
+  }
+}
+
+// =====================================================================
 //  🫐 BERRY BUSH  (2026-07-31)
 // =====================================================================
 // Steven: "add a berry bush which has prickles on it. It has five berries every day.
@@ -2537,7 +2829,8 @@ function speciesOf(o){
   if(o.label) return o.label;
   if(o.species && o.species!=='crocodile') return o.species;
   const L = [[lionMeshes,'lion'], [preyMeshes,'animal'], [dogMeshes,'wild dog'],
-             [cheetahMeshes,'cheetah'], [crocMeshes,'crocodile'], [gorillaMeshes,'gorilla'],
+             [cheetahMeshes,'cheetah'], [porcupineMeshes,'porcupine'],
+             [crocMeshes,'crocodile'], [gorillaMeshes,'gorilla'],
              [rhinoMeshes,'rhino'], [snakeMeshes,'serpent'], [secretaryMeshes,'secretary bird'],
              [eagleMeshes,'martial eagle'], [skyVultureMeshes,'vulture']];
   for(const [list,nm] of L) if(list && list.indexOf(o) >= 0) return nm;
@@ -7234,6 +7527,7 @@ function updateCreatureVenom(dt){
   };
   lionMeshes.forEach(tick); preyMeshes.forEach(tick); gorillaMeshes.forEach(tick);
   cheetahMeshes.forEach(tick);
+  porcupineMeshes.forEach(tick);
   // 🐊 A croc only carries venom if it was hit while hauled out — see the spit gate.
   crocMeshes.forEach(tick);
   rhinoMeshes.forEach(tick); dogMeshes.forEach(tick); skyVultureMeshes.forEach(tick);
@@ -8836,8 +9130,8 @@ function reapNamedAnimals(){
 }
 function updateNamePlates(){
   reapNamedAnimals();
-  const lists = [lionMeshes, preyMeshes, dogMeshes, cheetahMeshes, crocMeshes,
-                 gorillaMeshes, rhinoMeshes, snakeMeshes, secretaryMeshes,
+  const lists = [lionMeshes, preyMeshes, dogMeshes, cheetahMeshes, porcupineMeshes,
+                 crocMeshes, gorillaMeshes, rhinoMeshes, snakeMeshes, secretaryMeshes,
                  eagleMeshes, skyVultureMeshes];
   for(const L of lists){
     if(!L) continue;
@@ -8873,6 +9167,7 @@ function updateHealthBars(dt){
   lionMeshes.forEach(step); preyMeshes.forEach(step);
   gorillaMeshes.forEach(step); rhinoMeshes.forEach(step); dogMeshes.forEach(step);
   cheetahMeshes.forEach(step);
+  porcupineMeshes.forEach(step);
   crocMeshes.forEach(step);
   skyVultureMeshes.forEach(step); snakeMeshes.forEach(step);
   eagleMeshes.forEach(step); secretaryMeshes.forEach(step);
@@ -9008,6 +9303,19 @@ function updateThrownRocks(dt){
         if(isRock) rockStun(C, 1.0);
         hit = true;
         showKillfeed(C.health<=0 ? ic+' The cheetah is down!' : ic+' '+wname+' hits the cheetah!');
+      }
+    });
+    // 🦔 Porcupine — 25 HP, so a spear or bolt one-shots it. Ranged is the SAFE way to
+    // take one: no contact, no quills. (This block exists because a missing one is
+    // exactly what made the crocodile and the cheetah invulnerable to every weapon.)
+    if(!hit) porcupineMeshes.forEach(P=>{
+      if(P.health>0 && projHit(r, P)){
+        P.health -= r.crossbow ? 50 : r.spear ? P.maxHealth : 15*m;
+        P.flashTimer = 0.25;
+        P.lastHitBy = player; P.lastHitKind = 'player';   // → the HP-drop watchdog bristles it
+        if(isRock) rockStun(P, 0.9);
+        hit = true;
+        showKillfeed(P.health<=0 ? ic+' The porcupine is down!' : ic+' '+wname+' hits the porcupine!');
       }
     });
 
@@ -9366,6 +9674,12 @@ function updateBoomerang(r, dt, i){
   strike(gorillaMeshes,'gorilla', G=>G.state==='perched'||G.state==='sleeping');
   strike(rhinoMeshes,'rhino');
   strike(dogMeshes,'dog');
+  strike(porcupineMeshes,'porcupine');
+  // ⚠ DRIVE-BY FIX (2026-08-04): cheetah and crocodile were never in this strike list,
+  // so the boomerang passed straight through both — the same gap that made them immune
+  // to melee and projectiles until 2026-07-31. Found while adding the porcupine.
+  strike(cheetahMeshes,'cheetah');
+  strike(crocMeshes,'crocodile');
   strike(skyVultureMeshes,'skyvulture');   // ranged reaches the bird at any altitude (projHit tests its 3D pos)
   strike(eagleMeshes,'eagle', E=>E.dying);
   strike(secretaryMeshes,'secretary');
@@ -9411,6 +9725,19 @@ function boomerangStrike(kind, o){
     o.target = player; o.targetKind = 'player'; o.aggroTimer = SNAKE.AGGRO_TIME;
     o.lastHitBy = player; o.lastHitKind = 'player';
     showKillfeed(o.health<=0 ? '🪃 Boomerang bites deep — the '+o.v.label+'!' : '🪃 Boomerang cracks the '+o.v.label+'!');
+  } else if(kind==='porcupine'){
+    o.health -= D;
+    o.lastHitBy = player; o.lastHitKind = 'player';   // → bristles it, but from safe range
+    showKillfeed(o.health<=0 ? '🪃 Boomerang kill — porcupine!' : '🪃 Boomerang cracks the porcupine!');
+  } else {
+    // ⚠ GENERIC TAIL, for the same reason dealKitMelee grew one on 2026-07-31: without
+    // it this chain falls off the end and does NOTHING — no damage, no message, no clue.
+    // That is what made the crocodile and the cheetah invulnerable for weeks. A new
+    // animal reaching here is merely unpolished; it is never immune.
+    o.health -= D;
+    o.lastHitBy = player; o.lastHitKind = 'player';
+    const nm = o.label || kind || 'animal';
+    showKillfeed(o.health<=0 ? '🪃 Boomerang kill — '+nm+'!' : '🪃 Boomerang cracks the '+nm+'!');
   }
 }
 // ---- Rhino Crossbow: a flat, long-range bolt (50 dmg) with a scope-zoom ----
@@ -9644,7 +9971,7 @@ function updateBrambles(dt){
   };
   prick(player, true);
   [lionMeshes, preyMeshes, dogMeshes, rhinoMeshes, gorillaMeshes,
-   snakeMeshes, secretaryMeshes, cheetahMeshes].forEach(list=>{
+   snakeMeshes, secretaryMeshes, cheetahMeshes, porcupineMeshes].forEach(list=>{
     if(!list) return;
     list.forEach(e=>{ if(e.health>0 && !e.dying) prick(e, false); });
   });
@@ -10583,6 +10910,7 @@ const BONE_KINDS = {
   vulture:     { label:'vulture bone',        colour:0x54585c, form:'bone' },  // dark grey
   eagle:       { label:'martial eagle bone',  colour:0x5c5750, form:'bone' },
   secretary:   { label:'secretary bird bone', colour:0x60625e, form:'bone' },
+  porcupine:   { label:'porcupine quill',     colour:0xe8dfc6, form:'fang' },  // the banded pale quill
   // prey — "rhino/warthog/etc → skin-coloured", with the two Steven singled out
   giraffe:     { label:'giraffe bone',        colour:0xe8dcc0, form:'bone' },  // cream/beige
   elephant:    { label:'elephant bone',       colour:0xbfb4a4, form:'bone' },
@@ -10905,6 +11233,7 @@ function nearestAnimalInFront(range, minDot){
   scan(rhinoMeshes,'rhino');
   scan(dogMeshes,'dog');
   scan(cheetahMeshes,'cheetah');
+  scan(porcupineMeshes,'porcupine');
   scan(crocMeshes,'crocodile');
   scan(skyVultureMeshes,'skyvulture', V=>(V.pos.y - terrainY(V.pos.x,V.pos.z)) > SKYV.MELEE_CEIL);   // melee only reaches it when low (landed / diving)
   scan(eagleMeshes,'eagle', E=>E.dying || (E.pos.y - terrainY(E.pos.x,E.pos.z)) > EAGLE.MELEE_CEIL); // …same for the eagle: only while it mantles or stoops low
@@ -10991,6 +11320,17 @@ function dealKitMelee(hit, dmg, tool){
     o.health -= dmg;
     o.lastHitBy = player; o.lastHitKind = 'player';
     showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the cheetah!');
+  } else if(hit.kind==='porcupine'){
+    // ⚠ THE SIGNATURE INTERACTION. Meleeing a porcupine means standing on its quills,
+    // so the blow lands AND you take spikes back on the same swing — the retaliation
+    // is not on a delay you can walk out of. porcSpikeContact keeps its own per-victim
+    // cooldown, so trading blows costs you 18 a swing until you back off or it dies.
+    t='porcupine';
+    o.health -= dmg;
+    o.lastHitBy = player; o.lastHitKind = 'player';   // → bristles it via the HP watchdog
+    o.state = 'BRISTLE';
+    if(o.health > 0){ o.target = player; o.targetKind = 'player'; }
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the porcupine — quills everywhere!');
   } else {
     // ⚠ FALLBACK — this branch is why Steven couldn't hit a crocodile, and why the
     // CHEETAH had been invulnerable to every weapon since it shipped. Both were in
@@ -11580,6 +11920,7 @@ function dnState(t){
 function spawnDailyWave(){
   for(let i=0;i<3 && lionMeshes.length    < 14;       i++) spawnLion(Math.random()<0.75?'lioness':'male');
   for(let i=0;i<CHEETAH.PER_DAWN && cheetahMeshes.length < CHEETAH.MAX; i++) spawnCheetah();
+  for(let i=0;i<PORC.PER_DAWN && porcupineMeshes.length < PORC.MAX; i++) spawnPorcupine();   // 🦔
   restockCrocodiles();          // 🐊 any pond that got cleared out yesterday gets one back
   for(let i=0;i<2 && gorillaMeshes.length < GOR.MAX;  i++) spawnGorilla();
   for(let i=0;i<2 && rhinoMeshes.length   < RHINO.MAX;i++) spawnRhino();   // 2 rhinos/day (was 1)
@@ -11641,6 +11982,9 @@ function healAllAnimals(){
   // cobra turret above: the retreat has its OWN slow regen, and a blanket top-up every
   // two minutes would make that regen invisible and the retreat meaningless.
   cheetahMeshes.forEach(C=>{ if(ok(C) && C.state!=='FLEE') C.health=C.maxHealth; });
+  // 🦔 …and a porcupine that has run off wounded doesn't get a free top-up either —
+  // same reasoning as the cheetah above. A healed one also drops back out of FLEE.
+  porcupineMeshes.forEach(P=>{ if(ok(P) && P.state!=='FLEE') P.health=P.maxHealth; });
   // A croc holding the player does NOT get a free top-up mid-grab — otherwise killing
   // your way out of the jaws could be undone by a day/night turn landing mid-roll.
   // Nor does one sunk on the bed: driving a croc off should mean it is genuinely
@@ -12083,6 +12427,18 @@ function drawMinimap(){
     mmCtx.beginPath(); mmCtx.arc(px,py,1.9,0,Math.PI*2); mmCtx.fill();
   });
 
+  // 🦔 Porcupine — muted olive while it is minding its own business, hot orange the
+  // moment it bristles. Deliberately DULL at rest: a passive animal should not read as
+  // a threat on the radar, and the colour change IS the warning that you provoked it.
+  // Small dot (3.5) to match its size, and no ring/core structure so it can't be
+  // confused with the cheetah's concentric marker.
+  porcupineMeshes.forEach(K=>{
+    if(K.health<=0) return;
+    const [px,py]=toMM(K.pos.x-player.pos.x, K.pos.z-player.pos.z);
+    mmCtx.fillStyle = (K.state==='BRISTLE') ? '#ff8a2e' : '#7d7a4e';
+    mmCtx.beginPath(); mmCtx.arc(px,py,3.5,0,Math.PI*2); mmCtx.fill();
+  });
+
   // Player dot
   mmCtx.fillStyle='#00ff88';
   mmCtx.beginPath(); mmCtx.arc(C,C,5,0,Math.PI*2); mmCtx.fill();
@@ -12150,6 +12506,7 @@ function resetGame(){
   [...rhinoMeshes].forEach(R=>killObj(R.mesh));
   [...dogMeshes].forEach(D=>killObj(D.mesh));
   [...cheetahMeshes].forEach(C=>killObj(C.mesh));
+  [...porcupineMeshes].forEach(P=>killObj(P.mesh));
   // 🫐 berry bushes are SCENERY (like trees, which resetGame also leaves alone) — they
   // survive a run. Only the player-built brambles come down.
   [...kitBrambles].forEach(b=>killObj(b.mesh));
@@ -12182,6 +12539,7 @@ function resetGame(){
   rhinoMeshes.length = 0;
   dogMeshes.length = 0;
   cheetahMeshes.length = 0;
+  porcupineMeshes.length = 0;
   kitBrambles.length = 0;
   brambleCount = 0;
   regrowBushes();     // replant anything chopped last run, then refill every crop
@@ -12273,6 +12631,7 @@ function animate(){
   updateRhinos(dt);           // neutral rhinos — roam, charge when provoked
   updateWildDogs(dt);
   updateCheetahs(dt);         // 🐆 lounges all day, one or two lethal midday sprints
+  updatePorcupines(dt);       // 🦔 forages, ignores you — until you hit it, then quills first
   updateCrocodiles(dt);       // 🐊 pond apex — bask / lurk / cruise, grab + death roll
   updateBrambles(dt);         // 🌿 prick anything standing in a bramble fence         // fast pack predator — hunt/roam, relentless vendetta if provoked
   updateSkyVultures(dt);      // high-cruising raptor — dives on smaller prey, never dies airborne
