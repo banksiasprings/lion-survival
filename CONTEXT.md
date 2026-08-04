@@ -3181,3 +3181,8 @@ preserved exactly** — a chase that connects still hauls you to the bed and dro
   ambush inside ~9 m of open bank is unavoidable; past that, walking (10) pulls away from the 6.65 land speed.
   Nothing else was retuned: HEALTH 600, BITE_DMG 26, GRAB_R 3.4, the haul, the death roll, the 9-tap escape,
   the growth tiers and the low-HP retreat are all untouched.
+- **Offline sheet:** `dossiers/loot_render.png` (`render_loot.py`, importing the shared projector). ⚠ **It
+  caught a real bug, which is what that folder is for:** on the curved forms (tusk, horn, claw, tooth) the
+  per-segment STEP was longer than the segment LENGTH, so every joint opened as each link rotated and the drop
+  read as three loose lumps instead of one curved horn. Step is now ≈0.8 × length throughout so consecutive
+  links always overlap.
