@@ -69,10 +69,12 @@
   to hit its feet).
 
 **Loot drops (craft materials):**
-- **🦷 Lion tooth** — drops from **every lion you kill** (kills by a gorilla/rhino don't count). Feeds the
-  Lion Tooth Necklace. Shown in the HUD once you hold one; carried within a run (reset on death).
-- **🦴 Elephant tusk** — drops from **every elephant that dies**. Feeds the Tusk Boomerang.
-- **🦏 Rhino horn** — drops from **every rhino that dies**. Feeds the Rhino Crossbow.
+⚠ **All three are now physical drops you PICK UP with [E]** (2026-08-05) — they used to be credited the
+instant the animal died, wherever on the map that was. Who earns them has not changed; only the walk has.
+- **🦷 Lion tooth** — left by **every lion you kill** (kills by a gorilla/rhino leave a *lion claw* instead).
+  Feeds the Lion Tooth Necklace. Shown in the HUD once you hold one; carried within a run (reset on death).
+- **🦴 Elephant tusk** — left by **every elephant that dies**. Feeds the Tusk Boomerang.
+- **🦏 Rhino horn** — left by **every rhino that dies**. Feeds the Rhino Crossbow (1 horn **per shot**).
 - Crafting spends the material in the **🛒 SHOP** ("Craft" button, greyed if you can't afford it). The
   crafted item then **persists across runs** like the rest of your kit; the raw teeth/tusks do not.
 
@@ -186,18 +188,41 @@ rather than kill it.
 
 Drops a **porcupine quill**. Two arrive with each dawn wave, up to six on the map.
 
-### 💀 Everything that dies leaves bones — pick them up
-**Every creature in the game now drops a coloured, species-named keepsake** where it fell: a *lion bone*, a
-*wild dog bone*, a *crocodile bone*, a *giraffe bone*, a *python fang*, a *pink worm hide*, a *porcupine
-quill*. Colours follow the animal — croc bones are olive, giraffe cream, vulture dark grey, rhino and the
-plains herbivores a pale skin tone. **An acid-green cobra drops a bright GREEN fang**; every other cobra morph
-gives the ordinary tan one.
+### 🎒 Everything that dies leaves LOOT — pick it up
+*(Revised 2026-08-05. Every creature used to leave a coloured "bone"; now each one leaves the part that
+actually belongs to it. The rule is **predators drop a distinctive part, prey drop bones**.)*
 
-Walk up and press **[E]** (or the phone's **EAT** button) to add one to your pouch. The count shows in the
-top-right, and the full per-species tally is in the **Shop**, under **BONES & MATERIALS**.
+| Creature | Drops | |
+|---|---|---|
+| 🦁 **Lion** | **lion tooth** — *only if **you** killed it* | 🦷 **craft material** |
+| 🦁 Lion killed by something else | lion claw | |
+| 🐘 **Elephant** | **elephant tusk** | 🦴 **craft material** |
+| 🦏 **Rhino** | **rhino horn** | 🦏 **craft material** |
+| 🦍 Gorilla | gorilla fang | |
+| 🦔 Porcupine | porcupine quill (banded, dark root, pale tip) | |
+| 🐕 Wild dog | wild dog fang | |
+| 🐆 Cheetah | cheetah claw | |
+| 🐊 Crocodile | crocodile tooth | |
+| 🪶 Sky vulture | vulture feather | |
+| 🦅 Martial eagle | eagle talon | |
+| 🪶 Secretary bird | secretary bird plume | |
+| 🐍 Sand python | **python skin + serpent spine** (two drops) | |
+| 🐍 Cobra | **cobra skin + serpent spine** — the acid morph's skin is bright **GREEN** | |
+| 🪱 Pink worm | worm slime (it has no skeleton to give) | |
+| 🦓 Zebra · wildebeest · gazelle · impala · warthog · kudu · giraffe | a **bone** | |
 
-⚠ **They don't do anything yet.** This is material for weapon crafting that hasn't been built — for now they
-are purely collectible. They're **run-scoped** like teeth, tusks and horns, so dying loses them.
+Walk up and press **[E]** (or the phone's **EAT** button) to pick one up. Ordinary loot goes in your pouch —
+the total shows top-right as **🎒 Loot**, and the full per-species tally is in the **Shop** under **LOOT**.
+
+⚠ **The three craft materials now come from the ground.** A lion tooth, an elephant tusk and a rhino horn used
+to be credited the instant the animal died, anywhere on the map. They are now the **physical drop**: you have
+to walk to the body and take it. Nothing else changed — the Lion Tooth Necklace still costs 1 tooth, the Tusk
+Boomerang 1 tusk, and the Rhino Crossbow **1 horn per shot**. The tooth is still only earned on a lion **you**
+killed. They cannot be lost to the 40-drop world cap either: when the map is full, the oldest **ordinary** loot
+is cleared first and a craft drop is only ever removed if all 40 are craft drops.
+
+⚠ **Ordinary loot doesn't do anything yet.** It's material for crafting that hasn't been built. Everything
+here is **run-scoped** — dying loses it.
 ⚠ The existing craft drops are **unchanged and still separate**: a lion still gives you a 🦷 tooth *and* a
 bone, an elephant a 🦴 tusk *and* a bone. Nothing you spend on the necklace, boomerang or crossbow moved.
 ⚠ The **ecosystem drops them too**, not just your kills — so bones accumulate wherever animals have been
@@ -421,8 +446,9 @@ a python *and* a cobra but no worm; you might open with an empty map. **Average 
 (0 snakes 35% of the time, 1 → 44%, 2 → 19%, all 3 → 2.5%). Cap 6. **There are no other serpent spawns.**
 
 All three are a head + a chain of **14 starting body segments** that follow it in an **S-slithering**
-undulation, all are **blocked by walls** (wood & stone), all **collapse segment-by-segment** on death, and
-none drops a body part.
+undulation, all are **blocked by walls** (wood & stone), and all **collapse segment-by-segment** on death.
+Each leaves **two** drops where it fell — its **skin** and a **serpent spine** — except the pink worm, which
+has no skeleton and leaves **slime**.
 
 **All GROW +1 segment for every kill they credit** — anything that took damage from that serpent and dies
 within 2 s of its last bite/crush. A well-fed serpent visibly lengthens over a run. **Soft cap 50 segments.**

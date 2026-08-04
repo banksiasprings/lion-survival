@@ -229,6 +229,10 @@ test('bones: killing several species leaves several distinct named drops', ()=>{
   const P = preyMeshes.find(p=>p.species && BONE_KINDS[p.species]);
   const C = cheetahMeshes[0];
   if(!L || !D || !P || !C) return { pass:false, detail:'need a lion, dog, prey and cheetah alive' };
+  // ⚠ 2026-08-05: the lion's drop is now SPLIT — a tooth if you killed it, a claw if
+  // anything else did (see the lion_claw note in BONE_KINDS). This test kills it by hand,
+  // so it must say who did it or the expected key is wrong.
+  L.lastHitKind = 'player';
   victims.push(['lion', L], ['wilddog', D], [P.species, P], ['cheetah', C]);
   // ⚠ Snapshot each victim's death SITE before killing it. See the attribution note below —
   // this is the only thing that tells our four corpses apart from a bystander's.
@@ -286,8 +290,10 @@ test('bones: killing several species leaves several distinct named drops', ()=>{
   return { pass, detail };
 });
 
-// Steven called this one out by name.
-test('bones: the green cobra drops a GREEN fang, other morphs a tan one', ()=>{
+// Steven called the green cobra out by name, and the 2026-08-05 loot revision added the
+// "skin AND spine" rule — so this now asserts BOTH: the right skin per morph, and that a
+// serpent leaves two drops while a worm leaves only slime.
+test('loot: serpents drop skin AND spine (green cobra green), worms drop slime only', ()=>{
   const fake = id => ({ v: SNAKE_VARIANTS.cobra, colour: COBRA_COLORS.find(c=>c.id===id) });
   const detail = {
     acid:     snakeBoneKey(fake('acid')),
@@ -296,56 +302,252 @@ test('bones: the green cobra drops a GREEN fang, other morphs a tan one', ()=>{
     python:   snakeBoneKey({ v: SNAKE_VARIANTS.python }),
     worm:     snakeBoneKey({ v: SNAKE_VARIANTS.worm }),
   };
-  detail.greenLabel  = BONE_KINDS[detail.acid].label;
-  detail.greenColour = '0x'+new THREE.Color(BONE_KINDS.cobra_green.colour).getHexString();
-  detail.tanLabel    = BONE_KINDS[detail.midnight].label;
+  detail.acidLoot   = snakeLootKeys(fake('acid'));
+  detail.pythonLoot = snakeLootKeys({ v: SNAKE_VARIANTS.python });
+  detail.wormLoot   = snakeLootKeys({ v: SNAKE_VARIANTS.worm });
+  detail.greenLabel = BONE_KINDS[detail.acid].label;
+  detail.tanLabel   = BONE_KINDS[detail.midnight].label;
+  detail.spineLabel = BONE_KINDS.serpent_spine.label;
+  detail.wormLabel  = BONE_KINDS.worm.label;
   // green must actually BE green: dominant channel is G, and clearly so
   const g = new THREE.Color(BONE_KINDS.cobra_green.colour);
   detail.isActuallyGreen = g.g > g.r && g.g > g.b;
+  // and the two serpent drops must be genuinely different objects, not the same key twice
   const pass = detail.acid === 'cobra_green' && detail.midnight === 'cobra' &&
                detail.python === 'python' && detail.worm === 'worm' &&
-               detail.greenLabel === 'green cobra fang' && detail.isActuallyGreen;
+               detail.greenLabel === 'green cobra skin' && detail.isActuallyGreen &&
+               detail.acidLoot.length === 2 && detail.pythonLoot.length === 2 &&
+               detail.acidLoot[1] === 'serpent_spine' && detail.pythonLoot[1] === 'serpent_spine' &&
+               detail.wormLoot.length === 1 && detail.wormLoot[0] === 'worm';
+  return { pass, detail };
+});
+
+// ⚠ THE MULTI-INSTANCE SHAPE for the 2026-08-05 revision: every creature in the game must
+// have its own entry with its own LABEL — the failure mode being guarded against is a table
+// where several species quietly share one generic name, which is exactly what "every
+// creature drops a coloured bone" was. Also asserts the predator/prey split holds.
+test('loot: every species has distinct, creature-appropriate loot', ()=>{
+  const detail = {};
+  const keys = Object.keys(BONE_KINDS);
+  const labels = keys.map(k=>BONE_KINDS[k].label);
+  detail.species = keys.length;
+  detail.duplicateLabels = labels.filter((l,i)=>labels.indexOf(l)!==i);
+  // predators must NOT be reduced to a bone; prey must be
+  const PRED = ['lion','gorilla','crocodile','cheetah','wilddog','porcupine','rhino',
+                'elephant','vulture','eagle','secretary','python','cobra','cobra_green','worm'];
+  const PREY = ['zebra','wildebeest','gazelle','impala','warthog','kudu','giraffe'];
+  detail.predatorsStillGenericBone = PRED.filter(k=>!BONE_KINDS[k] || BONE_KINDS[k].form === 'bone');
+  detail.preyNotBone               = PREY.filter(k=>!BONE_KINDS[k] || BONE_KINDS[k].form !== 'bone');
+  detail.missing                   = PRED.concat(PREY).filter(k=>!BONE_KINDS[k]);
+  // the three craft materials must route to the counters recipes actually spend
+  detail.craftRouting = { lion:boneCraftSlot('lion'), elephant:boneCraftSlot('elephant'),
+                          rhino:boneCraftSlot('rhino'), zebra:boneCraftSlot('zebra') };
+  // every form must actually BUILD — a typo'd form silently falls through to a bone
+  detail.forms = [...new Set(keys.map(k=>BONE_KINDS[k].form))].sort();
+  detail.formMeshCounts = {};
+  let allBuild = true;
+  for(const f of detail.forms){
+    const k = keys.find(x=>BONE_KINDS[x].form===f);
+    const g = makeBoneMesh(BONE_KINDS[k]);
+    let n=0; g.traverse(o=>{ if(o.isMesh) n++; });
+    detail.formMeshCounts[f] = n;
+    if(n < 1) allBuild = false;
+    disposeObject3D(g);
+  }
+  const pass = detail.duplicateLabels.length === 0 && detail.missing.length === 0 &&
+               detail.predatorsStillGenericBone.length === 0 && detail.preyNotBone.length === 0 &&
+               detail.craftRouting.lion === 'tooth' && detail.craftRouting.elephant === 'tusk' &&
+               detail.craftRouting.rhino === 'horn' && detail.craftRouting.zebra === null &&
+               allBuild;
   return { pass, detail };
 });
 
 // Pickup tallies per species, disposes the mesh, and the world cap frees the OLDEST
 // rather than growing without bound (the ecosystem kills far more than the player does).
-test('bones: pickup tallies + disposes, and the world cap evicts the oldest', ()=>{
+test('loot: pickup tallies, craft materials route to their counters, cap evicts non-craft first', ()=>{
   clearBoneDrops(); boneCounts = {};
   pinPlayer();
   const detail = {};
   const px = player.pos.x, pz = player.pos.z;
+  const t0 = toothCount, k0 = hornCount;
 
-  dropBone('lion', new THREE.Vector3(px+1, 0, pz));
-  dropBone('lion', new THREE.Vector3(px+1.4, 0, pz));
-  dropBone('crocodile', new THREE.Vector3(px+1.8, 0, pz));
+  // ⚠ MULTI-INSTANCE, and mixed on purpose: two plain loot drops and two craft drops in
+  // one reach, because the failure this guards is a pickup path that routes the FIRST kind
+  // it sees and then treats everything after it the same way.
+  dropBone('crocodile', new THREE.Vector3(px+1, 0, pz));
+  dropBone('crocodile', new THREE.Vector3(px+1.4, 0, pz));
+  dropBone('lion',      new THREE.Vector3(px+1.8, 0, pz));   // craft → toothCount
+  dropBone('rhino',     new THREE.Vector3(px+2.1, 0, pz));   // craft → hornCount
   const sceneBefore = scene.children.length;
-  detail.tookA = pickUpBone(); detail.tookB = pickUpBone(); detail.tookC = pickUpBone();
-  detail.tookD = pickUpBone();                       // nothing left in reach
+  detail.took = [pickUpBone(), pickUpBone(), pickUpBone(), pickUpBone()];
+  detail.tookExtra = pickUpBone();                   // nothing left in reach
   detail.counts = JSON.parse(JSON.stringify(boneCounts));
   detail.dropsLeft = boneDrops.length;
-  detail.sceneFreed = sceneBefore - scene.children.length;   // 3 groups removed
+  detail.sceneFreed = sceneBefore - scene.children.length;   // 4 groups removed
   detail.tally = boneTally();
   detail.total = totalBones();
+  // the craft materials must have landed in the counters the RECIPES read, and must NOT
+  // also be sitting in the loot pouch double-counted
+  detail.toothGained = toothCount - t0;
+  detail.hornGained  = hornCount  - k0;
+  detail.craftNotInPouch = !boneCounts.lion && !boneCounts.rhino;
+  detail.irregularPlural = detail.tally.indexOf('crocodile teeth') >= 0;
 
-  // Cap: push well past BONE.MAX and require the array to hold exactly the cap, with
-  // every evicted mesh detached from the scene (not merely dropped from the array).
+  // Cap: push well past BONE.MAX and require the array to hold exactly the cap.
+  // ⚠ The rule changed with the craft merge: the oldest NON-CRAFT drop goes first, so a
+  // rhino horn you are walking toward cannot be silently deleted by six zebras dying
+  // elsewhere. The craft drop below is the OLDEST entry and must still be there at the end.
   clearBoneDrops();
   const sceneAtCapStart = scene.children.length;
-  const first = dropBone('lion', new THREE.Vector3(200, 0, 200));
+  const horn  = dropBone('rhino', new THREE.Vector3(200, 0, 200));
+  const first = dropBone('zebra', new THREE.Vector3(201, 0, 200));
   for(let i=0;i<BONE.MAX + 15;i++) dropBone('zebra', new THREE.Vector3(200+i*0.5, 0, 210));
   detail.cap = BONE.MAX;
   detail.heldAtCap = boneDrops.length;
-  detail.oldestEvicted = boneDrops.indexOf(first) < 0;
-  detail.oldestDetached = !first.mesh.parent;
+  detail.oldestNonCraftEvicted = boneDrops.indexOf(first) < 0;
+  detail.oldestNonCraftDetached = !first.mesh.parent;
+  detail.craftDropSurvivedCap = boneDrops.indexOf(horn) >= 0 && !!horn.mesh.parent;
   detail.sceneDelta = scene.children.length - sceneAtCapStart;   // == BONE.MAX
 
-  const pass = detail.tookA && detail.tookB && detail.tookC && !detail.tookD &&
-               detail.counts.lion === 2 && detail.counts.crocodile === 1 &&
-               detail.total === 3 && detail.dropsLeft === 0 && detail.sceneFreed === 3 &&
-               detail.heldAtCap === BONE.MAX && detail.oldestEvicted &&
-               detail.oldestDetached && detail.sceneDelta === BONE.MAX;
+  const pass = detail.took.every(Boolean) && !detail.tookExtra &&
+               detail.counts.crocodile === 2 && detail.total === 2 &&
+               detail.toothGained === 1 && detail.hornGained === 1 &&
+               detail.craftNotInPouch && detail.irregularPlural &&
+               detail.dropsLeft === 0 && detail.sceneFreed === 4 &&
+               detail.heldAtCap === BONE.MAX && detail.oldestNonCraftEvicted &&
+               detail.oldestNonCraftDetached && detail.craftDropSurvivedCap &&
+               detail.sceneDelta === BONE.MAX;
   clearBoneDrops(); boneCounts = {};
+  toothCount = t0; hornCount = k0;
+  return { pass, detail };
+});
+
+// =====================================================================
+//  FEATURE 4 — 🪽 DOUBLE JUMP
+// =====================================================================
+// ⚠ THE MULTI-INSTANCE SHAPE here is REPETITION, not several objects: the bug this exists
+// to catch is a jump counter that works once and then leaks (never refills, or refills in
+// mid-air, or a held key spending both jumps in consecutive frames). So it runs several
+// complete jump cycles and asserts the totals, rather than one jump.
+// ⚠ Both jump tests MUST start on dry land. updatePlayer's swim branch replaces gravity and
+// makes Space a hold-to-rise, so a player standing in a pond returns WATER.SWIM_UP (4.2) for
+// every press — which the first cut of this test faithfully recorded as "two identical
+// impulses, second not weaker". The spawn point is not guaranteed to be dry.
+function standOnDryLand(){
+  const before = { x:player.pos.x, z:player.pos.z };
+  for(let r=0; r<=240; r+=6){
+    for(let a=0; a<12; a++){
+      const th = a*Math.PI/6, x = Math.cos(th)*r, z = Math.sin(th)*r;
+      const y = terrainY(x,z);
+      if(inWaterAt(x, z, y+0.1)) continue;
+      if(waterHoles.some(w=>Math.hypot(x-w.x, z-w.z) < w.r + 6)) continue;
+      player.pos.set(x, y+0.1, z);
+      pinPlayer();
+      return before;
+    }
+  }
+  pinPlayer();
+  return before;
+}
+
+test('jump: two jumps per airborne trip, weaker second, refilled only by landing', ()=>{
+  const home = standOnDryLand();
+  const detail = {}, DT = 1/60;
+  detail.startedDry = !player.swimming;
+  const clearAir = ()=>{ keys['Space']=false; player._jumpDown=false; };
+  // settle on the ground
+  clearAir();
+  for(let i=0;i<10;i++) updatePlayer(DT);
+  detail.groundedJumps = player.jumpsLeft;
+
+  // one press = one jump: hold Space DOWN for many frames and it must fire exactly once
+  const heights = [];
+  keys['Space']=true;
+  updatePlayer(DT); const v1 = player.vel.y;
+  for(let i=0;i<20;i++) updatePlayer(DT);            // still held — must NOT spend jump 2
+  detail.heldDidNotDoubleSpend = player.jumpsLeft === 1;
+  // release + press again in the air → the double jump
+  keys['Space']=false; updatePlayer(DT);
+  keys['Space']=true;  updatePlayer(DT); const v2 = player.vel.y;
+  detail.firstImpulse  = Math.round(v1*100)/100;
+  detail.secondImpulse = Math.round(v2*100)/100;
+  detail.secondIsWeaker = v2 > 0 && v2 < v1;
+  detail.ratio = Math.round((v2/PLAYER.jumpForce)*100)/100;
+  detail.jumpsAfterBoth = player.jumpsLeft;
+  // a third press in the air must do NOTHING
+  keys['Space']=false; updatePlayer(DT);
+  const vBefore = player.vel.y;
+  keys['Space']=true;  updatePlayer(DT);
+  detail.thirdPressIgnored = player.vel.y < vBefore;   // gravity only, no new impulse
+  clearAir();
+
+  // …and land, then do it all again TWICE more. A counter that refills wrongly shows up here.
+  let cycles = 0;
+  for(let c=0;c<3;c++){
+    for(let i=0;i<240 && !player.onGround;i++) updatePlayer(DT);
+    if(!player.onGround) break;
+    detail['refilledOnLanding'+c] = player.jumpsLeft === PLAYER.jumpsMax;
+    keys['Space']=true;  updatePlayer(DT); const a = player.vel.y;
+    keys['Space']=false; updatePlayer(DT);
+    keys['Space']=true;  updatePlayer(DT); const b = player.vel.y;
+    keys['Space']=false; player._jumpDown=false;
+    heights.push([Math.round(a*100)/100, Math.round(b*100)/100]);
+    if(a > 0 && b > 0 && b < a) cycles++;
+  }
+  detail.cycles = cycles;
+  detail.impulsesPerCycle = heights;
+  // every cycle must look the same — this is the "works once then leaks" assertion
+  detail.allCyclesIdentical = heights.length > 0 &&
+    heights.every(h => Math.abs(h[0]-heights[0][0]) < 0.01 && Math.abs(h[1]-heights[0][1]) < 0.01);
+  clearAir();
+  for(let i=0;i<300 && !player.onGround;i++) updatePlayer(DT);
+  player.pos.x = home.x; player.pos.z = home.z; pinPlayer();
+
+  const pass = detail.startedDry &&
+               detail.groundedJumps === PLAYER.jumpsMax && detail.heldDidNotDoubleSpend &&
+               detail.secondIsWeaker && detail.ratio >= 0.75 && detail.ratio <= 0.85 &&
+               detail.jumpsAfterBoth === 0 && detail.thirdPressIgnored &&
+               detail.cycles === 3 && detail.allCyclesIdentical;
+  return { pass, detail };
+});
+
+// The coyote rule, which the jump COUNTER introduces: walking off a ledge must still give
+// you the strong ground jump for a moment, and must NOT keep giving it forever.
+test('jump: coyote grace gives the strong jump just after walking off, then expires', ()=>{
+  const home = standOnDryLand();
+  const DT = 1/60, detail = {};
+  keys['Space']=false; player._jumpDown=false;
+  for(let i=0;i<10;i++) updatePlayer(DT);
+
+  // simulate walking off an edge: airborne with a full counter, no jump spent
+  player.onGround = false; player.airT = 0; player.jumpsLeft = PLAYER.jumpsMax;
+  player.pos.y = terrainY(player.pos.x, player.pos.z) + 4;
+  player.vel.set(0,0,0);
+  updatePlayer(DT);                                   // inside the grace window
+  detail.airTInGrace = Math.round(player.airT*1000)/1000;
+  detail.jumpsInGrace = player.jumpsLeft;
+  keys['Space']=true; updatePlayer(DT);
+  detail.graceImpulse = Math.round(player.vel.y*100)/100;
+  detail.graceGaveFullJump = Math.abs(player.vel.y - PLAYER.jumpForce) < 0.01;
+
+  // now let the grace lapse without jumping
+  keys['Space']=false; player._jumpDown=false;
+  player.onGround = false; player.airT = 0; player.jumpsLeft = PLAYER.jumpsMax;
+  player.pos.y = terrainY(player.pos.x, player.pos.z) + 8;
+  player.vel.set(0,0,0);
+  for(let i=0;i<20;i++) updatePlayer(DT);             // 0.33 s > jumpCoyote
+  detail.jumpsAfterGrace = player.jumpsLeft;
+  const vB = player.vel.y;
+  keys['Space']=true; updatePlayer(DT);
+  detail.lateImpulse = Math.round(player.vel.y*100)/100;
+  detail.lateGaveWeakJump = player.vel.y > vB &&
+                            Math.abs(player.vel.y - PLAYER.jumpForce*PLAYER.doubleJumpMul) < 0.01;
+  keys['Space']=false; player._jumpDown=false;
+  for(let i=0;i<400 && !player.onGround;i++) updatePlayer(DT);
+  player.pos.x = home.x; player.pos.z = home.z; pinPlayer();
+
+  const pass = detail.jumpsInGrace === PLAYER.jumpsMax && detail.graceGaveFullJump &&
+               detail.jumpsAfterGrace === PLAYER.jumpsMax - 1 && detail.lateGaveWeakJump;
   return { pass, detail };
 });
 
@@ -630,6 +832,129 @@ test('crocodile: you can still mash free, and you drown if you do not', ()=>{
   player.health = 100; player.oxygen = 100;
   const pass = detail.mashWorked && detail.graceGranted && !detail.lazyTapsFreed &&
                detail.drownedWhileHeld && detail.diedInTheJaws && detail.deadCrocReleases;
+  return { pass, detail };
+});
+
+// =====================================================================
+//  FEATURE 6 — 🐊 the crocodile ambush (2026-08-05 overhaul)
+// =====================================================================
+// ⚠ MULTI-INSTANCE, and it has to be: every croc on the map is driven through the SAME
+// sortie in the same frames and the totals are asserted. The failure being guarded against
+// is per-croc state that is secretly shared or secretly global — a burst clock, a dry
+// timer or a leash that one croc's sortie resets for all of them.
+test('crocodile: every croc bursts out, hunts to the land ring, and walks home', ()=>{
+  const detail = {}, DT = 1/60;
+  const crocs = crocMeshes.filter(C=>C.health>0);
+  if(crocs.length < 2) return { pass:false, detail:'need at least 2 live crocodiles' };
+  if(crocGrab.croc) crocEndGrab(false);
+  crocGrab.graceT = 0;
+  // ⚠ Grabs are suppressed by pinning grabCd, NOT by crocGrab.graceT. Using the grace
+  // window looks like the obvious "make me un-grabbable" switch and it silently breaks the
+  // whole test: crocPickTarget skips the player entirely while graceT > 0, so the crocs
+  // never acquired, never lunged, and every row read 3.4 u/s of ordinary cruising. With
+  // grabCd pinned the croc still hunts and still bites — it just cannot seize.
+  const noGrabs = ()=>crocs.forEach(X=>{ X.grabCd = 9; });
+  const saved = crocs.map(C=>({ C, x:C.pos.x, z:C.pos.z, st:C.state, hp:C.health }));
+  // ⚠ updateCrocodiles drives EVERY croc on the map, and the ponds are tens of metres
+  // apart — so a croc left mid-sortie from the previous subject keeps reacting to a player
+  // who has since walked to a different pond, and its numbers land in the wrong row. Reset
+  // the whole population between subjects; only the one we parked at the player engages.
+  // ⚠ THE PLAYER MUST BE THE ONLY CANDIDATE, or this measures the wrong animal. crocPickTarget
+  // scans prey, lions, dogs, cheetahs, snakes and secretary birds and takes the NEAREST — and a
+  // pond is exactly where the ecosystem congregates. First cut of this test read `target:'other'`
+  // on every croc: they were chasing zebras that happened to be closer than the parked player, and
+  // the numbers described a hunt the test never set up. Everything else is stashed off-map for the
+  // duration; only updateCrocodiles runs, so nothing else moves or notices.
+  const others = [].concat(preyMeshes, lionMeshes, dogMeshes, cheetahMeshes, snakeMeshes, secretaryMeshes)
+                   .map(e=>({ e, x:e.pos.x, z:e.pos.z }));
+  others.forEach(o=>{ o.e.pos.x += 5000; });
+  const restoreOthers = ()=>others.forEach(o=>{ o.e.pos.x = o.x; o.e.pos.z = o.z; });
+
+  const parkAll = ()=>crocs.forEach(C=>{
+    const w=C.pool;
+    C.pos.set(w.x, terrainY(w.x,w.z), w.z); C.mesh.position.copy(C.pos);
+    C.state='CRUISE'; C.stateT=0; C.target=null; C.targetKind=null; C.dest=null;
+    C.health=C.maxHealth; C.lungeCd=0; C.lungeT=0; C.dryT=0; C.grabCd=9;
+  });
+  const rows = [];
+  for(const C of crocs.slice(0, 3)){
+    parkAll();
+    const w = C.pool;
+    // park the subject at the rim and the player out on dry land, inside the land ring
+    C.pos.set(w.x + w.r*0.8, terrainY(w.x+w.r*0.8, w.z), w.z); C.mesh.position.copy(C.pos);
+    // ⚠ far enough out that GRAB_R (3.4) does not cap how far it gets: it stops reachR
+    // short of the target, so the player has to stand well past the old 7 m ring for the
+    // croc to be able to prove it can cross it.
+    const px = w.x + w.r + CROC.LAND_RANGE*0.85;
+    player.pos.set(px, terrainY(px, w.z)+0.1, w.z);
+    player.vel.set(0,0,0); player.onGround = true; player.inTree = false;
+    player.health = 100; gameState = 'playing';
+
+    let maxSpd = 0, lunged = false, sawReturn = false, maxJump = 0, chasedPlayer = false;
+    let maxOut = Math.hypot(C.pos.x-w.x, C.pos.z-w.z) - w.r;
+    const sx = C.pos.x, sz = C.pos.z;
+    const step = (n, keepPlayer)=>{
+      for(let i=0;i<Math.round(n/DT);i++){
+        const bx=C.pos.x, bz=C.pos.z;
+        noGrabs();
+        updateCrocodiles(DT);
+        if(keepPlayer){ player.pos.y = terrainY(player.pos.x, player.pos.z)+0.1; player.health = 100; }
+        if(C.state==='LUNGE')  lunged = true;
+        if(C.target === player) chasedPlayer = true;
+        if(C.state==='RETURN') sawReturn = true;     // ⚠ tracked across ALL phases: a croc
+        maxOut = Math.max(maxOut, Math.hypot(C.pos.x-w.x, C.pos.z-w.z) - w.r);
+        // ⚠ THE TELEPORT ASSERTION. No single frame may move the croc further than its own
+        // fastest speed allows — that is exactly what the old hard leash clamp did when the
+        // sortie ended, and "not just teleport" was Steven's explicit requirement.
+        maxJump = Math.max(maxJump, Math.hypot(C.pos.x-bx, C.pos.z-bz));
+      }
+    };
+    // --- the burst. Sample the croc's own ground speed over the first BURST_TIME.
+    step(CROC.BURST_TIME, true);
+    const burstDist = Math.hypot(C.pos.x-sx, C.pos.z-sz);
+    maxSpd = burstDist / CROC.BURST_TIME;
+    // --- the chase, out across dry land
+    step(3.0, true);
+    // --- the escape. Put the player well outside the ring; the croc must turn for home.
+    const fx = w.x + w.r + CROC.LAND_RANGE + 15;
+    player.pos.set(fx, terrainY(fx, w.z)+0.1, w.z);
+    step(14.0, true);
+    const endOut = Math.hypot(C.pos.x-w.x, C.pos.z-w.z) - w.r;
+    rows.push({
+      lunged, sawReturn, chasedPlayer,
+      burstSpeed: Math.round(maxSpd*10)/10,
+      burstDist:  Math.round(burstDist*10)/10,
+      maxPastRim: Math.round(maxOut*10)/10,
+      endPastRim: Math.round(endOut*10)/10,
+      maxFrameStep: Math.round(maxJump*1000)/1000,
+      homeState: C.state,
+    });
+  }
+  detail.perCroc = rows;
+  detail.landRange = CROC.LAND_RANGE;
+  // the burst must beat a player sprint, or it is not an ambush
+  detail.burstBeatsSprint = rows.every(r => r.burstSpeed > PLAYER.sprintSpeed);
+  detail.allLunged        = rows.every(r => r.lunged);
+  // …and it must genuinely reach well past the OLD 7 m ring, which is the whole complaint
+  detail.oldRing = 7.0;
+  detail.reachedPastOldRing = rows.every(r => r.maxPastRim > 10.0);
+  detail.withinLandRange  = rows.every(r => r.maxPastRim <= CROC.LAND_RANGE + 0.6);
+  detail.allReturned      = rows.every(r => r.sawReturn);
+  detail.allGotHome       = rows.every(r => r.endPastRim <= CROC.BANK_MARGIN + 0.6);
+  // no frame may exceed the burst speed's per-frame travel (with a little slack)
+  const maxStep = CROC.SPD_CHARGE * CROC.BURST_MUL * DT * 1.35;
+  detail.noTeleport = rows.every(r => r.maxFrameStep <= maxStep);
+  detail.perFrameCap = Math.round(maxStep*1000)/1000;
+
+  detail.everyCrocChasedThePlayer = rows.every(r => r.chasedPlayer);
+  restoreOthers();
+  saved.forEach(s=>{ s.C.pos.set(s.x, terrainY(s.x,s.z), s.z); s.C.mesh.position.copy(s.C.pos);
+    s.C.state=s.st; s.C.health=s.hp; s.C.target=null; s.C.dryT=0; s.C.lungeT=0; s.C.lungeCd=0; });
+  crocGrab.graceT = 0;
+  pinPlayer();
+  const pass = detail.allLunged && detail.burstBeatsSprint && detail.reachedPastOldRing &&
+               detail.withinLandRange && detail.allReturned && detail.allGotHome &&
+               detail.noTeleport && detail.everyCrocChasedThePlayer;
   return { pass, detail };
 });
 

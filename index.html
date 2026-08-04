@@ -401,6 +401,19 @@ const TOUCH_LOOK_GAIN = 2.2;   // scales swipe px → the same accumulator mouse
 const PLAYER = {
   speed: 10, sprintSpeed: 16,
   jumpForce: 12, gravity: -22,
+  // 🪽 DOUBLE JUMP (2026-08-05). `jumpsMax` is a COUNTER, not a flag — the old code was
+  // `keys['Space'] && player.onGround`, which is level-triggered, so a held Space would
+  // have spent the air jump on the very next frame after take-off. The counter is refilled
+  // the moment the feet find a floor (terrain OR a wall top — both go through the same
+  // ground snap, so double-jumping onto a wall refills as expected).
+  jumpsMax: 2,
+  doubleJumpMul: 0.80,   // the air jump is 80% of the ground jump — inside Steven's 75-85%.
+                         // Apex goes 3.27 → 5.36 m, i.e. it buys height, not a second full
+                         // launch, so it still reads as an ability rather than a free ×2.
+  jumpCoyote: 0.12,      // ⚠ grace after walking OFF a ledge in which the GROUND jump is
+                         // still available. Without it, stepping off a wall silently ate
+                         // jump #1 and left you only the weak air jump — a real
+                         // ground-detection misfire that the counter itself introduces.
   eyeHeight: 1.7, crouchHeight: 1.0,
   maxHealth: 100, maxStamina: 100,
   staminaDrain: 30, staminaRegen: 18,
@@ -2717,6 +2730,9 @@ function initPlayer(){
     health: PLAYER.maxHealth,
     stamina: PLAYER.maxStamina,
     onGround: false,
+    jumpsLeft: PLAYER.jumpsMax,        // 🪽 refilled by the ground snap; 2 = ground + air jump
+    airT: 0,                           // seconds since the feet last had a floor (coyote time)
+    _jumpDown: false,                  // Space latch — the double jump is EDGE-triggered
     crouching: false,
     sprinting: false,
     inDanger: false,
@@ -3122,6 +3138,13 @@ function updatePlayer(dt){
   if(player.stunTimer > 0) player.stunTimer -= dt;
   const stunned = player.stunTimer > 0;
 
+  // 🪽 JUMP EDGE. Computed ONCE here, before any of the swimming / grapple / tree
+  // branches, and latched once at the very bottom of this function — so no branch can
+  // desync it and no branch can swallow a press. Space is level-triggered everywhere else
+  // it is used (swim-up holds, the mobile button pulses it for 130 ms), but a double jump
+  // MUST be edge-triggered or a held Space spends both jumps in consecutive frames.
+  const jumpEdge = !!keys['Space'] && !player._jumpDown;
+
   // Mouse look (frozen while stunned; accumulators still cleared so it doesn't snap on release)
   const sens = 0.002;
   if(!stunned){
@@ -3218,8 +3241,18 @@ function updatePlayer(dt){
       player.vel.z = move.z * bm;
       // Gravity
       if(!player.onGround) player.vel.y += PLAYER.gravity * dt;
-      // Jump
-      if(keys['Space'] && player.onGround && !stunned){ player.vel.y = PLAYER.jumpForce; player.onGround = false; }
+      // 🪽 JUMP / DOUBLE JUMP — edge-triggered off `jumpEdge`, never off the held key.
+      // The first press spends the ground jump (or the coyote-time remnant of it), the
+      // second spends the air jump at `doubleJumpMul`. Both come out of `jumpsLeft`, which
+      // the ground snap below refills, so "cooldown = touching the ground" is structural
+      // rather than a timer anyone has to remember to clear.
+      if(jumpEdge && !stunned && player.jumpsLeft > 0){
+        const ground = (player.jumpsLeft === PLAYER.jumpsMax);
+        player.vel.y = PLAYER.jumpForce * (ground ? 1 : PLAYER.doubleJumpMul);
+        player.jumpsLeft--;
+        player.onGround = false;
+        if(!ground) playSound('rustle');    // a small audible tell that the air jump fired
+      }
     }
   }
 
@@ -3250,8 +3283,18 @@ function updatePlayer(dt){
     player.pos.y = floorY + 0.1;
     player.vel.y = 0;
     player.onGround = true;
+    player.airT = 0;
+    player.jumpsLeft = PLAYER.jumpsMax;   // 🪽 touching ANY floor is the whole cooldown
   } else {
     player.onGround = false;
+    player.airT += dt;
+    // ⚠ Coyote expiry. While `airT` is inside the grace window a player who walked off an
+    // edge still holds a full `jumpsLeft` and therefore still gets the FULL-strength jump.
+    // Once it lapses, burn the ground jump so only the air jump is left — otherwise you
+    // could stroll off a wall and get the strong jump at any point during the fall.
+    if(player.airT > PLAYER.jumpCoyote && player.jumpsLeft === PLAYER.jumpsMax){
+      player.jumpsLeft = PLAYER.jumpsMax - 1;
+    }
   }
 
   // Boundary bounce. Reversing player.vel here never worked: vel.x/vel.z is
@@ -3302,6 +3345,11 @@ function updatePlayer(dt){
 
   // Horizontal speed — feeds the stealth audio signature (Phase 3).
   player._moveSpeed = Math.hypot(player.vel.x, player.vel.z);
+
+  // 🪽 Latch the jump key ONCE per frame, unconditionally and last. Every early-return
+  // above this line is `gameState!=='playing'`, which also blocks the jump itself, so a
+  // stale latch can never survive into a live frame.
+  player._jumpDown = !!keys['Space'];
 }
 
 // =====================================================================
@@ -3964,11 +4012,13 @@ function updateLions(dt){
     if(lionMeshes[i].health<=0){
       const L=lionMeshes[i];
       spawnCorpse(L.pos.clone());
-      // A lion YOU killed drops a tooth (craft material for the Lion Tooth Necklace).
-      // Gated on lastHitKind so gorilla/rhino kills across the map can't be farmed.
-      if(L.lastHitKind==='player'){ toothCount++; showKillfeed('🦁 Lion down! 🦷 +1 lion tooth'); }
-      else showKillfeed('🦁 Lion down!');
-      dropBone('lion', L.pos);
+      // A lion YOU killed LEAVES a tooth (craft material for the Lion Tooth Necklace).
+      // ⚠ 2026-08-05: the counter is no longer bumped here — the physical drop is the
+      // material now, and pickUpBone credits toothCount when you collect it. The GATE is
+      // unchanged: still `lastHitKind==='player'`, so gorilla/rhino kills across the map
+      // still can't be farmed. Killing it is what earns it; picking it up is what banks it.
+      if(L.lastHitKind==='player'){ showKillfeed('🦁 Lion down! 🦷 it left a tooth'); dropBone('lion', L.pos); }
+      else { showKillfeed('🦁 Lion down!'); dropBone('lion_claw', L.pos); }
       killObj(L.mesh);
       lionMeshes.splice(i,1);
       kills++;
@@ -4489,9 +4539,10 @@ function updatePrey(dt){
   // dead prey → edible carcass
   for(let i=preyMeshes.length-1;i>=0;i--){ if(preyMeshes[i].health<=0){
     const P=preyMeshes[i];
-    // A downed elephant drops a tusk (craft material for the Tusk Boomerang). No player-gate:
+    // A downed elephant leaves a tusk (craft material for the Tusk Boomerang). No player-gate:
     // a 300-HP bull that fights back is virtually never killed by anything but the player.
-    if(P.species==='elephant'){ tuskCount++; showKillfeed('🐘 Elephant down! 🦴 +1 elephant tusk'); }
+    // ⚠ 2026-08-05: tuskCount is credited by pickUpBone now, not here — see the lion site.
+    if(P.species==='elephant') showKillfeed('🐘 Elephant down! 🦴 it left a tusk');
     spawnCarcass(P.pos.clone(), P.food, P.species); dropBone(P.species, P.pos);
     killObj(P.mesh); preyMeshes.splice(i,1);
   }}
@@ -5713,8 +5764,8 @@ function updateRhinos(dt){
       spawnCarcass(rhinoMeshes[i].pos.clone(), 90, null);
       dropBone('rhino', rhinoMeshes[i].pos);
       killObj(rhinoMeshes[i].mesh); rhinoMeshes.splice(i,1);
-      hornCount++;
-      showKillfeed('🦏 The rhino is down! 🦏 +1 rhino horn');
+      // ⚠ 2026-08-05: hornCount is credited by pickUpBone now, not here — see the lion site.
+      showKillfeed('🦏 The rhino is down! 🦏 it left its horn');
     }
   }
 }
@@ -9017,7 +9068,17 @@ function updateSnakes(dt){
       S.dying=true; S.deathT=0; S.target=null; S.stunTimer=0; S.wrap=null;
       showKillfeed(S.v.icon+' The '+S.v.label+' writhes and collapses!');
     }
-    if(S._collapsed){ dropBone(snakeBoneKey(S), S.pos); killObj(S.mesh); snakeMeshes.splice(i,1); kills++; }
+    // ⚠ A serpent leaves TWO drops (skin + spine; the worm leaves only slime), so they are
+    // spread on a short arc — stacked at one point the second is invisible under the first
+    // and [E] would look like it did nothing on the second press.
+    if(S._collapsed){
+      const keys = snakeLootKeys(S), a = rand(0, Math.PI*2);
+      keys.forEach((k, n) => {
+        const th = a + n*(Math.PI*2/keys.length), r = keys.length > 1 ? 0.7 : 0;
+        dropBone(k, new THREE.Vector3(S.pos.x + Math.cos(th)*r, S.pos.y, S.pos.z + Math.sin(th)*r));
+      });
+      killObj(S.mesh); snakeMeshes.splice(i,1); kills++;
+    }
   }
 }
 // Push the new head position onto the trail (only when it actually moved) + trim to body length.
@@ -10351,15 +10412,25 @@ const CROC = {
   SPD_BANK:   1.5,    // the waddle up onto the bank; crocs are slow on land by design
   DETECT:      26,    // notices anything this close…
   BANK_MARGIN: 3.0,   // …and normally will not go further than this past its own rim
-  // 🐊 THE LUNGE. Steven: "if they're close enough, they keep chasing something out of
-  // water." A croc that can only ever touch things floating in the pool can never take
-  // an animal DRINKING at the edge — which is the single most crocodile thing there is.
-  // So it may burst out to LUNGE_RANGE past the rim, and no further. Deliberately short:
-  // this is a snatch, not a hunt. Anything that outruns it wins, permanently.
-  LUNGE_RANGE: 7.0,   // max distance past the rim while lunging
-  LUNGE_SPEED: 8.0,   // fast out of the water…
-  LUNGE_TIME:  3.2,   // …but it can only sustain it for this long
-  LUNGE_CD:    9.0,   // then it must go back and recover
+  // 🐊 THE AMBUSH (rebuilt 2026-08-05). Steven: "currently crocs barely come out of water"
+  // — he wanted an explosive exit, a real 20 m hunting ring, a chase that presses while you
+  // stay near the water, and a DELIBERATE walk home when you get clear. The old version was
+  // a 7 m snatch on a 3.2 s timer, which from the bank read as a croc poking its nose out.
+  //
+  // The shape now: burst out at 2× charge speed for half a second (that is the part you
+  // cannot outrun), then settle to a laboured 0.7× on dry land (that is the part you can),
+  // hunt anything inside LAND_RANGE of the water, and turn for home the moment the target
+  // clears that ring OR the croc has been dry for DRY_GIVEUP.
+  LAND_RANGE:  20.0,  // ⚠ how far past the rim it will hunt — was LUNGE_RANGE 7.0. This is
+                      // the one number that decides how much of the shoreline is lethal.
+  BURST_MUL:   2.0,   // ×SPD_CHARGE for the first BURST_TIME out — 19 u/s, above a sprint (16)
+  BURST_TIME:  0.5,   // …and only for this long. The burst is the ambush; the rest is a chase.
+  LAND_MUL:    0.7,   // ×SPD_CHARGE once it is on dry land and out of burst — 6.65 u/s. A croc
+                      // is not built for land, and a walking player (10) pulls away from this.
+  DRY_GIVEUP:  8.0,   // seconds continuously out of water before it gives up regardless
+  RETURN_SPEED: 4.5,  // the scurry home. ⚠ Deliberately its own constant and NOT a teleport:
+                      // covering the full 20 m takes ~4.5 s of visible, vulnerable walking.
+  LUNGE_CD:    9.0,   // recovery before it can burst out again
   BODY_R:      0.6,   // collision radius — the body is 1.06 wide, so this is half-width + margin
   // --- 🍖 GROWTH ON KILL. Steven: "make it grow bigger every five kills." TIERED, not
   // per-kill: a croc that swells a little on every gazelle would be a kaiju by day three,
@@ -10508,7 +10579,7 @@ function makeCrocodile(x, z, pool){
     health:CROC.HEALTH, maxHealth:CROC.HEALTH,
     state:'LURK', stateT:rand(0,8), heading:rand(0,Math.PI*2),
     biteCd:0, grabCd:0, flashTimer:0, stunTimer:0,
-    lungeCd:0, lungeT:0, gait:0,
+    lungeCd:0, lungeT:0, dryT:0, gait:0,
     kills:0, growth:0, sizeMul:1,      // 🍖 growth-on-kill bookkeeping
     target:null, targetKind:null, dest:null, swimY:0, bob:rand(0,6.28),
     label:'crocodile', species:'crocodile',
@@ -10534,11 +10605,14 @@ function crocSubmerged(C){
 // ⚠ THE LEASH. A croc may never be further from its pond centre than the rim plus a
 // small bank margin. Every destination and every chase clamps through this, which is
 // why a croc physically cannot follow you across the map.
+// ⚠ the ONLY things that ever widen the leash are an active hunt and the walk home from
+// one, and both are bounded by DRY_GIVEUP. There is no path to a croc roaming the map.
+function crocLeash(C){
+  return C.pool.r + ((C.state==='LUNGE' || C.state==='RETURN') ? CROC.LAND_RANGE : CROC.BANK_MARGIN);
+}
 function crocClampToPond(C, x, z){
   const w = C.pool, dx = x-w.x, dz = z-w.z, d = Math.hypot(dx,dz);
-  // ⚠ the ONLY thing that ever widens the leash is an active lunge, and that is itself
-  // time-boxed by LUNGE_TIME. There is no path to a croc roaming the map.
-  const lim = w.r + (C.state==='LUNGE' ? CROC.LUNGE_RANGE : CROC.BANK_MARGIN);
+  const lim = crocLeash(C);
   if(d <= lim) return {x, z};
   return { x: w.x + dx/d*lim, z: w.z + dz/d*lim };
 }
@@ -10546,10 +10620,35 @@ function crocInRange(C, x, z){
   const w = C.pool;
   return Math.hypot(x-w.x, z-w.z) <= w.r + CROC.BANK_MARGIN;
 }
-// Reachable if the croc commits to a lunge — the wider ring it will burst out to.
-function crocInLungeRange(C, x, z){
+// Reachable if the croc commits to a sortie — the wider ring it will hunt out to.
+function crocInLandRange(C, x, z){
   const w = C.pool;
-  return Math.hypot(x-w.x, z-w.z) <= w.r + CROC.LUNGE_RANGE;
+  return Math.hypot(x-w.x, z-w.z) <= w.r + CROC.LAND_RANGE;
+}
+// Is it standing on dry ground rather than sitting in its own water? Drives the dry
+// timer, the on-land speed penalty and the "am I home yet" test.
+function crocOnLand(C){
+  return terrainY(C.pos.x, C.pos.z) > poolSurfaceY(C.pool) - 0.05;
+}
+// Chase speed. ⚠ THE EXPLOSIVE EXIT IS THIS FUNCTION: the first BURST_TIME of a sortie
+// runs at BURST_MUL × charge — above a player sprint — and everything after it is the
+// laboured land speed you can walk away from. Two numbers, one behaviour.
+function crocPursuitSpeed(C){
+  if(C.state !== 'LUNGE')            return CROC.SPD_CHARGE;
+  if(C.lungeT < CROC.BURST_TIME)     return CROC.SPD_CHARGE * CROC.BURST_MUL;
+  return crocOnLand(C) ? CROC.SPD_CHARGE * CROC.LAND_MUL : CROC.SPD_CHARGE;
+}
+// Break off and walk home. ⚠ A STATE, not a `state='CRUISE'` plus a destination: while
+// RETURN is set the leash stays wide, so the croc walks the whole way back under its own
+// power instead of being yanked in by the clamp the instant the sortie ended.
+function crocBeginReturn(C, spendCooldown){
+  const wasOut = crocOnLand(C);
+  C.state = 'RETURN'; C.stateT = 0; C.target = null; C.targetKind = null;
+  C.dest = { x:C.pool.x, z:C.pool.z };
+  C.lungeT = 0;
+  if(wasOut || spendCooldown) C.lungeCd = CROC.LUNGE_CD;
+  if(wasOut && Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z) < 45)
+    showKillfeed('🐊 The crocodile gives up and scurries back to the water.');
 }
 // Everything that enters the water is prey. Steven: "attack everything that comes near
 // the waterhole" — so this scans PREDATORS as well as prey, and the player.
@@ -10558,12 +10657,12 @@ function crocPickTarget(C){
   const consider=(e,kind)=>{
     if(!e || !(e.health>0) || e.dying) return;
     // in the water/bank always; out on the shore only while a lunge is available
-    const reach = (C.lungeCd<=0 || C.state==='LUNGE') ? crocInLungeRange : crocInRange;
+    const reach = (C.lungeCd<=0 || C.state==='LUNGE') ? crocInLandRange : crocInRange;
     if(!reach(C, e.pos.x, e.pos.z)) return;            // not at MY pond → not my problem
     const d = Math.hypot(e.pos.x-C.pos.x, e.pos.z-C.pos.z);
     if(d < bd){ bd=d; best=e; bk=kind; }
   };
-  const preach = (C.lungeCd<=0 || C.state==='LUNGE') ? crocInLungeRange : crocInRange;
+  const preach = (C.lungeCd<=0 || C.state==='LUNGE') ? crocInLandRange : crocInRange;
   if(gameState==='playing' && crocGrab.graceT<=0 && preach(C, player.pos.x, player.pos.z)){
     const d = Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z);
     if(d < bd){ bd=d; best=player; bk='player'; }
@@ -10603,13 +10702,25 @@ function crocStep(C, tx, tz, speed, dt){
     C.heading += dd*Math.min(1, 4.0*dt);
   }
   // Hard leash — belt and braces, in case anything moves C.pos directly.
-  // ⚠ This can be a JUMP, not a step: the instant a lunge ends the limit shrinks from
-  // LUNGE_RANGE back to BANK_MARGIN, so a croc 5.5 out gets yanked 2.5 units toward the
-  // pond in one frame. That is exactly the kind of teleport that crosses a wall, which
-  // is why the swept test below runs against `bx,bz` (the true frame start) and covers
-  // the clamp as well as the movement.
-  const p2 = crocClampToPond(C, C.pos.x, C.pos.z);
-  C.pos.x = p2.x; C.pos.z = p2.z;
+  // ⚠ SPEED-LIMITED, NOT A SNAP (2026-08-05). This used to hard-clamp straight to the
+  // limit, so the instant a sortie ended the ring shrank from LAND_RANGE to BANK_MARGIN and
+  // the croc was yanked up to 17 units homeward in ONE FRAME — a teleport, and exactly what
+  // Steven meant by "the return should feel deliberate, not just teleport". The limit can
+  // now only tighten at the croc's own travel speed, so being pulled home is always
+  // movement you can watch. It still converges: the pull is applied every frame and
+  // RETURN_SPEED is the floor, so nothing can loiter outside the ring indefinitely.
+  // (The swept test below still runs against `bx,bz`, the true frame start, so even this
+  // gentler correction cannot carry the croc across a wall.)
+  {
+    const w = C.pool, lim = crocLeash(C);
+    const cur = Math.hypot(C.pos.x-w.x, C.pos.z-w.z);
+    if(cur > lim && cur > 1e-4){
+      const eff = Math.max(lim, cur - Math.max(speed, CROC.RETURN_SPEED)*dt);
+      const k = eff/cur;
+      C.pos.x = w.x + (C.pos.x-w.x)*k;
+      C.pos.z = w.z + (C.pos.z-w.z)*k;
+    }
+  }
 
   // Swept anti-tunnel (exact slab, no sampling): if the whole frame's displacement
   // crossed a wall, take none of it. A blocked croc therefore sits against the wall
@@ -10901,6 +11012,11 @@ function updateCrocodiles(dt){
     C.grabCd  = Math.max(0, C.grabCd  - dt);
     C.lungeCd = Math.max(0, C.lungeCd - dt);
     if(C.flashTimer>0) C.flashTimer -= dt;
+    // ⚠ THE DRY TIMER. Measured off the ground under it vs its own pond's surface, so
+    // chasing through the shallows does NOT count as being out of the water — only a croc
+    // genuinely on land runs the clock down. This replaces the old flat LUNGE_TIME, which
+    // expired identically whether the croc was beached or still swimming.
+    if(crocOnLand(C)) C.dryT += dt; else C.dryT = 0;
 
     // ---- 🩸 LOW-HP RETREAT. Steven: "make it retreat down to the bottom of the pond
     // when it's low on health." Below RETREAT_HP it breaks off whatever it was doing and
@@ -10938,14 +11054,26 @@ function updateCrocodiles(dt){
 
     if(C.state === 'GRAB'){                 // held by updateCrocGrab
       crocPlaceY(C, dt); crocAnimate(C, dt, 0);
-      if(!playerGrabbed()) { C.state='CRUISE'; C.stateT=0; C.mesh.rotation.z=0; }
+      // ⚠ RETURN, not CRUISE. A grab that ends on the bank (you mashed free before the haul
+      // reached deep water) leaves the croc up to 20 m out, and CRUISE holds the narrow
+      // leash — which is precisely the frame that used to yank it home. Let it walk.
+      if(!playerGrabbed()) { crocBeginReturn(C, true); C.mesh.rotation.z=0; }
       continue;
     }
     C.mesh.rotation.z *= 0.85;
 
     // --- acquire ---
     const tgt = crocPickTarget(C);
-    if(tgt && C.state!=='CHARGE'){ C.state='CHARGE'; C.stateT=0; C.target=tgt.ent; C.targetKind=tgt.kind; }
+    // ⚠ BUG FIX (2026-08-05), and it is why the burst clock can exist at all. This read
+    // `C.state!=='CHARGE'`, so a croc already in LUNGE was knocked back to CHARGE **every
+    // frame** a target was in range, and the LUNGE case then re-entered LUNGE and re-armed
+    // its timer from scratch. Two consequences shipped: the old LUNGE_TIME box was never
+    // actually enforced while you stayed in the ring, and "🐊 The crocodile EXPLODES out of
+    // the water!" re-fired on every single frame of the chase. A LUNGE has committed to its
+    // target and a RETURN has committed to going home; neither re-acquires.
+    if(tgt && C.state!=='CHARGE' && C.state!=='LUNGE' && C.state!=='RETURN'){
+      C.state='CHARGE'; C.stateT=0; C.target=tgt.ent; C.targetKind=tgt.kind;
+    }
     // (SUNK is handled above and `continue`s, so it can never be dragged into a chase.)
 
     switch(C.state){
@@ -10954,38 +11082,29 @@ function updateCrocodiles(dt){
         const t = C.target;
         const tpx = (t===player)?player.pos.x:(t?t.pos.x:0);
         const tpz = (t===player)?player.pos.z:(t?t.pos.z:0);
-        // Has it escaped? Beyond the lunge ring is out of reach, full stop.
-        const gone = !t || (t!==player && !(t.health>0)) || !crocInLungeRange(C, tpx, tpz);
-        if(gone){
-          // ⚠ RETURN TO WATER. Not merely "stop chasing" — a croc that broke off on dry
-          // land would be stranded in a state with no land behaviour. Head for the
-          // middle of its own pond explicitly.
-          C.state='CRUISE'; C.stateT=0; C.target=null;
-          C.dest = { x:C.pool.x, z:C.pool.z };
-          if(C.lungeT>0){ C.lungeCd = CROC.LUNGE_CD; C.lungeT = 0; }
-          break;
-        }
-        // Target is out past the normal bank margin → commit to a LUNGE if one is ready.
+        // ⚠ THE RETREAT TRIGGER Steven asked for: escape is defined by distance from the
+        // WATER, not from the croc. Stay inside the 20 m ring and it keeps coming however
+        // far you run around the shore; step outside it and it turns for home.
+        const gone = !t || (t!==player && !(t.health>0)) || !crocInLandRange(C, tpx, tpz);
+        if(gone){ crocBeginReturn(C, false); break; }
+        // Target is out past the normal bank margin → commit to a sortie if one is ready.
         const beyondBank = !crocInRange(C, tpx, tpz);
         if(beyondBank && C.state!=='LUNGE'){
-          if(C.lungeCd>0){ C.state='CRUISE'; C.stateT=0; C.target=null; C.dest=null; break; }
-          C.state='LUNGE'; C.lungeT = CROC.LUNGE_TIME;
-          if(Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z) < 40)
+          if(C.lungeCd>0){ crocBeginReturn(C, false); break; }   // still recovering — stay wet
+          C.state='LUNGE'; C.lungeT = 0;                          // counts UP: the burst clock
+          if(Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z) < 45)
             showKillfeed('🐊 The crocodile EXPLODES out of the water!');
         }
         if(C.state==='LUNGE'){
-          C.lungeT -= dt;
-          // out of puff → break off and go home, and it cannot try again for LUNGE_CD
-          if(C.lungeT <= 0){
-            C.state='CRUISE'; C.stateT=0; C.target=null;
-            C.dest = { x:C.pool.x, z:C.pool.z };
-            C.lungeCd = CROC.LUNGE_CD;
-            break;
-          }
+          C.lungeT += dt;
+          // ⚠ The sortie is bounded by TIME OUT OF WATER, not by a flat clock. A croc that
+          // is chasing you through the shallows is still a crocodile in its element and can
+          // keep going; one that has been baking on dry land for DRY_GIVEUP has had enough.
+          if(C.dryT > CROC.DRY_GIVEUP){ crocBeginReturn(C, true); break; }
         }
         const tp = (t===player) ? player.pos : t.pos;
         const d = Math.hypot(tp.x-C.pos.x, tp.z-C.pos.z);
-        const spd = (C.state==='LUNGE') ? CROC.LUNGE_SPEED : CROC.SPD_CHARGE;
+        const spd = crocPursuitSpeed(C);
         // ⚠ Stopping the BODY at a wall is only half the job. GRAB_R is 3.4 and a wall is
         // 0.3 thick, so a croc pressed against a closed gate still had its target well
         // inside reach and bit straight through it — measured: prey wounded through a
@@ -11005,10 +11124,20 @@ function updateCrocodiles(dt){
           }
         } else if(C.grabCd<=0){
           crocSeizeAnimal(C, t, C.targetKind);
-          C.state='CRUISE'; C.stateT=0; C.target=null;
-          C.dest = { x:C.pool.x, z:C.pool.z };          // drag the kill back to the water
-          if(C.lungeT>0){ C.lungeCd = CROC.LUNGE_CD; C.lungeT = 0; }
+          crocBeginReturn(C, true);                     // drag the kill back to the water
         }
+        break;
+      }
+      case 'RETURN': {
+        // ⚠ The walk home, and it is a real walk — RETURN_SPEED (4.5) for up to 20 m, so a
+        // croc that just missed you spends ~4.5 s trudging back with its flank exposed.
+        // That window IS the counterplay to a 20 m hunting ring: you cannot outrun the
+        // burst, but you get a free shot at everything that missed.
+        crocStep(C, C.pool.x, C.pool.z, CROC.RETURN_SPEED, dt);
+        const home = Math.hypot(C.pos.x-C.pool.x, C.pos.z-C.pool.z) <= C.pool.r && !crocOnLand(C);
+        // The timeout is a stranding guard only — a croc walled off from its own pond must
+        // not sit in RETURN forever holding the wide leash open.
+        if(home || C.stateT > 30){ C.state='CRUISE'; C.stateT=0; C.dest=null; }
         break;
       }
       case 'BASK': {
@@ -11192,66 +11321,159 @@ const BONE = {
   ICON:  '💀',    // ⚠ NOT 🦴 — that is already the elephant tusk's icon, and two 🦴
                   // counters in one HUD would be unreadable.
 };
-// Species → what it leaves behind. Colours are Steven's list; the ones he did not name
-// fall under his "rhino/warthog/etc → skin-coloured".
-// ⚠ "Hyenas → dark brown" is in the brief but THERE IS NO HYENA IN THIS GAME and never
-// has been. Not invented — flagged. The cheetah below is its own animal, not a stand-in.
+// Species → what it leaves behind.
+//
+// ⚠ REVISED 2026-08-05 (Steven: "replace generic bones-for-everything with creature-
+// appropriate loot"). The rule is **predators drop a distinctive part, prey drop bones**:
+// a lion leaves teeth, a croc leaves a tooth, a cheetah leaves a claw, a bird leaves a
+// feather or a talon, a serpent leaves skin AND a spine, a worm leaves slime — while the
+// grazers (zebra/wildebeest/gazelle/impala/warthog/kudu/giraffe) still leave bones,
+// because a bone IS the appropriate thing for a carcass the pride has stripped.
+//
+// ⚠⚠ THE BIG ONE — lion / elephant / rhino now feed the REAL crafting counters.
+// `craft:'tooth'|'tusk'|'horn'` routes the pickup into toothCount / tuskCount / hornCount,
+// the three materials that live recipes actually SPEND (necklace, boomerang, crossbow
+// ammo). Before this the game had two parallel material systems: an invisible auto-granted
+// 🦷/🦴/🦏 counter, and a physical "lion bone" you could pick up that did nothing. Steven
+// asked for loot that "reads as recipe materials" and named these three explicitly, so the
+// duplicate was collapsed into one. **The auto-grants at the three death sites were removed
+// in the same edit** — otherwise a lion would pay out twice.
+// ⚠ The EARN GATE is deliberately unchanged: the tooth drop is still gated on
+// `lastHitKind==='player'` (so a lion the gorilla killed across the map can't be farmed for
+// the one-time necklace), while tusk and horn still drop from ANY death. The only thing
+// that changed is that you now have to walk over and press [E]. Flagged as a real
+// consequence: crossbow ammo in particular is no longer collected passively from a kill you
+// never saw. Reverting is two lines — drop the `craft` fields and restore the ++ at the
+// three sites — but the two-systems problem comes back with it.
+// ⚠ "Hyenas → dark brown" was in the ORIGINAL brief and there is still NO HYENA in this
+// game. Not invented — flagged, again. The cheetah is its own animal, not a stand-in.
 const BONE_KINDS = {
-  lion:        { label:'lion bone',           colour:0xd8c07a, form:'bone' },  // yellow/tan
-  wilddog:     { label:'wild dog bone',       colour:0x8a7f6a, form:'bone' },  // grey/brown
-  cheetah:     { label:'cheetah bone',        colour:0xc9a869, form:'bone' },
-  gorilla:     { label:'gorilla bone',        colour:0x6b6257, form:'bone' },
-  rhino:       { label:'rhino bone',          colour:0xbfb4a4, form:'bone' },  // skin
-  crocodile:   { label:'crocodile bone',      colour:0x4a5a32, form:'bone' },  // dark green/olive
-  vulture:     { label:'vulture bone',        colour:0x54585c, form:'bone' },  // dark grey
-  eagle:       { label:'martial eagle bone',  colour:0x5c5750, form:'bone' },
-  secretary:   { label:'secretary bird bone', colour:0x60625e, form:'bone' },
-  porcupine:   { label:'porcupine quill',     colour:0xe8dfc6, form:'fang' },  // the banded pale quill
-  // prey — "rhino/warthog/etc → skin-coloured", with the two Steven singled out
-  giraffe:     { label:'giraffe bone',        colour:0xe8dcc0, form:'bone' },  // cream/beige
-  elephant:    { label:'elephant bone',       colour:0xbfb4a4, form:'bone' },
-  zebra:       { label:'zebra bone',          colour:0xcfc3ae, form:'bone' },
-  wildebeest:  { label:'wildebeest bone',     colour:0xcfc3ae, form:'bone' },
-  gazelle:     { label:'gazelle bone',        colour:0xcfc3ae, form:'bone' },
-  impala:      { label:'impala bone',         colour:0xcfc3ae, form:'bone' },
-  warthog:     { label:'warthog bone',        colour:0xcfc3ae, form:'bone' },  // skin
-  kudu:        { label:'kudu bone',           colour:0xcfc3ae, form:'bone' },
-  // serpents — a fang, not a bone
-  python:      { label:'python fang',         colour:0xd6c092, form:'fang' },
-  cobra:       { label:'cobra fang',          colour:0xd6c092, form:'fang' },  // tan — "cobra (normal)"
-  cobra_green: { label:'green cobra fang',    colour:0x76d13a, form:'fang' },  // ☑ Steven called this out
-  worm:        { label:'pink worm hide',      colour:0xe08fa8, form:'hide' },  // a worm has no bones
+  // --- apex + predators: a distinctive part each ---
+  lion:        { label:'lion tooth',      plural:'lion teeth',  icon:'🦷', colour:0xf2e9d0, form:'tooth',  craft:'tooth' },
+  // ⚠ A lion SOMETHING ELSE killed leaves a claw, not a tooth. This exists to keep two
+  // invariants that would otherwise collide: "every creature leaves loot" (so a corpse is
+  // never empty) and the necklace's earn gate (the tooth is only ever yours if the kill
+  // was yours). Without it, gating the tooth drop on lastHitKind leaves a lion the gorilla
+  // killed with nothing at all on it.
+  lion_claw:   { label:'lion claw',                             icon:'🦁', colour:0x2f2820, form:'claw'   },
+  elephant:    { label:'elephant tusk',                         icon:'🦴', colour:0xefe6d0, form:'tusk',   craft:'tusk'  },
+  rhino:       { label:'rhino horn',                            icon:'🦏', colour:0x8a7f70, form:'horn',   craft:'horn'  },
+  gorilla:     { label:'gorilla fang',                          icon:'🦍', colour:0xe6ddc6, form:'fang'   },
+  porcupine:   { label:'porcupine quill',                       icon:'🦔', colour:0xf0e6cc, form:'quill'  },
+  wilddog:     { label:'wild dog fang',                         icon:'🐕', colour:0xe2d9c0, form:'fang'   },
+  cheetah:     { label:'cheetah claw',                          icon:'🐆', colour:0x2e2822, form:'claw'   },
+  crocodile:   { label:'crocodile tooth', plural:'crocodile teeth', icon:'🐊', colour:0xdcd2b4, form:'tooth' },
+  // --- birds: the flier gives feathers, the raptors give what they kill with ---
+  vulture:     { label:'vulture feather',                       icon:'🪶', colour:0x4a4e52, form:'feather' },
+  eagle:       { label:'eagle talon',                           icon:'🦅', colour:0x201b16, form:'claw'    },
+  secretary:   { label:'secretary bird plume',                  icon:'🪶', colour:0x35373a, form:'feather' },
+  // --- serpents: skin AND a spine (Steven asked for both); the worm has neither ---
+  python:        { label:'python skin',                         icon:'🐍', colour:0xc2a878, form:'skin'  },
+  cobra:         { label:'cobra skin',                          icon:'🐍', colour:0x2b2d34, form:'skin'  },
+  cobra_green:   { label:'green cobra skin',                    icon:'🐍', colour:0x76d13a, form:'skin'  },
+  serpent_spine: { label:'serpent spine',                       icon:'💀', colour:0xdbd0b2, form:'spine' },
+  worm:          { label:'worm slime', plural:'worm slime',     icon:'🫧', colour:0xe58fb0, form:'slime' },
+  // --- prey: bones, as Steven asked. The grazers keep the skin-toned palette. ---
+  giraffe:     { label:'giraffe bone',    icon:'💀', colour:0xe8dcc0, form:'bone' },  // cream/beige
+  zebra:       { label:'zebra bone',      icon:'💀', colour:0xcfc3ae, form:'bone' },
+  wildebeest:  { label:'wildebeest bone', icon:'💀', colour:0xcfc3ae, form:'bone' },
+  gazelle:     { label:'gazelle bone',    icon:'💀', colour:0xcfc3ae, form:'bone' },
+  impala:      { label:'impala bone',     icon:'💀', colour:0xcfc3ae, form:'bone' },
+  warthog:     { label:'warthog bone',    icon:'💀', colour:0xcfc3ae, form:'bone' },
+  kudu:        { label:'kudu bone',       icon:'💀', colour:0xcfc3ae, form:'bone' },
 };
+// Craft-material keys → the counter each one feeds. Read by pickUpBone and by the
+// eviction rule; derived from BONE_KINDS so the table above stays the single source.
+function boneCraftSlot(key){ const k = BONE_KINDS[key]; return (k && k.craft) || null; }
+function bonePlural(kind, n){ return n === 1 ? kind.label : (kind.plural || kind.label + 's'); }
+
 let boneDrops  = [];    // { key, label, mesh, pos } — physical remains lying on the map
 let boneCounts = {};    // key → how many you hold. RUN-SCOPED, like tooth/tusk/horn.
 
-// A serpent's drop depends on its VARIANT and, for the cobra, its colour morph.
-// ⚠ Only the acid morph gives the green fang: Steven distinguished exactly two cases,
-// "cobra (normal)" and "green cobra". Crimson / violet / gold therefore drop the plain
-// tan fang today. Giving each morph its own fang colour is one line here if wanted.
+// A serpent leaves TWO things (Steven: "snake skin AND spines") — except the worm, which
+// leaves slime and nothing else, because a worm has no skeleton to give a spine.
+// ⚠ Only the acid morph gives the green skin: Steven distinguished exactly two cases,
+// "cobra (normal)" and "green cobra". Crimson / violet / gold drop the plain dark skin.
+// Giving each morph its own skin colour is one line here if wanted.
 function snakeBoneKey(S){
   const v = S.v && S.v.key;
   if(v === 'cobra') return (S.colour && S.colour.id === 'acid') ? 'cobra_green' : 'cobra';
   return v === 'worm' ? 'worm' : 'python';
 }
+function snakeLootKeys(S){
+  const skin = snakeBoneKey(S);
+  return skin === 'worm' ? ['worm'] : [skin, 'serpent_spine'];
+}
 // The remains themselves. Per-drop geometry + material so killObj frees the lot and no
 // two drops can share a resource that disposing one would yank from the other.
+// ⚠ Every form is small (< 0.7 across) and sits just off the ground — these are pickups
+// on a 500×500 map, not props. Multi-material forms (quill, feather) build BOTH materials
+// per drop for the same reason: nothing is shared between drops.
 function makeBoneMesh(kind){
   const g = new THREE.Group();
   const m = new THREE.MeshLambertMaterial({ color: kind.colour });
-  if(kind.form === 'fang'){
-    const f = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.52, 7), m);
-    f.rotation.z = Math.PI/2 + 0.25; f.position.y = 0.1; f.castShadow = true; g.add(f);
-  } else if(kind.form === 'hide'){
-    const h = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.07, 0.44), m);
-    h.rotation.y = 0.4; h.position.y = 0.05; h.castShadow = true; g.add(h);
+  const add = (mesh, x, y, z, rx, ry, rz) => {
+    mesh.position.set(x, y, z); mesh.rotation.set(rx||0, ry||0, rz||0);
+    mesh.castShadow = true; g.add(mesh); return mesh;
+  };
+  const F = kind.form;
+  if(F === 'fang'){                       // long curved canine, lying on its side
+    add(new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.52, 7), m), 0, 0.10, 0, 0, 0, Math.PI/2 + 0.25);
+  } else if(F === 'tooth'){               // shorter, fatter — a shed tooth with a root
+    add(new THREE.Mesh(new THREE.ConeGeometry(0.10, 0.34, 7), m), 0.04, 0.11, 0, 0, 0, Math.PI/2 + 0.5);
+    add(new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.055, 0.16, 6), m), -0.16, 0.09, 0, 0, 0, Math.PI/2);
+  } else if(F === 'tusk'){                // long ivory, curving up at the tip
+    let x = -0.28, y = 0.09, a = 0.0;
+    for(let i=0;i<3;i++){
+      const r = 0.085 - i*0.022;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(r*0.75, r, 0.26, 7), m), x, y, 0, 0, 0, Math.PI/2 - a);
+      x += Math.cos(a)*0.25; y += Math.sin(a)*0.25; a += 0.34;
+    }
+  } else if(F === 'horn'){                // stout, blunt, curved — a rhino's nasal horn
+    let x = -0.16, y = 0.08, a = 0.0;
+    for(let i=0;i<3;i++){
+      const r = 0.135 - i*0.038;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(r*0.7, r, 0.18, 8), m), x, y, 0, 0, 0, Math.PI/2 - a);
+      x += Math.cos(a)*0.17; y += Math.sin(a)*0.17; a += 0.40;
+    }
+  } else if(F === 'claw'){                // hooked talon, dark and thin
+    let x = -0.10, y = 0.07, a = 0.15;
+    for(let i=0;i<3;i++){
+      const r = 0.055 - i*0.016;
+      add(new THREE.Mesh(new THREE.ConeGeometry(r, 0.20, 6), m), x, y, 0, 0, 0, Math.PI/2 - a);
+      x += Math.cos(a)*0.18; y += Math.sin(a)*0.18; a += 0.55;
+    }
+  } else if(F === 'quill'){               // ⚠ the porcupine's own banded quill: dark root,
+    const root = new THREE.MeshLambertMaterial({ color:0x120f0b });   //  pale shaft — the
+    add(new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.038, 0.20, 6), root), -0.26, 0.08, 0, 0, 0, Math.PI/2);
+    add(new THREE.Mesh(new THREE.ConeGeometry(0.036, 0.60, 6), m), 0.14, 0.08, 0, 0, 0, -Math.PI/2);
+  } else if(F === 'feather'){             // shaft + two tapering vanes
+    const shaft = new THREE.MeshLambertMaterial({ color:0xcfc6b2 });
+    add(new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.020, 0.62, 5), shaft), 0, 0.05, 0, 0, 0, Math.PI/2);
+    for(const sz of [-1, 1]){
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.012, 0.13), m), -0.04, 0.055, sz*0.075, 0, 0, 0);
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.012, 0.07), m),  0.20, 0.055, sz*0.045, 0, 0, 0);
+    }
+  } else if(F === 'skin'){                // a rumpled shed hide — three overlapping panels
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.035, 0.34), m), -0.10, 0.05, 0.03, 0, 0.18, 0.10);
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.035, 0.30), m),  0.20, 0.07, -0.06, 0, -0.32, -0.14);
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.035, 0.22), m),  0.02, 0.10, -0.14, 0, 0.55, 0.05);
+  } else if(F === 'spine'){               // three vertebrae on a short run, prongs up
+    for(let i=0;i<3;i++){
+      const x = -0.20 + i*0.20;
+      add(new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.10, 7), m), x, 0.07, 0, 0, 0, Math.PI/2);
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.17, 0.05), m), x, 0.15, -0.02, -0.30, 0, 0);
+    }
+  } else if(F === 'slime'){               // a glistening puddle — the only translucent drop
+    const s = new THREE.MeshPhongMaterial({ color:kind.colour, transparent:true, opacity:0.78, shininess:90 });
+    add(new THREE.Mesh(new THREE.SphereGeometry(0.28, 9, 7), s), 0, 0.035, 0).scale.set(1.15, 0.30, 0.95);
+    add(new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), s), 0.26, 0.025, 0.14).scale.set(1.0, 0.28, 1.0);
   } else {
-    // classic long bone: a shaft with a knob at each end
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.62, 6), m);
-    shaft.rotation.z = Math.PI/2; shaft.position.y = 0.1; shaft.castShadow = true; g.add(shaft);
+    // classic long bone: a shaft with a knob at each end (the prey drop)
+    add(new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.62, 6), m), 0, 0.10, 0, 0, 0, Math.PI/2);
     for(const sx of [-0.33, 0.33]){
-      const k = new THREE.Mesh(new THREE.SphereGeometry(0.115, 6, 5), m);
-      k.position.set(sx, 0.1, 0); k.scale.set(1, 0.85, 1.15); g.add(k);
+      const k = add(new THREE.Mesh(new THREE.SphereGeometry(0.115, 6, 5), m), sx, 0.10, 0);
+      k.scale.set(1, 0.85, 1.15);
     }
   }
   return g;
@@ -11264,8 +11486,15 @@ function dropBone(key, pos){
   if(!kind || !pos) return null;
   // Cap: free the OLDEST so a long run can't accumulate meshes without bound. The
   // ecosystem kills far more than the player does, so this is load-bearing.
+  // ⚠ CRAFT MATERIALS GO LAST. Now that a rhino horn on the ground IS your crossbow ammo,
+  // a plain FIFO would let six zebras dying across the map silently delete the horn you
+  // were walking towards — the same class of mistake as unequip-demolishing paid-for walls
+  // (2026-07-30i). So the oldest NON-craft drop is evicted first, and a craft drop is only
+  // ever freed when all 40 are craft drops. The cap itself is unchanged at 40 total.
   while(boneDrops.length >= BONE.MAX){
-    const old = boneDrops.shift(); killObj(old.mesh);
+    let i = boneDrops.findIndex(d => !boneCraftSlot(d.key));
+    if(i < 0) i = 0;                                   // all craft — fall back to true FIFO
+    killObj(boneDrops[i].mesh); boneDrops.splice(i, 1);
   }
   const g = makeBoneMesh(kind);
   const gy = terrainY(pos.x, pos.z);
@@ -11284,22 +11513,32 @@ function pickUpBone(){
   for(let i=boneDrops.length-1;i>=0;i--){
     const d = boneDrops[i];
     if(Math.hypot(d.pos.x-player.pos.x, d.pos.z-player.pos.z) > BONE.REACH) continue;
+    const kind = BONE_KINDS[d.key] || {};
     killObj(d.mesh); boneDrops.splice(i,1);
-    boneCounts[d.key] = (boneCounts[d.key]||0) + 1;
-    showKillfeed(BONE.ICON+' Picked up a '+d.label+' ('+boneCounts[d.key]+')');
+    // ⚠ A craft material goes into the counter its RECIPES read, not into the loot pouch —
+    // otherwise the game shows you "2 lion teeth" in one HUD block while the necklace still
+    // says you have none. One material, one number. Everything else tallies as loot.
+    const slot = boneCraftSlot(d.key);
+    let held;
+    if(slot === 'tooth')      held = ++toothCount;
+    else if(slot === 'tusk')  held = ++tuskCount;
+    else if(slot === 'horn')  held = ++hornCount;
+    else                      held = boneCounts[d.key] = (boneCounts[d.key]||0) + 1;
+    showKillfeed((kind.icon||BONE.ICON)+' Picked up a '+d.label+' ('+held+')');
     playSound('collect');
     return true;
   }
   return false;
 }
 function totalBones(){ let n=0; for(const k in boneCounts) n += boneCounts[k]; return n; }
-// "3 lion bones · 1 green cobra fang" — only what you actually hold.
+// "3 zebra bones · 1 green cobra skin" — only what you actually hold. Craft materials are
+// NOT in here; they have their own 🦷/🦴/🦏 readout, which is the whole point of the merge.
 function boneTally(sep){
   const out = [];
   for(const k in boneCounts){
     const n = boneCounts[k]; if(!n) continue;
     const kind = BONE_KINDS[k]; if(!kind) continue;
-    out.push(n + ' ' + kind.label + (n===1 ? '' : 's'));
+    out.push(n + ' ' + bonePlural(kind, n));
   }
   return out.join(sep || ' · ');
 }
@@ -11974,12 +12213,13 @@ function renderShop(){
                    ' · 🦴 '+tuskCount+' elephant '+(tuskCount===1?'tusk':'tusks')+
                    ' · 🦏 '+hornCount+' rhino '+(hornCount===1?'horn':'horns');
   row.appendChild(mats);
-  // 💀 Bones & materials — the per-species tally. Nothing spends these yet (Steven:
-  // "pickup only, no behaviour yet — crafting comes later"), so this readout is the
-  // whole of their UI. Hidden until you actually hold one.
+  // 🎒 Loot — the per-species tally of everything that ISN'T one of the three craft
+  // materials above (those live in the CRAFTING MATERIALS line, since recipes spend them).
+  // Nothing spends these yet — this readout is the whole of their UI. Hidden until you
+  // actually hold one.
   if(totalBones() > 0){
     const bones=document.createElement('div'); bones.className='lo-lab'; bones.style.marginTop='4px';
-    bones.textContent = BONE.ICON+' BONES & MATERIALS — '+boneTally();
+    bones.textContent = '🎒 LOOT — '+boneTally();
     row.appendChild(bones);
   }
 
@@ -12437,10 +12677,10 @@ function updateHUD(){
   if(toothCount>0) mats += `<br>🦷 Teeth: ${toothCount}`;
   if(tuskCount>0)  mats += (toothCount>0?' &nbsp; ':'<br>')+`🦴 Tusks: ${tuskCount}`;
   if(hornCount>0)  mats += ((toothCount>0||tuskCount>0)?' &nbsp; ':'<br>')+`🦏 Horns: ${hornCount}`;
-  // 💀 Bones are a separate pile — the HUD shows only the total (the full species
+  // 🎒 Loot is a separate pile — the HUD shows only the total (the full species
   // breakdown lives in the shop, where there is room for it).
   const nBones = totalBones();
-  if(nBones>0) mats += `<br>${BONE.ICON} Bones: ${nBones}`;
+  if(nBones>0) mats += `<br>🎒 Loot: ${nBones}`;
   document.getElementById('topright').innerHTML =
     `${dn.isDay?'☀️ DAY':'🌙 NIGHT'} ${fmtTime(Math.max(0,timeLeft))}<br>`+
     (venomed?`<span style="color:#7ce05a">☠️ POISONED ${Math.ceil(player.poisonT)}s</span> <span style="opacity:0.6;font-size:11px">— water cures</span><br>`:'')+
@@ -12860,6 +13100,9 @@ function resetGame(){
   boneCounts = {};   // …and empty the pouch. Run-scoped, exactly like the three above.
   scopeHeld  = false; scopeToggle = false;                   // drop any held/toggled crossbow scope on restart
   crouchToggle = false;                                      // stand up on restart (clear the crouch tap-toggle)
+  // 🪽 fresh legs, and CLEAR THE LATCH — restarting with Space still held would otherwise
+  // leave `_jumpDown` true and swallow the first jump of the new run.
+  player.jumpsLeft = PLAYER.jumpsMax; player.airT = 0; player._jumpDown = false;
   if(camera){ camera.fov = BASE_FOV; camera.updateProjectionMatrix(); }
   const sc = document.getElementById('scope'); if(sc){ sc.style.display='none'; sc._on=false; }
   kills      = 0;

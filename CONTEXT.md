@@ -3072,3 +3072,112 @@ driven through the real `gorillaMoveToward` (0 crossings), porcupine disposal + 
 ⚠ **The in-app Browser pane still cannot render WebGL** — canvas comes back 0×0 and `readPixels` reads
 0 non-zero pixels across a full 2560×1600 frame — so both animals were verified numerically in-page and
 visually through the offline PIL projector, as on every previous mesh session.
+
+## 🎒 LOOT — creature-appropriate drops replace "a bone for everything" (2026-08-05)
+Steven: *"replace generic bones-for-everything with creature-appropriate loot… names should read as recipe
+materials."* The 2026-08-04 module shipped one `form:'bone'` for almost every species; the table is now
+**predators drop a distinctive part, prey drop bones**, across **24 entries and 11 mesh forms**
+(bone · tooth · fang · tusk · horn · claw · quill · feather · skin · spine · slime).
+- **The system is unchanged** — same `BONE_KINDS` / `boneDrops[]` / `dropBone` / `pickUpBone`, same `[E]`
+  chain, same **cap 40**. This is a data + mesh revision, not a new module.
+- ⚠⚠ **THE BIG CALL: lion / elephant / rhino drops now feed the REAL craft counters.** A `craft:'tooth'|
+  'tusk'|'horn'` field routes the pickup into `toothCount`/`tuskCount`/`hornCount` — the three materials live
+  recipes actually spend — and **the auto-grants at the three death sites were removed** so nothing pays out
+  twice. Before this the game ran **two parallel material systems**: an invisible auto-granted counter, and a
+  physical "lion bone" you could pick up that did nothing. Steven named these three explicitly and asked for
+  loot that reads as recipe materials, so the duplicate was collapsed.
+  - **The EARN GATE is untouched:** the tooth still requires `lastHitKind==='player'`; tusk and horn still
+    drop from any death. What changed is that **you now have to walk over and press [E]**.
+  - ⚠ **Reportable consequence:** crossbow ammo is no longer collected passively from a rhino kill you never
+    saw. Reverting is two lines (drop the `craft` fields, restore the `++`) — but the two-systems problem
+    comes back with it.
+- ⚠ **`lion_claw` exists to stop two invariants colliding.** Gating the tooth *drop* on `lastHitKind` would
+  leave a lion the gorilla killed with **nothing on it**, breaking "every creature leaves loot". So a lion you
+  didn't kill leaves a claw instead. Nothing else needed a second entry.
+- ⚠ **Craft drops are protected from the cap.** With a horn on the ground now BEING your ammo, a plain FIFO
+  would let six zebras dying across the map silently delete the horn you were walking toward — the same class
+  of mistake as unequip-demolishing paid-for walls (2026-07-30i). The eviction now frees the oldest
+  **non-craft** drop, and only falls back to true FIFO if all 40 are craft drops. **The cap is still 40 total.**
+- **Serpents leave TWO drops** (`snakeLootKeys`): skin + `serpent_spine`, spread on a 0.7 arc — stacked at one
+  point the second is invisible under the first and the second [E] looks like it did nothing. The **worm leaves
+  only slime**; it has no skeleton to give a spine. The acid cobra's skin is still the green one.
+- **Irregular plurals** are a field (`plural`), because "2 lion tooths" and "2 crocodile tooths" are what you
+  get otherwise. `slime` is a mass noun and declares itself unchanged.
+- **HUD:** the readout is **🎒 LOOT** now, not 💀 BONES & MATERIALS — craft materials sit in their own
+  CRAFTING MATERIALS line, and having a "lion tooth" in both blocks was the incoherence this fixes.
+- **Disposal:** 72 drops × 3 cycles across all 24 species — **213 geometries each freed exactly once**, 0
+  double, 0 missed, **81 materials all freed**, **0 leaked scene nodes**, cap held at exactly 40. The
+  two-material forms (quill's dark root, feather's shaft) build BOTH per drop; nothing is shared between drops.
+- **Interpretive calls:** croc → tooth, wild dog → fang, cheetah → claw, sky vulture → feather, martial eagle →
+  talon, secretary bird → plume (Steven asked me to pick these). Serpent spine is **one generic key** rather
+  than per-variant — the skin is what distinguishes them, and a python spine vs a cobra spine is a difference
+  no recipe would care about. ⚠ "Hyenas → dark brown" was in the original brief and **there is still no hyena
+  in this game** — flagged, not invented, for the second time.
+
+## 🪽 DOUBLE JUMP (2026-08-05)
+Jump, then jump again in mid-air at 80% strength. **Unlocked by default**, no shop entry.
+- ⚠ **`PLAYER.jumpsMax` is a COUNTER, and it had to be.** The old line was
+  `if(keys['Space'] && player.onGround)` — **level-triggered**, so a held Space would have spent the air jump
+  on the very frame after take-off. Jumping is now **edge-triggered** off a single `jumpEdge` computed once at
+  the top of `updatePlayer`, before the swim/grapple/tree branches, and latched once at the very bottom, so no
+  branch can desync it or swallow a press. Space stays level-triggered everywhere else it is used (swim-up
+  holds it; the mobile button pulses it for 130 ms, which is a clean edge either way).
+- **The cooldown is structural:** the ground snap that sets `onGround` also refills `jumpsLeft`. Any floor
+  counts — terrain **or a wall top**, since both come through the same snap — so double-jumping onto a wall
+  refills as you'd expect.
+- ⚠ **Coyote time (`jumpCoyote` 0.12 s) is not a nicety, it is a bug the counter introduces.** Walking off a
+  wall with a full counter and no grace silently ate jump #1 and left you only the weak air jump. Inside the
+  window you keep the full-strength ground jump; once it lapses the ground jump is burned so you cannot stroll
+  off a ledge and still get the strong one halfway down.
+- **Measured:** first impulse **12.0**, second **9.6** (`doubleJumpMul` 0.80, inside Steven's 75–85%).
+  Apex **3.37 → 5.55 m**; airtime **1.08 → 1.68 s**.
+- ⚠ **Steven's premise about the porcupine is wrong, and it matters for how this reads.** He wrote "porcupine
+  spikes damage the airborne player still, so the double jump doesn't dodge them". **They do not.**
+  `porcSpikeContact` gates on `!playerOffGround()`, and `playerOffGround` is `height > 1.5` — which **a single
+  jump already clears** (apex 3.37). Measured directly: a bristling porcupine 1.0 away deals **0 damage to a
+  player 3 m up** and **18 to the same player on the ground**. So hopping over a bristling porcupine is a
+  pre-existing property of the *single* jump, not something the double jump introduced. What the double jump
+  does change is the **duration**: seconds spent above the 1.5 m ground-predator threshold go **0.82 → 1.47**.
+  Every ground attacker in the game reads the same `playerOffGround`, so this applies to lions, dogs, crocs and
+  serpents equally. **Deliberately left alone** — the brief says preserve creature behaviour, and making the
+  porcupine reach an airborne player is a creature change, not a jump change.
+- **Interpretive call:** shipped as an always-on movement ability rather than a shop entry. Wiring it as an
+  accessory would cost one of only **two** accessory slots, which makes a QoL movement upgrade a net
+  *downgrade* — the same trap flagged when the Lion Tooth Necklace took a slot. One `SHOP_ITEMS` entry plus a
+  `progress.accessories.includes` check is all it would take later.
+
+## 🐊 CROCODILE AMBUSH — explosive exit, 20 m ring, deliberate walk home (2026-08-05)
+Steven: *"currently crocs barely come out of water."* The old behaviour was a 7 m snatch on a flat 3.2 s
+timer, which from the bank read as a croc poking its nose out. **The grab-and-drag haul from 2026-08-04 is
+preserved exactly** — a chase that connects still hauls you to the bed and drowns you.
+- **The shape now:** burst out at **2× charge speed (19 u/s, above a player sprint of 16) for 0.5 s**, settle
+  to a laboured **0.7× on dry land (6.65 u/s)**, hunt anything inside **`LAND_RANGE` 20 m** of the water, and
+  turn for home when the target clears that ring **or** the croc has been dry for **`DRY_GIVEUP` 8 s**.
+  `LUNGE_RANGE`/`LUNGE_SPEED`/`LUNGE_TIME` are gone, replaced by `LAND_RANGE`/`BURST_MUL`/`BURST_TIME`/
+  `LAND_MUL`/`DRY_GIVEUP`/`RETURN_SPEED`.
+- ⚠ **Escape is measured from the WATER, not from the croc** — that is what makes "keep chasing while the
+  target is close" and "retreat when it escapes" one rule instead of two.
+- ⚠ **The dry timer is measured against the pond surface, not a stopwatch.** A croc chasing you through the
+  shallows is still in its element and its clock stays at zero; only a genuinely beached one runs it down.
+- ⚠ **NEW `RETURN` STATE, and it is a state rather than `CRUISE` + a destination**, because the leash limit is
+  keyed off the state: while RETURN is set the ring stays wide and the croc walks the whole way back under its
+  own power at `RETURN_SPEED` 4.5 (~4.5 s across the full 20 m). That walk is the counterplay to a 20 m ring —
+  you cannot outrun the burst, but everything that misses you spends 4.5 s in the open.
+- ⚠⚠ **THE LEASH NO LONGER SNAPS.** `crocStep`'s hard clamp used to jump straight to the limit, so the instant
+  a sortie ended the ring shrank from 20 back to 3 and the croc was yanked **up to 17 units in ONE FRAME** —
+  a literal teleport, and exactly what Steven meant by "not just teleport". The limit can now only tighten at
+  the croc's own travel speed. This also quietly fixes SUNK and post-GRAB, which had the same exposure.
+  **Asserted in the suite:** no frame moves a croc further than its own burst speed allows.
+- ⚠ **BUG FOUND AND FIXED while in here.** The acquire step read `if(tgt && C.state!=='CHARGE')`, so a croc
+  already in LUNGE was knocked back to CHARGE **every frame** a target was in range, and the LUNGE case
+  immediately re-entered LUNGE and re-armed its timer. Two things shipped as a result: the old `LUNGE_TIME`
+  box was **never actually enforced** while you stayed in the ring, and **"🐊 The crocodile EXPLODES out of the
+  water!" re-fired on every frame of the chase**. Neither the burst clock nor the dry timer could exist on top
+  of that. LUNGE and RETURN no longer re-acquire.
+- **Post-grab release now goes to RETURN**, not CRUISE — mashing free on the bank used to leave the croc 20 m
+  out holding the narrow leash, which was precisely the frame that yanked it home.
+- **⚠ Balance (report, not silently tuned):** the hunting ring nearly **tripled**, 7 → 20 m, on 3 ponds × 1–2
+  crocs. Shoreline is now genuinely dangerous ground. The burst (19) beats a sprint (16) for 0.5 s, so an
+  ambush inside ~9 m of open bank is unavoidable; past that, walking (10) pulls away from the 6.65 land speed.
+  Nothing else was retuned: HEALTH 600, BITE_DMG 26, GRAB_R 3.4, the haul, the death roll, the 9-tap escape,
+  the growth tiers and the low-HP retreat are all untouched.
