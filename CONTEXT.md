@@ -3186,3 +3186,8 @@ preserved exactly** — a chase that connects still hauls you to the bed and dro
   per-segment STEP was longer than the segment LENGTH, so every joint opened as each link rotated and the drop
   read as three loose lumps instead of one curved horn. Step is now ≈0.8 × length throughout so consecutive
   links always overlap.
+- ⚠ **Mobile double-tap fix, found by asking "what does the phone button actually send?"**
+  `doTouchAction('jump')` pulses `keys['Space']` true for 130 ms — and a *fast* double-tap lands **inside**
+  that window, so the second tap found the key already down, produced **no rising edge**, and the air jump
+  simply never fired on a phone. The pulse now clears `keys['Space']` **and `_jumpDown`** before setting it,
+  so every tap is its own edge however fast they come. Covered by the suite through the real handler.

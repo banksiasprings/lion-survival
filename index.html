@@ -2920,8 +2920,16 @@ function doTouchAction(name, btn){
   if(player.stunTimer > 0) return;                       // dazed by a gorilla tree-grab
   switch(name){
     case 'attack':  useActiveAbility(); break;                                   // == LMB / Z
+    // ⚠ The pulse must RELEASE first, or a fast double-tap never double-jumps on a phone.
+    // updatePlayer triggers on the rising edge of Space; a second tap inside the 130 ms
+    // window would find the key already down, produce no edge, and the air jump would
+    // simply not happen — the exact input a double jump exists for. Clearing the flag and
+    // the latch makes every tap its own edge however fast they come.
     case 'jump':    if(player.inTree) dropFromTree();                            // == Space
-                    else { keys['Space']=true; setTimeout(()=>{ keys['Space']=false; }, 130); } break;
+                    else {
+                      keys['Space']=false; player._jumpDown=false;
+                      keys['Space']=true; setTimeout(()=>{ keys['Space']=false; }, 130);
+                    } break;
     case 'sprint':  keys['ShiftLeft'] = !keys['ShiftLeft']; break;              // toggle (== hold Shift)
     case 'crouch':  keys['KeyC']      = !keys['KeyC'];      break;              // toggle (== hold C)
     case 'grapple': if(grapple.active||player.inTree||player.climbing) releaseGrapple(); else fireGrapple(); break; // == G

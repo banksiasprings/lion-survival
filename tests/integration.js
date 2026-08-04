@@ -546,7 +546,22 @@ test('jump: coyote grace gives the strong jump just after walking off, then expi
   for(let i=0;i<400 && !player.onGround;i++) updatePlayer(DT);
   player.pos.x = home.x; player.pos.z = home.z; pinPlayer();
 
-  const pass = detail.jumpsInGrace === PLAYER.jumpsMax && detail.graceGaveFullJump &&
+  // ⚠ MOBILE. doTouchAction('jump') pulses Space for 130 ms, and a fast double-tap lands
+  // INSIDE that window — so without an explicit release first the second tap produces no
+  // rising edge and the air jump silently never fires on a phone. Drive the real handler.
+  player.pos.y = terrainY(player.pos.x, player.pos.z) + 0.1; player.vel.set(0,0,0);
+  player.onGround = true; player.jumpsLeft = PLAYER.jumpsMax; player.airT = 0;
+  keys['Space'] = false; player._jumpDown = false;
+  updatePlayer(DT);
+  doTouchAction('jump'); updatePlayer(DT); detail.touchFirst = Math.round(player.vel.y*100)/100;
+  doTouchAction('jump'); updatePlayer(DT); detail.touchSecond = Math.round(player.vel.y*100)/100;
+  detail.touchDoubleTapWorks = detail.touchSecond > 0 &&
+    Math.abs(detail.touchSecond - PLAYER.jumpForce*PLAYER.doubleJumpMul) < 0.01;
+  keys['Space'] = false; player._jumpDown = false;
+  for(let i=0;i<400 && !player.onGround;i++) updatePlayer(DT);
+
+  const pass = detail.touchDoubleTapWorks &&
+               detail.jumpsInGrace === PLAYER.jumpsMax && detail.graceGaveFullJump &&
                detail.jumpsAfterGrace === PLAYER.jumpsMax - 1 && detail.lateGaveWeakJump;
   return { pass, detail };
 });
