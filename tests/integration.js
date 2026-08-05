@@ -565,13 +565,18 @@ test('jump: coyote grace gives the strong jump just after walking off, then expi
                             Math.abs(player.vel.y - PLAYER.jumpForce*PLAYER.doubleJumpMul) < 0.01;
   keys['Space']=false; player._jumpDown=false;
   for(let i=0;i<400 && !player.onGround;i++) updatePlayer(DT);
-  player.pos.x = home.x; player.pos.z = home.z; pinPlayer();
 
   // ⚠ MOBILE. doTouchAction('jump') pulses Space for 130 ms, and a fast double-tap lands
   // INSIDE that window — so without an explicit release first the second tap produces no
   // rising edge and the air jump silently never fires on a phone. Drive the real handler.
+  // ⚠ RE-STAND ON DRY LAND FIRST, and note this block must run BEFORE `home` is restored.
+  // `standOnDryLand()` returns the position it found you at, NOT the dry one it moved you
+  // to — so restoring `home` can drop you straight back into a pond, and then the swim
+  // branch replaces gravity and Space becomes hold-to-rise. The tell is unmistakable once
+  // you know it: touchFirst reads exactly WATER.SWIM_UP (4.2) instead of jumpForce (12).
+  standOnDryLand();
   player.pos.y = terrainY(player.pos.x, player.pos.z) + 0.1; player.vel.set(0,0,0);
-  player.onGround = true; player.jumpsLeft = maxJumps(); player.airT = 0;
+  player.onGround = true; player.swimming = false; player.jumpsLeft = maxJumps(); player.airT = 0;
   keys['Space'] = false; player._jumpDown = false;
   updatePlayer(DT);
   doTouchAction('jump'); updatePlayer(DT); detail.touchFirst = Math.round(player.vel.y*100)/100;
@@ -580,6 +585,7 @@ test('jump: coyote grace gives the strong jump just after walking off, then expi
     Math.abs(detail.touchSecond - PLAYER.jumpForce*PLAYER.doubleJumpMul) < 0.01;
   keys['Space'] = false; player._jumpDown = false;
   for(let i=0;i<400 && !player.onGround;i++) updatePlayer(DT);
+  player.pos.x = home.x; player.pos.z = home.z; pinPlayer();   // leave the world as we found it
 
   restoreAccessories();
   const pass = detail.touchDoubleTapWorks &&
