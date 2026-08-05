@@ -4678,11 +4678,12 @@ const GOR = {
 
   HEALTH:        160,   // very tanky — rocks chip it, the pride wears it down slowly
 
-  BODY_R:        1.08,  // ⚠ COLLISION radius fed to collideStoneWalls — a hand-set constant that
+  BODY_R:        0.54,  // ⚠ COLLISION radius fed to collideStoneWalls — a hand-set constant that
                         // does NOT ride group.scale the way setHitbox's Box3 does, exactly like
-                        // PORC.BODY_R. It was 1.4 at scale 1.36; moved by hand with the 2026-08-05
-                        // shrink (1.4 × 1.05/1.36 = 1.081) or a smaller gorilla would be stopped
-                        // by stone walls it visibly stands clear of. MOVE IT WITH THE SCALE.
+                        // PORC.BODY_R. History: 1.4 at scale 1.36 → 1.08 at 1.05 → 0.54 at the
+                        // 2026-08-05b half-scale (0.525). Every one of those moves was BY HAND;
+                        // skip it and a smaller gorilla is stopped by stone walls it visibly
+                        // stands clear of. MOVE IT WITH THE SCALE — it is scale × 1.0286.
 
   SPEED_ROAM:    4.4,   // ground roam speed (day)
   SPEED_DROP:    11.5,  // burst speed closing on a lion at night
@@ -4844,18 +4845,20 @@ function makeGorilla(x, z){
 
   const ty = terrainY(x,z);
   group.position.set(x, ty, z);
-  // ⚠ SIZE, Steven 2026-08-05: 1.36 → 1.05, i.e. ×0.772. He asked for "2× porcupine"
-  //   (porcupine measures 3.32 long × 1.83 tall) and called the gorilla "way too big".
-  //   Only ONE of those two targets is reachable by scaling, because this mesh is a TALL
-  //   UPRIGHT ape — 2.82 long × 4.75 tall × 3.92 wide, i.e. taller than it is long (1.68:1),
-  //   where a porcupine is longer than it is tall (1.81:1). Matching 6.64 LONG would mean
-  //   scaling UP ×2.36 (the opposite of "shrink"); matching 3.66 TALL is the shrink he
-  //   actually described. So height is pinned at 2.00× the porcupine and the rest follows
-  //   uniformly: 2.18 long × 3.67 tall × 3.03 wide. Making it 6.64 long AND 3.66 tall needs a
-  //   ×2.4 non-uniform stretch along Z — a horizontal, dachshund-shaped gorilla — or a real
-  //   reproportion of the torso, which is a mesh change, not a size change.
-  //   ⚠ GOR.BODY_R moved with it by hand; setHitbox/attachHealthBar ride the scale for free.
-  group.scale.setScalar(1.05);     // head and shoulders over the pride — still the heaviest thing on the field
+  // ⚠ SIZE, Steven 2026-08-05 (second pass): 1.05 → 0.525, a flat HALVING off playing the
+  //   1.05 build. Measured 2.17 long × 3.67 tall × 3.02 wide → 1.09 × 1.83 × 1.51.
+  //   (First pass the same day was 1.36 → 1.05: "2× porcupine". Only ONE of that brief's two
+  //   targets was reachable by scaling — this mesh is a TALL UPRIGHT ape, taller than it is
+  //   long, where a porcupine is longer than it is tall — so height was pinned at 2× the
+  //   porcupine and the rest followed. That reasoning is unchanged, just halved again.)
+  //   It is no longer the tallest animal on the field: at 1.83 tall it now stands level with a
+  //   porcupine's HEIGHT (ratio 1.00, measured — it was exactly 2× before) and only ~1.34× a
+  //   lion's height (was 2.68×). It is still barely half a porcupine's LENGTH (ratio 0.55).
+  //   ⚠ GOR.BODY_R moved with it by hand (1.08 → 0.54). setHitbox/attachHealthBar/the
+  //   nameplate ride the scale for free — but note setHitbox's floor: hitR lands on the
+  //   global Math.max(1.1, …) clamp at this size, so the projectile catch cylinder no longer
+  //   shrinks in step with the body (see CONTEXT.md).
+  group.scale.setScalar(0.525);    // a compact, dense brawler — still the heaviest hitter on the field
   group.castShadow = true;
   group.name = 'gorilla';
   scene.add(group);
@@ -9404,7 +9407,7 @@ function attachHealthBar(o){
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:tex, transparent:true, depthTest:true }));
   sp.geometry.userData.keep = true;    // shared across all sprites — never dispose
   sp.userData.noFlash = true;          // belt & braces: the flash already skips !isMesh
-  // The bar lives inside a scaled group (gorilla 1.05, elephant 1.55, rhino
+  // The bar lives inside a scaled group (gorilla 0.525, elephant 1.55, rhino
   // 1.15, porcupine 1.28), so divide it back out — every bar is the same size
   // in the world. Read from o.mesh.scale, so it tracks any future resize.
   const gs = o.mesh.scale.x || 1;

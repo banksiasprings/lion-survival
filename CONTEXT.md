@@ -134,7 +134,8 @@ not flavour.
       additive glow halo** (`gorGlowTexture`) — amber at rest, red-hot in combat, cranked at night
       so a perched gorilla is two burning eyes in the canopy. Eyes/halos are `userData.noFlash`;
       the hit-flash moved to `.traverse` and skips `noFlash` so the body flashes white while the
-      eyes keep burning. Scale 1.36 (`dossiers/gorilla_render_2026-06-17.md`).
+      eyes keep burning. Mesh render: `dossiers/gorilla_render_2026-06-17.md`. **Scale is now 0.525**
+      (1.36 → 1.05 → 0.525 over the two 2026-08-05 shrinks — see the dated sections below).
 
 ## Tweaks (2026-06-28) — `dossiers/tweaks_2026-06-28.md`
 - **Spear** — *(2026-07-16: the old wood+rock crafted spear tool `throwSpear` was removed with the bottom
@@ -254,7 +255,7 @@ head: red track, green fill, `"34/85"` text. `THREE.Sprite` + per-animal `Canvas
   `userData.keep` (see the memory-discipline invariant above).
 - **Hit-flash safe:** a Sprite is `!isMesh`, and every flash loop swaps materials on `isMesh` children
   only, so the bars are skipped structurally (they also carry `noFlash` as belt & braces).
-- **Scale-compensated:** bars live inside scaled groups (gorilla 1.36, elephant 1.55, rhino 1.15), so
+- **Scale-compensated:** bars live inside scaled groups (gorilla 0.525, elephant 1.55, rhino 1.15), so
   `attachHealthBar` divides the group scale back out — every bar sits exactly **1.0 m clear of `hitTop`**
   and is sized off `hitR` (gazelle 1.15 → elephant 2.2 world units), well under the animal's own width.
 - **Visibility** (`updateHealthBars`, called from `animate` after every animal has moved): hidden at full
@@ -3191,3 +3192,57 @@ preserved exactly** — a chase that connects still hauls you to the bed and dro
   that window, so the second tap found the key already down, produced **no rising edge**, and the air jump
   simply never fired on a phone. The pulse now clears `keys['Space']` **and `_jumpDown`** before setting it,
   so every tap is its own edge however fast they come. Covered by the suite through the real handler.
+
+## 🦍 Gorilla HALVED again — scale 1.05 → 0.525 (2026-08-05b)
+Steven played the 1.05 build from the shrink earlier the same day and asked for **half of that, flat**.
+Purely a size change: **HP, damage, speeds, cooldowns, aggro, ranges and the FSM are byte-for-byte
+untouched** (asserted live — `HEALTH` 160, `SMACK_DMG` 50, `SWIPE_DMG` 30, `GRAB_DMG` 28, `LION_BITE_DPS` 9,
+`SPEED_ROAM` 4.4, `SPEED_DROP` 11.5 all unchanged after the edit).
+
+### Measured, in-page (Box3 over `isMesh` descendants, `rotation.y` zeroed, HP-bar sprite excluded)
+| | before (1.05) | after (0.525) | |
+|---|---|---|---|
+| long × tall × wide | 2.173 × 3.665 × 3.024 | **1.087 × 1.832 × 1.512** | exactly ×0.5 on every axis |
+| `hitR` | 1.762 | **1.100** | ⚠ **floored — see below** |
+| `hitTop` | 4.065 | **2.232** | rode the scale |
+| `GOR.BODY_R` | 1.08 | **0.54** | ⚠ hand-set |
+
+- **It is no longer the tallest thing on the field.** At 1.832 it now stands **level with a porcupine's
+  HEIGHT** (measured ratio **0.999**, where the first pass deliberately pinned it at 2.00×) and **1.337× a
+  lion** (was 2.68×). Against `TREE_H` 6 it is down to ~31% of canopy. It is still barely **half a
+  porcupine's LENGTH** (0.551) — the porcupine is a long low animal and the gorilla a short upright one, which
+  is the same proportion trap the first pass hit.
+- ⚠ **`hitR` did NOT halve, and this is the one number that did not do what the brief assumed.** `setHitbox`
+  derives it from the scaled Box3, so it *tries* to ride the scale — but it ends
+  `Math.max(1.1, max(rx,rz) + 0.25)`, and at this size the raw value is `0.756 + 0.25 = 1.006`, **under the
+  global 1.1 floor**. So the projectile catch cylinder lands on **1.1**, not the 0.881 a pure halving implies.
+  Consequence, stated rather than silently tuned: a thrown rock/spear/boomerang has a **catch radius ~25%
+  wider than the body deserves** — the gorilla is a slightly easier target than its silhouette suggests. The
+  floor is `setHitbox`'s and is shared by **every** animal in the game, so it was left alone: moving it to fix
+  one gorilla would re-tune every small creature's projectile hitbox at once.
+- ⚠ **`GOR.BODY_R` is the hand-set one, again.** It does not ride `group.scale` (same trap as `PORC.BODY_R`).
+  **1.08 → 0.54.** Verified through the *real* `gorillaMoveToward` against a *real* stone wall, 400 frames at
+  `SPEED_DROP`, both approach axes: **head-on into the 0.3-thick face** closest approach **0.690** = half-depth
+  0.15 + 0.54, and **along the 2.5-wide face** **1.790** = half-span 1.25 + 0.54 (the same geometry that read
+  2.33 at `BODY_R` 1.08). **0 crossings** either way — it is still stopped cold by stone.
+- **Rode the scale for free, no edit needed:** `setHitbox`'s `hitTop`, `attachHealthBar` and `attachNamePlate`
+  (both divide `o.mesh.scale.x` back out), and the whole `animateGorilla` pose rig — limbs are local-space
+  children of the scaled group.
+- **Left alone deliberately:** `MAUL_RANGE` 2.4 / `SWIPE_RANGE` 3.4 / `GRAB_RANGE` 4.2 / `SMASH_RANGE` 3.2 are
+  centre-to-centre **gameplay** reaches, not hitbox derivatives — the same call the first pass and
+  `PORC.CONTACT_R` got. They now look long relative to a 1.51-wide body (the swipe out-reaches the animal by
+  more than it used to); that is a **balance** decision for Steven, not a consequence of resizing, so it was
+  reported rather than moved.
+- **Verification:** 17/17 integration, 0 console errors. 3000-frame `animate()` soak (150 in-game s, patched
+  clock, stubbed `render`): **0 errors, 0 NaN**, all five FSM states exercised (sleeping/perched/roaming/
+  engaging/fleeing). Disposal re-checked over 4 spawn→**real death path**→dispose cycles with `dispose`
+  listeners on every material and texture: **0 leaks, textures disposed exactly once, the `userData.keep`
+  glow material never disposed and `_gorGlowTex` still alive**. (Materials fire >1 dispose because one
+  Lambert is shared across several boxes *within* one gorilla and `disposeObject3D` traverses per-mesh —
+  `dispose()` is idempotent in r128, the same pre-existing pattern noted for the cobra.)
+- **Offline sheet:** `dossiers/gorilla_scale.png` (`render_gorilla_scale.py`). ⚠ It exists because
+  `render_gorilla_compare.py` **cannot** show a size change — its `project()` recomputes pixels-per-unit per
+  panel from the mesh's own span, so every gorilla fills its cell identically whatever scale you pass. The new
+  script pins **one** ppu and **one** ground line across both panels and rules the lion/porcupine heights, so
+  the comparison is real. (Needed because the Browser pane wedged in the **canvas 0×0** variant —
+  `innerWidth/innerHeight` both 0 while `renderer.info.render.calls` read 3821.)

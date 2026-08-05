@@ -75,7 +75,12 @@ def new_gorilla(pose):
         limb((ax,2.30,0.06),arx,arz,[(0.58,2.05,0.58,FUR2,(0,-1.02,0)),(0.60,0.40,0.72,DARK,(0,-2.02,0.16))])
     for lx,(lrx,lrz) in ((-0.46,pose['legL']),(0.46,pose['legR'])):
         limb((lx,1.10,0.0),lrx,lrz,[(0.68,0.98,0.72,FUR2,(0,-0.49,0)),(0.58,0.28,0.82,DARK,(0,-0.96,0.18))])
-    return parts,1.36
+    return parts,GOR_SCALE
+
+# Live group.scale.setScalar() from makeGorilla(). 1.36 → 1.05 → 0.525 (2026-08-05).
+# The LOOK sheet auto-fits so this barely moves it; render_gorilla_scale.py is where
+# it actually matters, and that sheet passes its own scales explicitly.
+GOR_SCALE = 0.525
 
 def old_gorilla():
     parts=[]
@@ -170,28 +175,33 @@ def font(sz):
     return ImageFont.load_default()
 
 PW,PH=470,500
-cells=[
- ('BEFORE  ·  basic',      old_gorilla(),                 False, None),
- ('AFTER  ·  roaming (day)',new_gorilla(POSES['roaming']), False, EYES['roaming']),
- ('AFTER  ·  perched (night)',new_gorilla(POSES['perched']),True, EYES['perched']),
- ('AFTER  ·  swiping',      new_gorilla(POSES['swiping']), False, EYES['swiping']),
- ('AFTER  ·  smashing (night)',new_gorilla(POSES['smashing']),True,EYES['smashing']),
- ('AFTER  ·  tree-grab (night)',new_gorilla(POSES['treegrab']),True,EYES['treegrab']),
-]
-cols,rows=3,2; title_h=64
-sheet=Image.new('RGB',(PW*cols,title_h+PH*rows),(20,20,24))
-d=ImageDraw.Draw(sheet)
-d.text((20,18),'Lion Survival — gorilla: "make it cool"  (offline render of the actual mesh + animateGorilla eye-glow)',
-       font=font(21),fill=(241,196,15))
-for i,(label,(parts,scale),night,eyes) in enumerate(cells):
-    c,r=i%cols,i//cols
-    panel=project(parts,scale,PW,PH,night=night,eyes=eyes)
-    dd=ImageDraw.Draw(panel)
-    tag=(231,76,60) if label.startswith('BEFORE') else (46,160,90)
-    dd.rectangle([0,0,PW-1,PH-1],outline=(60,60,66),width=2)
-    dd.rectangle([12,12,22,36],fill=tag)
-    dd.text((30,12),label,font=font(19),fill=(255,255,255))
-    sheet.paste(panel,(c*PW,title_h+r*PH))
-out='/Users/openclaw/Documents/lion-survival/dossiers/gorilla_render_upgrade.png'
-sheet.save(out)
-print('wrote',out,sheet.size)
+
+# Everything below builds the LOOK sheet. Guarded so render_gorilla_scale.py can
+# import new_gorilla()/POSES/box_faces from here instead of re-declaring the mesh —
+# one source of truth for the gorilla's box geometry across both sheets.
+if __name__ == '__main__':
+ cells=[
+  ('BEFORE  ·  basic',      old_gorilla(),                 False, None),
+  ('AFTER  ·  roaming (day)',new_gorilla(POSES['roaming']), False, EYES['roaming']),
+  ('AFTER  ·  perched (night)',new_gorilla(POSES['perched']),True, EYES['perched']),
+  ('AFTER  ·  swiping',      new_gorilla(POSES['swiping']), False, EYES['swiping']),
+  ('AFTER  ·  smashing (night)',new_gorilla(POSES['smashing']),True,EYES['smashing']),
+  ('AFTER  ·  tree-grab (night)',new_gorilla(POSES['treegrab']),True,EYES['treegrab']),
+ ]
+ cols,rows=3,2; title_h=64
+ sheet=Image.new('RGB',(PW*cols,title_h+PH*rows),(20,20,24))
+ d=ImageDraw.Draw(sheet)
+ d.text((20,18),'Lion Survival — gorilla: "make it cool"  (offline render of the actual mesh + animateGorilla eye-glow)',
+        font=font(21),fill=(241,196,15))
+ for i,(label,(parts,scale),night,eyes) in enumerate(cells):
+     c,r=i%cols,i//cols
+     panel=project(parts,scale,PW,PH,night=night,eyes=eyes)
+     dd=ImageDraw.Draw(panel)
+     tag=(231,76,60) if label.startswith('BEFORE') else (46,160,90)
+     dd.rectangle([0,0,PW-1,PH-1],outline=(60,60,66),width=2)
+     dd.rectangle([12,12,22,36],fill=tag)
+     dd.text((30,12),label,font=font(19),fill=(255,255,255))
+     sheet.paste(panel,(c*PW,title_h+r*PH))
+ out='/Users/openclaw/Documents/lion-survival/dossiers/gorilla_render_upgrade.png'
+ sheet.save(out)
+ print('wrote',out,sheet.size)
