@@ -567,6 +567,72 @@ test('jump: coyote grace gives the strong jump just after walking off, then expi
 });
 
 // =====================================================================
+//  FEATURE 5 — 🏠 ROOFS ARE SHELTER, NOT WALLS
+// =====================================================================
+// Steven: "I can't walk under the roof." Roof AABBs were concat'd into the player's
+// horizontal wall push, and that push is purely XZ — so a roof floating 2.16 above the
+// feet blocked the player at its footprint edge.
+// ⚠ THE MULTI-INSTANCE SHAPE: a LINE of roofs walked end to end. One roof can be made to
+// pass by accident (step off its edge, clip a corner); a corridor of them is only
+// traversable if the underside genuinely stopped being a barrier, and it also catches a
+// fix that leaks state between roofs.
+test('roof: walk under a line of roofs unobstructed, and still stand on top', ()=>{
+  const detail = {}, DT = 1/60;
+  const clearRoofs = ()=>{ clearKitRoofs(); };
+  clearRoofs(); clearWalls(); pinPlayer();
+  woodCount = 5000;
+
+  // Build a corridor of 5 roofs along +Z, each placed over the player's own feet.
+  const X = 40, Z0 = 40, N = 5, STEP = ROOF.SIZE * 0.9;
+  for(let i=0;i<N;i++){
+    player.pos.set(X, 0, Z0 + i*STEP); pinPlayer();
+    placeKitRoof();
+  }
+  detail.roofsPlaced = kitRoofs.length;
+  const a0 = kitRoofs[0].aabb;
+  detail.headroom   = r2(a0.min.y - (terrainY(X, Z0) + 0.1));
+  detail.headClears = (terrainY(X, Z0) + 0.1 + PLAYER.eyeHeight) < a0.min.y;
+
+  // WALK the corridor end to end, on the ground, through the real push.
+  player.pos.set(X, 0, Z0 - 5); pinPlayer();
+  let blockedFrames = 0;
+  const zEnd = Z0 + (N-1)*STEP + 5;
+  for(let f=0; f<3000 && player.pos.z < zEnd; f++){
+    pinPlayer();
+    const before = player.pos.z;
+    player.pos.z += 0.15;
+    pushPlayerOutOfWalls();
+    if(player.pos.z < before + 0.15 - 1e-6) blockedFrames++;
+  }
+  detail.blockedFrames = blockedFrames;
+  detail.finalZ = r2(player.pos.z);
+  detail.walkedThrough = player.pos.z >= zEnd - 0.2;
+
+  // …and the top is STILL a floor: drop onto the middle roof and stand on it.
+  const mid = kitRoofs[(N/2)|0].aabb;
+  const cx = (mid.min.x+mid.max.x)/2, cz = (mid.min.z+mid.max.z)/2;
+  player.pos.set(cx, mid.max.y + 1.2, cz);
+  player.vel.set(0,0,0); player.onGround = false;
+  player.inTree = false; player.climbing = false; player.swimming = false;
+  for(let f=0; f<240 && !player.onGround; f++){
+    player.health = 100; player.hunger = 100; gameState='playing';
+    updatePlayer(DT);
+  }
+  detail.landedOnRoof   = player.onGround && player.pos.y > mid.max.y - 0.05;
+  detail.standingHeight = r2(player.pos.y);
+  detail.roofTop        = r2(mid.max.y);
+  // it is a floor, not a trampoline: stay put for a second
+  for(let f=0; f<60; f++){ player.health=100; player.hunger=100; gameState='playing'; updatePlayer(DT); }
+  detail.stillOnRoof = player.onGround && player.pos.y > mid.max.y - 0.05;
+
+  clearRoofs(); pinPlayer();
+  const pass = detail.roofsPlaced === N && detail.headClears &&
+               detail.blockedFrames === 0 && detail.walkedThrough &&
+               detail.landedOnRoof && detail.stillOnRoof;
+  return { pass, detail };
+});
+
+// =====================================================================
 //  FEATURE 4 — the crested porcupine ("spike-back")
 // =====================================================================
 function clearPorcs(){ [...porcupineMeshes].forEach(P=>killObj(P.mesh)); porcupineMeshes.length = 0; }

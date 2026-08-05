@@ -949,11 +949,36 @@ function wallSupportY(x, z, feetY, prevFeetY, vy){
 // (2) near a wall's end-cap the nearest-point vector points DIAGONALLY, so it shoved
 // you into the neighbouring wall, which shoved back — the pinball Steven hit.
 function pushPlayerOutOfWalls(){
-  const boxes = wallAABBs.concat(kitRoofs.map(r=>r.aabb));   // ⚠ roofs are solid to walk into, too
-  for(let i=0;i<boxes.length;i++){
-    const a = boxes[i];
+  for(let i=0;i<wallAABBs.length;i++){
+    const a = wallAABBs[i];
     if(player.pos.y >= a.max.y - WALL_STEP_UP) continue;       // on top, or a step up → it's a floor
     pushOutOfAABB(player.pos, a, PLAYER_WALL_R);                // the one shared MTV primitive
+  }
+  // ⚠ ROOFS ARE ONE-WAY PLATFORMS, NOT WALLS (2026-08-05c). They used to be concat'd
+  // into the list above — "roofs are solid to walk into, too" — and that is the bug
+  // Steven hit as "I can't walk under my own roof". `pushOutOfAABB` is deliberately
+  // PURELY XZ (it is shared with the animals, which are 2-D movers), so it treats a
+  // box as an INFINITE VERTICAL COLUMN. That is exactly right for a wall, which spans
+  // from the ground up through the player's body — and exactly wrong for a roof, which
+  // floats with open air underneath. Measured repro: roof over the player's head, its
+  // underside 2.16 above the feet and the head clearing it by 0.46, and the player was
+  // still ejected at the footprint edge for 68 consecutive frames.
+  //
+  // The two skips below are the general rule — vertical overlap must exist before a
+  // horizontal push can be right:
+  //   · top at/below step height → it is a floor or a step, walk up onto it
+  //   · feet below its underside → you are UNDER it; walk under, and jump up THROUGH
+  //     it to land on top (wallSupportY's swept `crossed` test catches the descent).
+  // ⚠ At ROOF.THICK 0.28 vs WALL_STEP_UP 0.7 those two bands OVERLAP, so a roof can
+  // never push at all — which is correct, because a 0.28 slab is something you step
+  // onto, never something you walk into. Written as the general test rather than
+  // `kitRoofs.length && return` so that thickening a roof past the step-up height
+  // automatically brings edge-blocking back instead of silently staying passable.
+  for(let i=0;i<kitRoofs.length;i++){
+    const a = kitRoofs[i].aabb;
+    if(player.pos.y >= a.max.y - WALL_STEP_UP) continue;       // on top / a step up → floor
+    if(player.pos.y <  a.min.y)                continue;       // underneath → shelter, not a barrier
+    pushOutOfAABB(player.pos, a, PLAYER_WALL_R);
   }
 }
 

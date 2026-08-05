@@ -234,6 +234,8 @@ completely. Step out and you're fair game again — the roof protects the tile, 
 never dives; its 15-damage kick is a ground attack, and it can't reach you on a roof at all.
 **Standing on top of a roof is the reverse deal:** nothing on the ground can touch you, but the sky can see you
 perfectly. Want cover from birds up there? Build a second roof over the first.
+A roof is a **one-way platform**: walk under it freely (it sits 2.3 above your feet, well over your head),
+and jump straight up **through** it to land on top. Only the top surface is solid.
 
 ### 🎒 Carrying things — [T] / the TAKE button
 You have **one hand and it holds one thing**. Press **[T]** (phone: the 🎒 **TAKE** button, which flips to
