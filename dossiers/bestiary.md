@@ -308,6 +308,10 @@ bottom tool hotbar. Wood & rocks are still collectible (Hand Axe / `E`); rocks f
 - 👟 **Swift Boots** — 15 % faster on foot.
 - 🦴 **Bone Talisman** — health regen ×2.2.
 - 🎒 **Forager's Satchel** — hunger drains 40 % slower.
+- 🪽 **Springbok Sinew** *(24 coins — the priciest accessory)* — while worn you get a **double jump**:
+  press jump again in mid-air for a second leap at **80 %** of the first (apex 3.3 m → 5.4 m). Without it
+  you get **one jump only**. Like the necklace, it's a **gate on a verb**, not a stat boost — and it costs
+  one of your two accessory slots.
 
 ---
 

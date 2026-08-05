@@ -433,6 +433,21 @@ test('loot: pickup tallies, craft materials route to their counters, cap evicts 
 // makes Space a hold-to-rise, so a player standing in a pond returns WATER.SWIM_UP (4.2) for
 // every press — which the first cut of this test faithfully recorded as "two identical
 // impulses, second not weaker". The spawn point is not guaranteed to be dry.
+// 🪽 The double jump is a PURCHASE (Springbok Sinew accessory) as of 2026-08-05c, so every
+// test that exercises jump #2 has to equip it first and hand the slots back afterwards —
+// `progress` is the persistent save object, not test-local state.
+let _savedAcc = null;
+function equipSinew(){
+  _savedAcc = progress.accessories.slice();
+  progress.unlocked.add('springbok_sinew');
+  if(!progress.accessories.includes('springbok_sinew')) progress.accessories[0] = 'springbok_sinew';
+}
+function unequipSinew(){
+  _savedAcc = progress.accessories.slice();
+  progress.accessories = progress.accessories.map(a => a==='springbok_sinew' ? null : a);
+}
+function restoreAccessories(){ if(_savedAcc){ progress.accessories = _savedAcc; _savedAcc = null; } }
+
 function standOnDryLand(){
   const before = { x:player.pos.x, z:player.pos.z };
   for(let r=0; r<=240; r+=6){
@@ -452,8 +467,10 @@ function standOnDryLand(){
 
 test('jump: two jumps per airborne trip, weaker second, refilled only by landing', ()=>{
   const home = standOnDryLand();
+  equipSinew();                       // 🪽 jump #2 is bought, not default
   const detail = {}, DT = 1/60;
   detail.startedDry = !player.swimming;
+  detail.sinewEquipped = maxJumps() === 2;
   const clearAir = ()=>{ keys['Space']=false; player._jumpDown=false; };
   // settle on the ground
   clearAir();
@@ -486,7 +503,7 @@ test('jump: two jumps per airborne trip, weaker second, refilled only by landing
   for(let c=0;c<3;c++){
     for(let i=0;i<240 && !player.onGround;i++) updatePlayer(DT);
     if(!player.onGround) break;
-    detail['refilledOnLanding'+c] = player.jumpsLeft === PLAYER.jumpsMax;
+    detail['refilledOnLanding'+c] = player.jumpsLeft === maxJumps();
     keys['Space']=true;  updatePlayer(DT); const a = player.vel.y;
     keys['Space']=false; updatePlayer(DT);
     keys['Space']=true;  updatePlayer(DT); const b = player.vel.y;
@@ -503,8 +520,11 @@ test('jump: two jumps per airborne trip, weaker second, refilled only by landing
   for(let i=0;i<300 && !player.onGround;i++) updatePlayer(DT);
   player.pos.x = home.x; player.pos.z = home.z; pinPlayer();
 
-  const pass = detail.startedDry &&
-               detail.groundedJumps === PLAYER.jumpsMax && detail.heldDidNotDoubleSpend &&
+  restoreAccessories();
+  // ⚠ literal 2, not maxJumps() — the slots are already handed back on the line above,
+  // so maxJumps() reads 1 again here and would score a correct build as a failure.
+  const pass = detail.startedDry && detail.sinewEquipped &&
+               detail.groundedJumps === 2 && detail.heldDidNotDoubleSpend &&
                detail.secondIsWeaker && detail.ratio >= 0.75 && detail.ratio <= 0.85 &&
                detail.jumpsAfterBoth === 0 && detail.thirdPressIgnored &&
                detail.cycles === 3 && detail.allCyclesIdentical;
@@ -515,12 +535,13 @@ test('jump: two jumps per airborne trip, weaker second, refilled only by landing
 // you the strong ground jump for a moment, and must NOT keep giving it forever.
 test('jump: coyote grace gives the strong jump just after walking off, then expires', ()=>{
   const home = standOnDryLand();
+  equipSinew();                       // 🪽 the weak late jump IS the air jump — needs the buy
   const DT = 1/60, detail = {};
   keys['Space']=false; player._jumpDown=false;
   for(let i=0;i<10;i++) updatePlayer(DT);
 
   // simulate walking off an edge: airborne with a full counter, no jump spent
-  player.onGround = false; player.airT = 0; player.jumpsLeft = PLAYER.jumpsMax;
+  player.onGround = false; player.airT = 0; player.jumpsLeft = maxJumps();
   player.pos.y = terrainY(player.pos.x, player.pos.z) + 4;
   player.vel.set(0,0,0);
   updatePlayer(DT);                                   // inside the grace window
@@ -532,7 +553,7 @@ test('jump: coyote grace gives the strong jump just after walking off, then expi
 
   // now let the grace lapse without jumping
   keys['Space']=false; player._jumpDown=false;
-  player.onGround = false; player.airT = 0; player.jumpsLeft = PLAYER.jumpsMax;
+  player.onGround = false; player.airT = 0; player.jumpsLeft = maxJumps();
   player.pos.y = terrainY(player.pos.x, player.pos.z) + 8;
   player.vel.set(0,0,0);
   for(let i=0;i<20;i++) updatePlayer(DT);             // 0.33 s > jumpCoyote
@@ -550,7 +571,7 @@ test('jump: coyote grace gives the strong jump just after walking off, then expi
   // INSIDE that window — so without an explicit release first the second tap produces no
   // rising edge and the air jump silently never fires on a phone. Drive the real handler.
   player.pos.y = terrainY(player.pos.x, player.pos.z) + 0.1; player.vel.set(0,0,0);
-  player.onGround = true; player.jumpsLeft = PLAYER.jumpsMax; player.airT = 0;
+  player.onGround = true; player.jumpsLeft = maxJumps(); player.airT = 0;
   keys['Space'] = false; player._jumpDown = false;
   updatePlayer(DT);
   doTouchAction('jump'); updatePlayer(DT); detail.touchFirst = Math.round(player.vel.y*100)/100;
@@ -560,9 +581,78 @@ test('jump: coyote grace gives the strong jump just after walking off, then expi
   keys['Space'] = false; player._jumpDown = false;
   for(let i=0;i<400 && !player.onGround;i++) updatePlayer(DT);
 
+  restoreAccessories();
   const pass = detail.touchDoubleTapWorks &&
-               detail.jumpsInGrace === PLAYER.jumpsMax && detail.graceGaveFullJump &&
-               detail.jumpsAfterGrace === PLAYER.jumpsMax - 1 && detail.lateGaveWeakJump;
+               detail.jumpsInGrace === 2 && detail.graceGaveFullJump &&
+               detail.jumpsAfterGrace === 1 && detail.lateGaveWeakJump;
+  return { pass, detail };
+});
+
+// 🪽 THE PURCHASE GATE (2026-08-05c). Steven's ask was to BUY the double jump; it had
+// shipped unlocked. The multi-instance shape here is REPETITION ACROSS THE TRANSITION:
+// three full jump cycles locked, then equip, then three unlocked, then unequip and three
+// more — because the failure mode for a gated counter is that it latches on the first
+// read (or the ground snap keeps refilling to the old max after the item comes off).
+test('jump: the air jump is gated on buying the Springbok Sinew', ()=>{
+  const home = standOnDryLand();
+  const DT = 1/60, detail = {};
+  const clearAir = ()=>{ keys['Space']=false; player._jumpDown=false; };
+  const settle = ()=>{ clearAir(); for(let i=0;i<400 && !player.onGround;i++) updatePlayer(DT);
+                       pinPlayer(); for(let i=0;i<6;i++) updatePlayer(DT); };
+  // Drive one complete airborne trip; returns every impulse the trip produced.
+  const trip = ()=>{
+    settle();
+    const out = [];
+    keys['Space']=true;  updatePlayer(DT); out.push(Math.round(player.vel.y*100)/100);
+    // ⚠ COAST 20 FRAMES BEFORE THE SECOND PRESS, and detect the jump as a RISE in vel.y.
+    // Both halves of that are load-bearing, and each one on its own gets the answer wrong:
+    //   · a fraction-of-the-first-impulse threshold scores a correctly-LOCKED build as
+    //     double-jumping, because two frames of gravity off a 12 still leaves 11.27;
+    //   · pressing immediately scores a correctly-UNLOCKED build as locked, because the
+    //     air jump ASSIGNS 9.6 and 9.6 is *below* the 11.27 it is replacing.
+    // Twenty frames puts vel.y at ~4.67 (apex is frame 33, so still rising), where 9.6 is
+    // unambiguously a rise and continued decay is unambiguously not.
+    clearAir();
+    for(let i=0;i<20;i++) updatePlayer(DT);
+    const vBefore = player.vel.y;
+    keys['Space']=true;  updatePlayer(DT);
+    if(player.vel.y > vBefore) out.push(Math.round(player.vel.y*100)/100);
+    clearAir();
+    return out;
+  };
+
+  unequipSinew();
+  detail.lockedMaxJumps = maxJumps();
+  detail.lockedTrips = [trip(), trip(), trip()];
+  restoreAccessories();
+
+  equipSinew();
+  detail.boughtMaxJumps = maxJumps();
+  detail.boughtTrips = [trip(), trip(), trip()];
+  restoreAccessories();
+
+  unequipSinew();                                   // …and taking it back off re-locks it
+  detail.relockedTrips = [trip(), trip(), trip()];
+  restoreAccessories();
+
+  settle();
+  player.pos.x = home.x; player.pos.z = home.z; pinPlayer();
+
+  const oneJump  = t => t.length === 1;
+  const twoJumps = t => t.length === 2 && t[1] > 0 && t[1] < t[0] &&
+                        Math.abs(t[1] - PLAYER.jumpForce*PLAYER.doubleJumpMul) < 0.01;
+  detail.lockedGaveOneEachTime   = detail.lockedTrips.every(oneJump);
+  detail.boughtGaveTwoEachTime   = detail.boughtTrips.every(twoJumps);
+  detail.relockedGaveOneEachTime = detail.relockedTrips.every(oneJump);
+  detail.priced                  = itemPrice('springbok_sinew');
+  detail.inShop                  = !!SHOP_BY_ID['springbok_sinew'] &&
+                                   SHOP_BY_ID['springbok_sinew'].type === 'accessory';
+  detail.notAStarter             = !SHOP_BY_ID['springbok_sinew'].starter;
+
+  const pass = detail.lockedMaxJumps === 1 && detail.boughtMaxJumps === 2 &&
+               detail.lockedGaveOneEachTime && detail.boughtGaveTwoEachTime &&
+               detail.relockedGaveOneEachTime &&
+               detail.priced > 0 && detail.inShop && detail.notAStarter;
   return { pass, detail };
 });
 

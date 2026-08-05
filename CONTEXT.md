@@ -3246,3 +3246,66 @@ untouched** (asserted live — `HEALTH` 160, `SMACK_DMG` 50, `SWIPE_DMG` 30, `GR
   script pins **one** ppu and **one** ground line across both panels and rules the lion/porcupine heights, so
   the comparison is real. (Needed because the Browser pane wedged in the **canvas 0×0** variant —
   `innerWidth/innerHeight` both 0 while `renderer.info.render.calls` read 3821.)
+
+## 🏠 Roofs are shelter again · 🪽 the double jump became a PURCHASE (2026-08-05c)
+Two fixes off Steven playing the build, shipped with the gorilla halving above.
+
+### 🏠 "I can't walk under the roof"
+- **Root cause, and it is a one-line category error.** `pushOutOfAABB` is deliberately **purely XZ** —
+  it is the shared MTV primitive the *animals* use, and animals are 2-D movers, so it treats every box as
+  an **infinite vertical column**. That is exactly right for a wall, which spans from the ground up
+  through the player's body. It is exactly wrong for a **roof**, which floats with open air underneath.
+  Roof AABBs were being `concat`'d straight into the player's horizontal push (`// ⚠ roofs are solid to
+  walk into, too`), so the underside of a roof blocked like a wall.
+- **Measured repro** (before): roof placed overhead, its underside **2.16 above the feet** and the
+  player's head clearing it by **0.46** — and the player was still ejected at the footprint edge, held at
+  z −2.70 for **68 consecutive frames**. The existing skip (`pos.y >= a.max.y - WALL_STEP_UP` → 1.99)
+  can never fire for a grounded player at 0.2.
+- **Fix:** walls and roofs no longer share one loop. A roof now needs genuine **vertical overlap** before
+  it can push: skip if its top is at/below step height (it is a floor), and skip if the **feet are below
+  its underside** (you are under it — walk under, and jump up *through* it to land on top, which
+  `wallSupportY`'s swept `crossed` test already catches).
+- ⚠ **Those two bands overlap at the shipped numbers, so a roof can never push at all** — correct,
+  because `ROOF.THICK` 0.28 is far under `WALL_STEP_UP` 0.7 and a 0.28 slab is something you step onto,
+  never something you walk into. It is written as the **general** test rather than an early `return` so
+  that thickening a roof past the step-up height automatically brings edge-blocking back instead of
+  silently staying passable.
+- **Trade, stated not hidden:** a roof is now a **one-way platform**. Meeting a roof's *edge* at chest
+  height from ~2 m lower ground clips through the slab instead of blocking. That is cosmetic and rare;
+  the bug it replaces made your own shelter unusable. A real fix is a ceiling/head-bonk pass, which would
+  also stop you jumping onto your own roof — so it was not taken.
+- **Walls re-verified unchanged:** wood and stone each still block head-on, 85 blocked frames, stopping
+  at 0.65 from centre (half-depth 0.15 + `PLAYER_WALL_R` 0.5). Roof disposal re-checked over 4
+  build→`clearKitRoofs` cycles: **0 material/texture leaks, 0 orphan roof meshes left in the scene**.
+
+### 🪽 The double jump is bought, not given
+Steven: *"I asked for a double jump ability so I could **BUY** it… so that was weird why that never
+loaded."* It shipped **unlocked by default** on 2026-08-05, so he went looking in the shop, found
+nothing, and read that as the feature being missing.
+- **New accessory `springbok_sinew` — 🪽 Springbok Sinew, 24 coins.** Modelled on `lion_necklace`, the
+  existing precedent for an accessory that **gates a verb** ("without it, no pounce") rather than scaling
+  a stat. Priciest accessory (necklace is 20, `kit_boomerang` 40); on the shop's own calibration (day 10
+  → 55 coins banked) it lands as a considered **mid-game** buy around day 7-8. It also costs one of only
+  **2 accessory slots**, so it competes with the cloak/boots/talisman.
+- ⚠ **ONE gate, `maxJumps()`** — `PLAYER.jumpsMax` must never be read directly again. Four sites read it
+  (take-off strength, ground-snap refill, coyote expiry, run reset) and if any one disagreed the counter
+  would desync. The coyote clause degrades correctly unbought: the full counter is 1, so letting the
+  grace lapse burns it to 0.
+- **The second jump was never broken.** The 2026-08-05 mobile fix (`doTouchAction('jump')` releasing
+  `keys['Space']` **and `_jumpDown`** before re-pulsing, so a fast double-tap makes its own rising edge)
+  **did** ship and is covered. Verified on both inputs: keyboard 12 → **9.6**, and the real phone handler
+  12 → **9.6** from **either** accessory slot; locked, the second tap does nothing (4.30, pure gravity).
+  So the only thing actually missing was the purchase.
+- **Suite 17 → 19 tests, all passing.** New: the **purchase gate** (3 jump cycles locked → equip → 3
+  unlocked → unequip → 3 re-locked, plus price/type/not-a-starter), and **roofs** (walk a corridor of 5
+  end to end at 0 blocked frames, then land and stand on one).
+- ⚠ **The jump-detector trap this cost two runs, worth knowing before writing any jump test.** "Did the
+  air jump fire" needs BOTH a coast and a rising-velocity test, and either alone is wrong in a way that
+  looks right: a *fraction-of-first-impulse* threshold scores a correctly-**locked** build as
+  double-jumping (two frames of gravity off a 12 still leaves 11.27), while pressing **immediately**
+  scores a correctly-**unlocked** build as locked (the air jump *assigns* 9.6, which is *below* the 11.27
+  it replaces). Coast 20 frames — vel.y ≈ 4.67, apex is frame 33 — then assert vel.y rose.
+
+### 🐊 Crocodiles — confirmed good, no action
+Steven on the 2026-08-05 ambush/drag work: *"crocodiles are better now."* Nothing changed here; recorded
+so a future session does not re-open it.

@@ -406,6 +406,8 @@ const PLAYER = {
   // have spent the air jump on the very next frame after take-off. The counter is refilled
   // the moment the feet find a floor (terrain OR a wall top — both go through the same
   // ground snap, so double-jumping onto a wall refills as expected).
+  // ⚠ READ THIS THROUGH maxJumps(), NEVER DIRECTLY (2026-08-05c). This is the value
+  // with the Springbok Sinew accessory equipped; without it the player gets 1.
   jumpsMax: 2,
   doubleJumpMul: 0.80,   // the air jump is 80% of the ground jump — inside Steven's 75-85%.
                          // Apex goes 3.27 → 5.36 m, i.e. it buys height, not a second full
@@ -425,6 +427,14 @@ const PLAYER = {
   pounceRange: 9.0, pounceDamage: 54  // long lunge, high damage; still ×3 more from a hidden ambush
 };
 let player = {};
+
+// 🪽 How many jumps the player currently gets per airborne trip. ONE gate, read by every
+// site that used to read PLAYER.jumpsMax — the take-off strength test, the ground-snap
+// refill, the coyote expiry and the run reset — so "did he buy it" can never disagree
+// between them. Unequipping mid-air can only ever shrink `jumpsLeft` on the next refill;
+// the ground snap re-reads this, so there is no stale-counter path.
+function hasDoubleJump(){ return progress.accessories.includes('springbok_sinew'); }
+function maxJumps(){ return hasDoubleJump() ? PLAYER.jumpsMax : 1; }
 
 // World objects
 let treeObjects = [];   // {mesh, trunk, pos, cooldown}
@@ -572,6 +582,14 @@ const SHOP_ITEMS = [
     desc:'A survivor\'s charm — you recover health more than twice as fast.' },
   { id:'forager_satchel', type:'accessory', icon:'🎒', name:'Forager\'s Satchel',
     desc:'Rationing pouch: hunger drains 40% slower.' },
+  // ⚠ THE DOUBLE JUMP IS A PURCHASE, NOT A DEFAULT (2026-08-05c). It shipped unlocked
+  // on 2026-08-05 and Steven's whole ask was to BUY it — "I asked for a double jump
+  // ability so I could BUY it… so that was weird why that never loaded". He went
+  // looking for it in the shop, found nothing, and read that as the feature missing.
+  // Modelled on lion_necklace, which is the existing precedent for an accessory that
+  // GATES A VERB ("without it, no pounce") rather than scaling a stat.
+  { id:'springbok_sinew', type:'accessory', icon:'🪽', name:'Springbok Sinew',
+    desc:'Spring-tendon cut from a springbok\'s hind leg and bound to your ankles. While worn you can DOUBLE JUMP — press jump again in mid-air for a second leap at 80% of the first. Without it, one jump only.' },
   { id:'name_tag',      type:'accessory', icon:'🏷️', name:'Name Tag',
     desc:'A scratched bone tag on a thong. While worn, [RMB] (phone: the 🏷️ NAME button) on any animal you are looking at gives it a name — "Bob" by default, or type your own. The name floats over its head, and the killfeed will remember it by name when it dies.' },
 ];
@@ -2755,7 +2773,7 @@ function initPlayer(){
     health: PLAYER.maxHealth,
     stamina: PLAYER.maxStamina,
     onGround: false,
-    jumpsLeft: PLAYER.jumpsMax,        // 🪽 refilled by the ground snap; 2 = ground + air jump
+    jumpsLeft: maxJumps(),             // 🪽 refilled by the ground snap; 2 only with the Sinew
     airT: 0,                           // seconds since the feet last had a floor (coyote time)
     _jumpDown: false,                  // Space latch — the double jump is EDGE-triggered
     crouching: false,
@@ -3280,7 +3298,7 @@ function updatePlayer(dt){
       // the ground snap below refills, so "cooldown = touching the ground" is structural
       // rather than a timer anyone has to remember to clear.
       if(jumpEdge && !stunned && player.jumpsLeft > 0){
-        const ground = (player.jumpsLeft === PLAYER.jumpsMax);
+        const ground = (player.jumpsLeft === maxJumps());
         player.vel.y = PLAYER.jumpForce * (ground ? 1 : PLAYER.doubleJumpMul);
         player.jumpsLeft--;
         player.onGround = false;
@@ -3317,7 +3335,7 @@ function updatePlayer(dt){
     player.vel.y = 0;
     player.onGround = true;
     player.airT = 0;
-    player.jumpsLeft = PLAYER.jumpsMax;   // 🪽 touching ANY floor is the whole cooldown
+    player.jumpsLeft = maxJumps();        // 🪽 touching ANY floor is the whole cooldown
   } else {
     player.onGround = false;
     player.airT += dt;
@@ -3325,8 +3343,11 @@ function updatePlayer(dt){
     // edge still holds a full `jumpsLeft` and therefore still gets the FULL-strength jump.
     // Once it lapses, burn the ground jump so only the air jump is left — otherwise you
     // could stroll off a wall and get the strong jump at any point during the fall.
-    if(player.airT > PLAYER.jumpCoyote && player.jumpsLeft === PLAYER.jumpsMax){
-      player.jumpsLeft = PLAYER.jumpsMax - 1;
+    // ⚠ Reads maxJumps(), so it degrades correctly WITHOUT the Sinew: there the full
+    // counter is 1, and letting the grace lapse burns it to 0 — walk off a ledge and
+    // you get nothing, which is the un-upgraded contract.
+    if(player.airT > PLAYER.jumpCoyote && player.jumpsLeft === maxJumps()){
+      player.jumpsLeft = maxJumps() - 1;
     }
   }
 
@@ -9729,6 +9750,12 @@ const COIN_PRICES = {
   kit_hammer:     18,
   lion_necklace:  20,    // …and still costs 1 lion tooth to craft
   kit_stonewall:  20,
+  springbok_sinew:24,    // 🪽 the double jump. Priciest ACCESSORY — a permanent traversal
+                         // upgrade that also competes for one of only 2 accessory slots.
+                         // Above lion_necklace (20, the other verb-gating accessory),
+                         // below kit_boomerang (40). On the calibration above (day 10 →
+                         // 55 coins banked) it lands as a considered mid-game buy around
+                         // day 7-8 rather than a day-2 default.
   kit_boomerang:  40,    // …and still costs 1 elephant tusk
   kit_crossbow:   80,    // Steven: "super expensive". Also still costs 1 rhino horn.
 };
@@ -13142,7 +13169,7 @@ function resetGame(){
   crouchToggle = false;                                      // stand up on restart (clear the crouch tap-toggle)
   // 🪽 fresh legs, and CLEAR THE LATCH — restarting with Space still held would otherwise
   // leave `_jumpDown` true and swallow the first jump of the new run.
-  player.jumpsLeft = PLAYER.jumpsMax; player.airT = 0; player._jumpDown = false;
+  player.jumpsLeft = maxJumps(); player.airT = 0; player._jumpDown = false;
   if(camera){ camera.fov = BASE_FOV; camera.updateProjectionMatrix(); }
   const sc = document.getElementById('scope'); if(sc){ sc.style.display='none'; sc._on=false; }
   kills      = 0;
