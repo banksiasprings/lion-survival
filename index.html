@@ -607,6 +607,7 @@ let kitGates  = [];                 // { mesh, swing, open } hinged Palisade Gat
 let berryBushes = [];               // 🫐 { mesh, pos, berries[], picked } — see the berry module
 let cheetahMeshes = [];             // 🐆 the fastest thing alive — see the cheetah module
 let porcupineMeshes = [];           // 🦔 crested porcupine ("spike-back") — passive until hit
+let hippoMeshes = [];               // 🦛 hippopotamus — pond grazer, night wanderer, tusk charger
 let kitBrambles = [];               // 🌿 bramble fences — NOT in wallMeshes (they slow, they don't block)
 let kitRoofs   = [];                // 🏠 { mesh, aabb } flat walkable roofs — see the roof module
 // 🎒 CARRY — the single-slot hand. Steven: "make a button so you can pick up rocks and
@@ -2865,6 +2866,9 @@ function registerControls(){
       return;
     }
     keys[e.code] = true;
+    // 👻 Escape aborts an armed placement BEFORE anything else looks at the key — it is
+    // the universal "get me out of this" and must not fall through to the loadout.
+    if(e.code==='Escape' && _buildAim){ e.preventDefault(); cancelBuildAim('cancelled'); return; }
     if(e.code==='Tab'){ e.preventDefault(); openShop('game'); return; }   // open kit loadout (pauses)
     if(player.stunTimer > 0) return;   // dazed by a gorilla tree-grab — no actions
     if(e.code==='KeyZ') useActiveAbility();      // kit: use the active ability (LMB also does)
@@ -2910,18 +2914,42 @@ function registerControls(){
     if(uiPaused) return;   // loadout overlay open — let the DOM handle its own clicks
     if(!isPointerLocked){ renderer.domElement.requestPointerLock(); return; }
     if(player.stunTimer > 0) return;   // dazed by a gorilla tree-grab — no actions
-    if(e.button===0) useActiveAbility();   // LMB uses the active kit ability
-    if(e.button===2){                      // RMB: scope-zoom while the Crossbow is active, else drop/release
+    // 👻 BUILD TOOLS COMMIT ON RELEASE (Steven, 2026-08-07: "commit on release, cancel on
+    // right-click or escape"). Only the five placeables behave this way — everything else
+    // still fires on the press, because a spear you have to release to throw would feel
+    // broken. Holding LMB arms the placement and the ghost keeps tracking your aim; let go
+    // and it builds; right-click or Escape while held and nothing is built and nothing is
+    // charged. `_buildAim` records WHICH tool armed it, so switching tools mid-hold
+    // cancels rather than placing the wrong thing.
+    if(e.button===0){
+      const aid = progress.abilities[progress.activeAbility];
+      if(GHOST_FOR[aid]) _buildAim = aid;      // armed — the commit happens on mouseup
+      else useActiveAbility();
+    }
+    if(e.button===2){                      // RMB: cancel a held placement, else scope-zoom / drop-release
+      if(_buildAim){ cancelBuildAim('cancelled'); return; }
       if(progress.abilities[progress.activeAbility]==='kit_crossbow') scopeHeld = true;
       else onRightClick();
     }
   });
   // RMB release always ends the scope zoom (harmless if it wasn't scoping).
-  document.addEventListener('mouseup', e=>{ if(e.button===2) scopeHeld = false; });
+  document.addEventListener('mouseup', e=>{
+    if(e.button===2) scopeHeld = false;
+    if(e.button===0 && _buildAim){
+      // Commit — but only if the SAME tool is still active. [R] mid-hold means you changed
+      // your mind about what you were building, which is a cancel, not a mis-place.
+      const same = progress.abilities[progress.activeAbility] === _buildAim;
+      _buildAim = null;
+      if(same && gameState==='playing' && !uiPaused && player.stunTimer <= 0) useActiveAbility();
+    }
+  });
   document.addEventListener('contextmenu', e=>e.preventDefault());
 
   document.addEventListener('pointerlockchange', ()=>{
     isPointerLocked = !!document.pointerLockElement;
+    // Losing the pointer (Escape, alt-tab, the browser stealing focus) can never leave a
+    // placement armed — the mouseup that would have committed it may never arrive.
+    if(!isPointerLocked && _buildAim) cancelBuildAim(null);
   });
 }
 
@@ -3198,7 +3226,7 @@ function speciesOf(o){
   if(o.species && o.species!=='crocodile') return o.species;
   const L = [[lionMeshes,'lion'], [preyMeshes,'animal'], [dogMeshes,'wild dog'],
              [cheetahMeshes,'cheetah'], [porcupineMeshes,'porcupine'],
-             [crocMeshes,'crocodile'], [gorillaMeshes,'gorilla'],
+             [crocMeshes,'crocodile'], [hippoMeshes,'hippo'], [gorillaMeshes,'gorilla'],
              [rhinoMeshes,'rhino'], [snakeMeshes,'serpent'], [secretaryMeshes,'secretary bird'],
              [eagleMeshes,'martial eagle'], [skyVultureMeshes,'vulture']];
   for(const [list,nm] of L) if(list && list.indexOf(o) >= 0) return nm;
@@ -7960,6 +7988,7 @@ function updateCreatureVenom(dt){
   porcupineMeshes.forEach(tick);
   // 🐊 A croc only carries venom if it was hit while hauled out — see the spit gate.
   crocMeshes.forEach(tick);
+  hippoMeshes.forEach(tick);   // 🦛
   rhinoMeshes.forEach(tick); dogMeshes.forEach(tick); skyVultureMeshes.forEach(tick);
   secretaryMeshes.forEach(tick);
   eagleMeshes.forEach(E=>{ if(!E.dying) tick(E); });
@@ -9572,7 +9601,7 @@ function reapNamedAnimals(){
 function updateNamePlates(){
   reapNamedAnimals();
   const lists = [lionMeshes, preyMeshes, dogMeshes, cheetahMeshes, porcupineMeshes,
-                 crocMeshes, gorillaMeshes, rhinoMeshes, snakeMeshes, secretaryMeshes,
+                 crocMeshes, hippoMeshes, gorillaMeshes, rhinoMeshes, snakeMeshes, secretaryMeshes,
                  eagleMeshes, skyVultureMeshes];
   for(const L of lists){
     if(!L) continue;
@@ -9610,6 +9639,7 @@ function updateHealthBars(dt){
   cheetahMeshes.forEach(step);
   porcupineMeshes.forEach(step);
   crocMeshes.forEach(step);
+  hippoMeshes.forEach(step);
   skyVultureMeshes.forEach(step); snakeMeshes.forEach(step);
   eagleMeshes.forEach(step); secretaryMeshes.forEach(step);
 }
@@ -9734,6 +9764,19 @@ function updateThrownRocks(dt){
         C.lastHitBy = player; C.lastHitKind = 'player';
         hit = true;
         showKillfeed(C.health<=0 ? ic+' The crocodile is dead!' : ic+' '+wname+' bites into the crocodile!');
+      }
+    });
+    // 🦛 Hippo — 300 HP. Ranged is the sane way to fight one: a gore is 48 and its
+    // charge outruns a walk, so trading melee with a hippo is a losing proposition.
+    // ⚠ Any hit trips the HP-drop watchdog in updateHippos, which sends it RETREATING
+    // for its pond — so shooting a hippo drives it off rather than pulling it onto you.
+    if(!hit) hippoMeshes.forEach(H=>{
+      if(H.health>0 && projHit(r, H)){
+        H.health -= r.crossbow ? 50 : r.spear ? 80 : 15*m;
+        H.flashTimer = 0.25;
+        H.lastHitBy = player; H.lastHitKind = 'player';
+        hit = true;
+        showKillfeed(H.health<=0 ? ic+' The hippo is down!' : ic+' '+wname+' thuds into the hippo!');
       }
     });
     // 🐆 Cheetah — squishy (70): a spear or bolt puts it down.
@@ -10161,6 +10204,7 @@ function updateBoomerang(r, dt, i){
   // to melee and projectiles until 2026-07-31. Found while adding the porcupine.
   strike(cheetahMeshes,'cheetah');
   strike(crocMeshes,'crocodile');
+  strike(hippoMeshes,'hippo');
   strike(skyVultureMeshes,'skyvulture');   // ranged reaches the bird at any altitude (projHit tests its 3D pos)
   strike(eagleMeshes,'eagle', E=>E.dying);
   strike(secretaryMeshes,'secretary');
@@ -10327,6 +10371,65 @@ function roofUnderPlayer(){
 // from within half a wall's width (1.25) — near enough that the wall you asked for still
 // covers where you aimed. Walk to the rim and aim properly out into space and it is
 // beyond that slack, so it refuses. Both behaviours come out of the one rule.
+// ---- 🧱 OCCUPIED SPACE — "there is already something built there" -------------
+// Steven listed "wall in occupied space" as a RED preview state, and the game had no
+// such rule: two walls could be dropped on the exact same footprint, and the second
+// one silently charged 2 more wood for a wall you could not see, could not tell apart,
+// and had to hammer twice to remove.
+//
+// ⚠ THE TEST IS OVERLAP **AREA**, NOT PER-AXIS PENETRATION, and that is the whole
+// subtlety. A wall is 2.5 × 0.3, so the naive "do they overlap on every axis by at
+// least t" test is unusable at any t: two walls stacked on the same spot overlap by
+// only 0.3 on the thin axis, which is *less* than two walls meeting at a right-angled
+// corner overlap on both. Area separates them cleanly and by a wide margin:
+//   same footprint  2.50 × 0.30 = 0.750   ← must refuse
+//   corner join     0.30 × 0.30 = 0.090   ← must allow (this is how you build a ring)
+//   side by side / end to end    ≈ 0      ← must allow
+// 0.25 sits in the gap with 3× headroom either way.
+const OCC_AREA = 0.25;   // m² of shared footprint that counts as "already built there"
+const OCC_Y    = 0.20;   // …and they must share this much HEIGHT, so a wall on deck 3
+                         // never conflicts with the one directly below it on deck 2.
+// Axis-aligned extent of a box of (w × d) spun to `yaw` — matches what Box3.setFromObject
+// produces for the real mesh, so the preview and the collider agree on the footprint.
+function buildHalfExtent(w, d, ry){
+  const c = Math.abs(Math.cos(ry)), s = Math.abs(Math.sin(ry));
+  return { hx: c*w*0.5 + s*d*0.5, hz: s*w*0.5 + c*d*0.5 };
+}
+// Scalar-only, zero-allocation: this runs every frame while a build tool is held, and
+// `wallAABBs` can be 100 boxes deep. (Allocating here is the mistake `wallSupportY`
+// shipped and paid 21 µs a frame for.)
+function buildSpaceOccupied(x, yBase, z, w, h, d, ry, includeRoofs){
+  const e = buildHalfExtent(w, d, ry);
+  const minX = x-e.hx, maxX = x+e.hx, minZ = z-e.hz, maxZ = z+e.hz;
+  const minY = yBase,  maxY = yBase+h;
+  const hits = (aminx,aminy,aminz,amaxx,amaxy,amaxz)=>{
+    const ox = Math.min(maxX,amaxx) - Math.max(minX,aminx); if(ox <= 0) return false;
+    const oz = Math.min(maxZ,amaxz) - Math.max(minZ,aminz); if(oz <= 0) return false;
+    const oy = Math.min(maxY,amaxy) - Math.max(minY,aminy); if(oy <= OCC_Y) return false;
+    return ox*oz > OCC_AREA;
+  };
+  for(let i=0;i<wallAABBs.length;i++){
+    const a = wallAABBs[i];
+    if(hits(a.min.x,a.min.y,a.min.z,a.max.x,a.max.y,a.max.z)) return true;
+  }
+  // An OPEN gate is out of wallAABBs (that is what "open" means), but its doorway is
+  // still a built thing — walling it shut from the outside would be a paid-for wall
+  // that the gate then swings into. Tested at its CLOSED footprint, computed inline.
+  for(let i=0;i<kitGates.length;i++){
+    const g = kitGates[i];
+    if(!g.open || !g.mesh.parent) continue;
+    const ge = buildHalfExtent(WALL_W, WALL_D, g.mesh.rotation.y);
+    const gy = g.mesh.position.y - WALL_H*0.5;
+    if(hits(g.mesh.position.x-ge.hx, gy, g.mesh.position.z-ge.hz,
+            g.mesh.position.x+ge.hx, gy+WALL_H, g.mesh.position.z+ge.hz)) return true;
+  }
+  if(includeRoofs) for(let i=0;i<kitRoofs.length;i++){
+    const a = kitRoofs[i].aabb;
+    if(hits(a.min.x,a.min.y,a.min.z,a.max.x,a.max.y,a.max.z)) return true;
+  }
+  return false;
+}
+
 function wallPlacementPlan(){
   const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
   const p   = player.pos.clone().addScaledVector(fwd, 2.5);
@@ -10346,9 +10449,14 @@ function wallPlacementPlan(){
     if(Math.hypot(cx-x, cz-z) <= WALL_W*0.5){ x = cx; z = cz; roofY = a.max.y; snapped = true; }
   }
   const gy = terrainY(x, z);
+  // One gate for every legal branch below — a wall may not go where one already stands.
+  const occupied = (px, py, pz, pyaw)=>
+    buildSpaceOccupied(px, py, pz, WALL_W, WALL_H, WALL_D, pyaw, false)
+      ? 'Something is already built there' : null;
   if(roofY > gy + STOREY_MIN_LIFT){
-    return { x, z, y:roofY, yaw:Math.round(yaw/STOREY_SNAP)*STOREY_SNAP,
-             elevated:true, snapped, blocked:null };
+    const ry = Math.round(yaw/STOREY_SNAP)*STOREY_SNAP;
+    return { x, z, y:roofY, yaw:ry, elevated:true, snapped,
+             blocked: occupied(x, roofY, z, ry) };
   }
   // Up a storey with nothing under the target → refuse. This is the "no floating walls"
   // guard, and it is the wall-side twin of the roof's own `player.onGround` anti-cheat.
@@ -10360,7 +10468,7 @@ function wallPlacementPlan(){
     return { x, z, y:player.pos.y, yaw, elevated:false, snapped:false,
              blocked:'No roof under there — walls go on the ground or on a roof' };
   }
-  return { x, z, y:gy, yaw, elevated:false, snapped:false, blocked:null };
+  return { x, z, y:gy, yaw, elevated:false, snapped:false, blocked: occupied(x, gy, z, yaw) };
 }
 
 // ---- 👻 PLACEMENT PREVIEW ------------------------------------------------------
@@ -10377,34 +10485,163 @@ function wallPlacementPlan(){
 // ⚠ DISPOSAL: one lazily-built singleton that is never freed, with `userData.keep` on
 // both its geometries and both its materials. If anything ever does killObj it, the keep
 // flags protect the GPU resources and the `!parent` re-attach below puts it back.
-const GHOST_COL = { ground:0x6fdc6f, storey:0x4fc3ff, blocked:0xff5a5a };
-let _wallGhost = null;
-function wallGhostMesh(){
-  if(_wallGhost) return _wallGhost;
-  const geo = new THREE.BoxGeometry(WALL_W, WALL_H, WALL_D); geo.userData.keep = true;
+//
+// ⚠ EXTENDED TO ROOFS, BRAMBLES AND GATES (2026-08-07) — Steven asked for "the same
+// treatment" on the other three placeables. The important part is that it is the same
+// ARCHITECTURE, not four copies of it: every placeable has exactly one
+// `*PlacementPlan()` that both the ghost and the placer read. A fourth preview that
+// recomputed its own target would be a fourth preview that can lie.
+const GHOST_COL = {
+  ground:  0x6fdc6f,   // legal, on the ground
+  storey:  0x4fc3ff,   // legal, landing on a roof one storey up
+  blocked: 0xff5a5a,   // refused — nothing will be built and nothing charged
+  warn:    0xffc23d,   // ⚠ LEGAL BUT PROBABLY NOT WHAT YOU WANT — see the gate note
+};
+// One ghost per placeable, each a lazily-built singleton that is never freed, with
+// `userData.keep` on both geometries and both materials (a Mesh + its EdgesGeometry
+// outline). If anything ever does killObj one, the keep flags protect the GPU
+// resources and the `!parent` re-attach in the updater puts it back.
+// ⚠ Names end in 'Ghost', never the real object's name — the click raycast filters
+// scene children by name ('tree'/'wall'/'boundary'/'terrain'), so a ghost called
+// 'wall' would make the preview itself an axe target floating in front of your face.
+const _ghosts = {};
+// 👻 THE ARMED PLACEMENT. Non-null while LMB is held down on a build tool: the ghost
+// keeps tracking, and the object is only built when the button comes back up. Cleared by
+// a commit, by right-click, by Escape, by switching tools, and by losing pointer lock —
+// every path out, because a stuck `_buildAim` would swallow the next ordinary click.
+let _buildAim = null;
+function cancelBuildAim(why){
+  if(!_buildAim) return;
+  const spec = GHOST_FOR[_buildAim];
+  _buildAim = null;
+  if(why && spec) showKillfeed('✋ Placement '+why);
+}
+function ghostMesh(key, w, h, d){
+  if(_ghosts[key]) return _ghosts[key];
+  const geo = new THREE.BoxGeometry(w, h, d); geo.userData.keep = true;
   const mat = new THREE.MeshBasicMaterial({ color:GHOST_COL.ground, transparent:true,
                                             opacity:0.30, depthWrite:false });
   mat.userData.keep = true;
   const m = new THREE.Mesh(geo, mat);
-  m.name = 'wallGhost'; m.renderOrder = 3;
+  m.name = key + 'Ghost'; m.renderOrder = 3;
   const eg = new THREE.EdgesGeometry(geo); eg.userData.keep = true;
   const em = new THREE.LineBasicMaterial({ color:GHOST_COL.ground, transparent:true, opacity:0.9 });
   em.userData.keep = true;
   m.add(new THREE.LineSegments(eg, em));
-  _wallGhost = m;
+  _ghosts[key] = m;
   return m;
 }
-function updateWallGhost(){
+
+// ---- 🏠 ROOF PLAN ----
+// ⚠ STEVEN SAID "roof-must-sit-on-walls"; THE GAME'S RULE IS "you must be standing on
+// something solid" (`player.onGround`), and that is the rule the preview honours —
+// because it is the rule the placer has enforced since 2026-07-31 and the two must not
+// disagree. They mean the same thing in the case he cares about (no floating bases),
+// but they differ in one place worth stating: you can raise a roof standing on bare
+// GROUND with no walls at all, which is how every ground floor in the game gets built.
+// Requiring literal walls underneath would make the first roof of any structure
+// impossible to place. Flagged, not silently reinterpreted.
+//
+// ⚠ A ROOF DELIBERATELY HAS **NO** OCCUPIED-SPACE RULE, and a red test is why. The first
+// version applied the wall's rule here too and immediately refused 2 of 5 roofs in the
+// shipped roof-corridor test: it lays roofs at `ROOF.SIZE * 0.9` spacing, so each one
+// overlaps its neighbour by 0.44 × 4.4 = 1.94 m² on purpose. OVERLAPPING ROOFS ARE THE
+// FEATURE — it is how you roof a corridor without a seam, and CONTEXT already documents
+// "two roofs side by side make one wide floor". Steven asked for the occupied-space rule
+// on WALLS ("wall in occupied space"); extending it to roofs would have quietly broken
+// the way every wide structure in the game is built.
+function roofPlacementPlan(){
+  const yBase = player.pos.y + ROOF.CLEARANCE - ROOF.THICK*0.5;
+  return { x:player.pos.x, z:player.pos.z, y:yBase, yaw:0,
+           elevated: !!roofUnderPlayer(),
+           blocked: roofPlacementBlocked() };
+}
+
+// ---- 🌿 BRAMBLE PLAN ----
+// A bramble is the one placeable with no support rule at all — it is a hazard lying on
+// the ground, not a structure. The single thing that is genuinely invalid is planting
+// it in DEEP water, where the tangle would sit on the pond bed metres under the surface
+// doing nothing. Shallows stay legal: a thorn fence at a pond rim is a real tactic
+// against everything that comes to drink.
+const BRAMBLE_GHOST = { w:2.30, h:0.90, d:0.36 };   // the tangle's actual visual extent
+function bramblePlacementPlan(){
+  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  const p = player.pos.clone().addScaledVector(fwd, 2.5);
+  const gy = terrainY(p.x, p.z);
+  const w = poolAt(p.x, p.z);
+  const deep = w && (w.groundY - gy) > 1.2;    // over your head-ish — a drowned fence
+  return { x:p.x, z:p.z, y:gy, yaw, elevated:false,
+           blocked: deep ? 'Too deep — the thorns would be underwater' : null };
+}
+
+// ---- 🚪 GATE PLAN ----
+// ⚠ A FREE-STANDING GATE IS AMBER, NOT RED — and this is a deliberate departure from
+// the brief, stated rather than buried. Steven listed "gate not touching a wall" among
+// the RED cases. Making it a hard refusal would mean the FIRST gate of any compound is
+// impossible to place: you would have to build a wall, then a gate beside it, forever,
+// and "place the gate, then wall out from it" — the natural build order — would stop
+// working. So the preview says it (amber = "this gate opens onto nothing"), and the
+// placer still lets you do it. Promoting amber to a refusal is one line: return the
+// reason as `blocked` instead of `warn`.
+const GATE_TOUCH = 1.4;      // gap to the nearest wall that still counts as "attached"
+function gateTouchesWall(x, z, ry){
+  const e = buildHalfExtent(WALL_W, WALL_D, ry);
+  const minX = x-e.hx-GATE_TOUCH, maxX = x+e.hx+GATE_TOUCH;
+  const minZ = z-e.hz-GATE_TOUCH, maxZ = z+e.hz+GATE_TOUCH;
+  for(let i=0;i<wallAABBs.length;i++){
+    const a = wallAABBs[i];
+    if(a.elevated) continue;                       // a wall a storey up is not a jamb
+    if(a.max.x < minX || a.min.x > maxX) continue;
+    if(a.max.z < minZ || a.min.z > maxZ) continue;
+    return true;
+  }
+  return false;
+}
+function gatePlacementPlan(){
+  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  const p = player.pos.clone().addScaledVector(fwd, 2.5);
+  const gy = terrainY(p.x, p.z);
+  const occupied = buildSpaceOccupied(p.x, gy, p.z, WALL_W, WALL_H, WALL_D, yaw, false);
+  const w = poolAt(p.x, p.z);
+  const deep = w && (w.groundY - gy) > 1.2;
+  return { x:p.x, z:p.z, y:gy, yaw, elevated:false,
+           blocked: occupied ? 'Something is already built there'
+                  : deep    ? 'Too deep — a gate needs dry footings' : null,
+           warn: gateTouchesWall(p.x, p.z, yaw) ? null
+               : 'This gate is free-standing — anything can walk around it' };
+}
+
+// ---- THE UPDATER — one ghost visible at a time, driven by the equipped tool ----
+// ⚠ Every ghost is hidden before the active one is drawn. Without that, switching from
+// the wall to the roof would leave the wall ghost frozen in the world where you last
+// aimed it, which reads as a wall you somehow placed and cannot hammer.
+const GHOST_FOR = {
+  kit_wall:      { key:'wall',    plan:()=>wallPlacementPlan(),    w:()=>WALL_W, h:()=>WALL_H, d:()=>WALL_D },
+  kit_stonewall: { key:'wall',    plan:()=>wallPlacementPlan(),    w:()=>WALL_W, h:()=>WALL_H, d:()=>WALL_D },
+  kit_gate:      { key:'gate',    plan:()=>gatePlacementPlan(),    w:()=>WALL_W, h:()=>WALL_H, d:()=>WALL_D },
+  kit_roof:      { key:'roof',    plan:()=>roofPlacementPlan(),    w:()=>ROOF.SIZE, h:()=>ROOF.THICK, d:()=>ROOF.SIZE },
+  kit_bramble:   { key:'bramble', plan:()=>bramblePlacementPlan(), w:()=>BRAMBLE_GHOST.w, h:()=>BRAMBLE_GHOST.h, d:()=>BRAMBLE_GHOST.d },
+};
+// Which colour band does a plan read as? Exported as its own function so the tests can
+// assert the colour a player would actually see, not a reimplementation of the rule.
+function ghostKeyFor(plan){
+  if(!plan) return 'blocked';
+  if(plan.blocked)  return 'blocked';
+  if(plan.warn)     return 'warn';
+  return plan.elevated ? 'storey' : 'ground';
+}
+function updatePlacementGhosts(){
   const id = progress.abilities[progress.activeAbility];
-  const want = (id === 'kit_wall' || id === 'kit_stonewall') && gameState === 'playing';
-  if(!want){ if(_wallGhost) _wallGhost.visible = false; return; }
-  const g = wallGhostMesh();
+  const spec = (gameState === 'playing') ? GHOST_FOR[id] : null;
+  for(const k in _ghosts){ if(!spec || _ghosts[k] !== _ghosts[spec.key]) _ghosts[k].visible = false; }
+  if(!spec) return;
+  const g = ghostMesh(spec.key, spec.w(), spec.h(), spec.d());
   if(!g.parent) scene.add(g);
-  const plan = wallPlacementPlan();
+  const plan = spec.plan();
   g.visible = true;
-  g.position.set(plan.x, plan.y + WALL_H*0.5, plan.z);
-  g.rotation.y = plan.yaw;
-  const key = plan.blocked ? 'blocked' : (plan.elevated ? 'storey' : 'ground');
+  g.position.set(plan.x, plan.y + spec.h()*0.5, plan.z);
+  g.rotation.y = plan.yaw || 0;
+  const key = ghostKeyFor(plan);
   if(g.userData.key !== key){
     g.userData.key = key;
     g.material.color.setHex(GHOST_COL[key]);
@@ -10490,15 +10727,17 @@ const BRAMBLE = {
 // inherit a live cooldown that a victim is still carrying against a disposed one.
 let _brambleId = 0;
 function placeKitBramble(){
+  // 👻 Same plan the ghost draws — see updatePlacementGhosts.
+  const plan = bramblePlacementPlan();
+  if(plan.blocked){ showKillfeed('🌿 '+plan.blocked); return false; }
   if(kitBrambles.length >= BRAMBLE.MAX){
     showKillfeed('🌿 Bramble limit ('+BRAMBLE.MAX+') reached'); return false; }
   if(brambleCount < BRAMBLE.COST){
     showKillfeed('🌿 Need '+BRAMBLE.COST+' bramble (have '+brambleCount+') — chop a berry bush with the axe');
     return false; }
-  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
-  const pos = player.pos.clone().addScaledVector(fwd, 2.5);
-  const gy = terrainY(pos.x, pos.z);
-  const g = new THREE.Group(); g.position.set(pos.x, gy, pos.z); g.rotation.y = yaw;
+  const pos = new THREE.Vector3(plan.x, 0, plan.z);
+  const gy = plan.y;
+  const g = new THREE.Group(); g.position.set(pos.x, gy, pos.z); g.rotation.y = plan.yaw;
   const vineM  = new THREE.MeshLambertMaterial({color:0x40361f});
   const thornM = new THREE.MeshLambertMaterial({color:0x8a7a5e});
   const leafM  = new THREE.MeshLambertMaterial({color:0x35471f});
@@ -10540,6 +10779,80 @@ function brambleAt(x, z){
 // the same nine sites the water rule uses. (Deliberately not stacked: the *damage* is
 // what scales with the number of fences, the slow is a binary "you are in thorns".)
 function brambleSpeedMul(x, z){ return brambleAt(x,z) ? BRAMBLE.SPEED : 1; }
+
+// ---- 🧬 THE CREATURE REGISTRY ------------------------------------------------
+// ⚠ THIS EXISTS BECAUSE OF A SHIPPED BUG. `updateBrambles` used to end with a
+// hand-written list of nine species arrays, and `crocMeshes` was not one of them —
+// so a crocodile walked through a thorn fence and took **zero** damage. The array
+// is declared ~250 lines BELOW the bramble module, the module predates the
+// crocodile, and nothing linked the two, so the omission was invisible.
+//
+// It is the same bug shape as the boomerang's strike list having no cheetah and no
+// crocodile (2026-08-04) and the projectile blocks that made both invulnerable: a
+// per-species list, written once, that silently stops being complete the next time
+// somebody adds an animal. The fix is not "add the croc" — it is to stop keeping
+// per-feature species lists at all. ONE registry, and a new creature joins every
+// creature-wide rule by adding a line HERE.
+//
+// ⚠ Ordering is deliberate: this is a FUNCTION, not a const array. Every array it
+// names is declared with `let` somewhere in this file, several of them after this
+// point, so a top-level const would be a TDZ crash at load — the same trap
+// `KIT_WALL_MAX` and `venomDuration()` both hit. Called at runtime, they all exist.
+function allCreatureLists(){
+  return [
+    [lionMeshes,       'lion'],
+    [preyMeshes,       'prey'],        // …and every grazer species inside it
+    [dogMeshes,        'dog'],
+    [rhinoMeshes,      'rhino'],
+    [gorillaMeshes,    'gorilla'],
+    [snakeMeshes,      'snake'],
+    [secretaryMeshes,  'secretary'],
+    [cheetahMeshes,    'cheetah'],
+    [porcupineMeshes,  'porcupine'],
+    [crocMeshes,       'crocodile'],   // ⚠ THE ONE THAT WAS MISSING
+    [hippoMeshes,      'hippo'],
+    [eagleMeshes,      'eagle'],       // fliers are in the list and excluded by the
+    [skyVultureMeshes, 'skyvulture'],  // airborne test, NOT by being left out of it
+  ];
+}
+// Run `fn(entity, kind)` over every living creature on the map.
+function forEachCreature(fn){
+  const lists = allCreatureLists();
+  for(let i=0;i<lists.length;i++){
+    const L = lists[i][0], kind = lists[i][1];
+    if(!L) continue;
+    for(let j=0;j<L.length;j++){
+      const e = L[j];
+      if(e && e.health > 0 && !e.dying) fn(e, kind);
+    }
+  }
+}
+
+// ---- 🌿 PER-TEMPLATE THORN DAMAGE --------------------------------------------
+// Steven: "bramble damage should apply to any hostile creature that crosses one,
+// PER CREATURE TEMPLATE." So what a thorn fence is worth is a property of the
+// animal, not one global constant. One table, `KILL_BOUNTY` discipline — tuning a
+// species is one line here, never a branch in the prick pass.
+//
+// Keyed on `e.species` first (so the ten grazers inside preyMeshes can differ from
+// each other) and on the registry kind second. Anything absent takes BRAMBLE.DMG,
+// so a new animal is ordinary rather than immune — the direction that matters, and
+// the same absence-is-not-safety rule the `elevated` wall flag ships.
+const BRAMBLE_DMG = {
+  // --- armour and hide shrug thorns off ---
+  crocodile:  10,   // osteoderms — a thorn fence is not getting through scutes
+  hippo:      10,   // 4 cm of hide
+  rhino:       8,   // the thickest skin on the map
+  elephant:    8,
+  porcupine:   6,   // it wears a coat of spikes; thorns are its own weapon class
+  // --- soft-bodied things drag their whole length through it ---
+  snake:      30,   // no legs to lift clear — the entire body is scraped across
+};
+function brambleDamageFor(e, kind){
+  const k = (e && e.species) || kind;
+  const v = BRAMBLE_DMG[k];
+  return (v == null) ? BRAMBLE.DMG : v;
+}
 // Per-frame prick pass. EVERY fence a victim is standing in scores its own 20 — five
 // fences in a line is 5 × 20 — and the damage is **once per CROSSING**, not a tick:
 //
@@ -10557,15 +10870,21 @@ function updateBrambles(dt){
   if(gameState!=='playing' || !kitBrambles.length) return;
   const R2 = BRAMBLE.RADIUS*BRAMBLE.RADIUS;
   const _inside = [];
-  const prick = (e, isPlayer)=>{
+  const prick = (e, isPlayer, kind)=>{
     // ⚠ The fence test is XZ-only, so it says "yes" to anything in the COLUMN above the
     // thorns. Thorns are on the GROUND: a player on a roof, on a wall or up a tree —
     // and a secretary bird mid-flight — are metres clear of them and must not be
     // scratched. playerOffGround() is the same predicate every other ground-only
     // attack uses (it covers inTree / climbing / grappling / anything above 1.5).
     // Ground animals all sit at exactly terrain height, so 0.5 is a safe airborne cut.
+    // ⚠ …and a SWIMMER is not airborne. A croc or a hippo floating in a pond sits at
+    // the water surface, which is metres above the dug bed that `terrainY` reports
+    // inside a bowl — so the plain height cut called every swimming animal "airborne"
+    // and a bramble planted in the shallows would have been free to cross. Over water,
+    // the height test is dropped: a floating animal is still at thorn height.
     const airborne = isPlayer ? playerOffGround()
-                              : (e.pos.y - terrainY(e.pos.x, e.pos.z)) > 0.5;
+                              : (!poolAt(e.pos.x, e.pos.z) &&
+                                 (e.pos.y - terrainY(e.pos.x, e.pos.z)) > 0.5);
     _inside.length = 0;
     if(!airborne){
       for(let i=0;i<kitBrambles.length;i++){
@@ -10584,11 +10903,15 @@ function updateBrambles(dt){
     }
     if(!_inside.length) return;
     let dmg = 0, fences = 0;
+    // Per-template: what a thorn fence is worth against THIS animal. The player keeps
+    // the flat 20 — BRAMBLE_DMG is about hide and body plan, and the player has neither
+    // a species nor an entry.
+    const per = isPlayer ? BRAMBLE.DMG : brambleDamageFor(e, kind);
     const map = e._brambleCds || (e._brambleCds = {});
     for(const id of _inside){
       if(map[id] > 0) continue;                  // THIS fence already had its bite
       map[id] = BRAMBLE.RECHARGE;
-      dmg += BRAMBLE.DMG; fences++;
+      dmg += per; fences++;
     }
     if(!dmg) return;
     if(isPlayer){
@@ -10600,11 +10923,10 @@ function updateBrambles(dt){
     }
   };
   prick(player, true);
-  [lionMeshes, preyMeshes, dogMeshes, rhinoMeshes, gorillaMeshes,
-   snakeMeshes, secretaryMeshes, cheetahMeshes, porcupineMeshes].forEach(list=>{
-    if(!list) return;
-    list.forEach(e=>{ if(e.health>0 && !e.dying) prick(e, false); });
-  });
+  // ⚠ ONE registry, not a hand-written list of species arrays — see allCreatureLists().
+  // The old list here omitted crocMeshes entirely, which is the bug Steven reported:
+  // a crocodile crossed a thorn fence for free.
+  forEachCreature((e, kind)=>prick(e, false, kind));
 }
 function kitPlaceBramble(){ return placeKitBramble(); }
 
@@ -10645,15 +10967,17 @@ function roofPlacementBlocked(){
   return null;
 }
 function placeKitRoof(){
-  const blocked = roofPlacementBlocked();
-  if(blocked){ showKillfeed('🏠 '+blocked); return false; }
+  // 👻 ONE SOLVER, TWO CALLERS — the ghost draws this same plan, so a green preview and
+  // a successful place are the same computation rather than two that agree by habit.
+  const plan = roofPlacementPlan();
+  if(plan.blocked){ showKillfeed('🏠 '+plan.blocked); return false; }
   if(kitRoofs.length >= ROOF.MAX){ showKillfeed('🏠 Roof limit ('+ROOF.MAX+') reached'); return false; }
   if(woodCount < ROOF.COST.wood){
     showKillfeed('🏠 Need '+ROOF.COST.wood+' wood (have '+woodCount+')'); return false; }
-  const y = player.pos.y + ROOF.CLEARANCE;
+  const y = plan.y + ROOF.THICK*0.5;     // plan.y is the slab's UNDERSIDE; a Box is centred
   const m = new THREE.Mesh(new THREE.BoxGeometry(ROOF.SIZE, ROOF.THICK, ROOF.SIZE),
               new THREE.MeshLambertMaterial({color:0x8a6a44}));
-  m.position.set(player.pos.x, y, player.pos.z);
+  m.position.set(plan.x, y, plan.z);
   m.castShadow = true; m.receiveShadow = true; m.name = 'roof';
   m.userData.roof = true; m.userData.maxHp = WALL_HP.wood; m.userData.hp = WALL_HP.wood;
   const plankM = new THREE.MeshLambertMaterial({color:0x6f5334});
@@ -10988,9 +11312,24 @@ function crocPickTarget(C){
   cheetahMeshes.forEach(e=>consider(e,'cheetah'));
   snakeMeshes.forEach(e=>consider(e,'snake'));
   secretaryMeshes.forEach(e=>{ if(secretaryGrounded(e)) consider(e,'secretary'); });
-  // ⚠ RHINO and GORILLA are deliberately absent: at 2+ tonnes they shrug a croc off.
-  // A croc that grabs a rhino should lose, and modelling that is a fight system this
-  // doesn't need — so it simply doesn't pick them.
+  // 🦍 GORILLAS ARE PREY NOW (2026-08-07). Steven: crocodiles could not "eat gorillas".
+  // They could not: this scan skipped gorillaMeshes outright, so a gorilla could stand
+  // in the shallows and no croc would ever look at it. The old note argued a 2-tonne
+  // animal shrugs a croc off — but a gorilla is ~160 kg, roughly a big antelope, and a
+  // Nile croc taking one at the water's edge is exactly the encounter he is asking for.
+  //
+  // ⚠ A perched or sleeping gorilla is UP ITS TREE and is skipped, the same exclusion
+  // every other targeting scan in the game uses (nearestAnimalInFront, the projectile
+  // block). Without it a croc would lock onto a gorilla sitting 8 m up a canopy and
+  // stand under it grinding against the trunk forever.
+  gorillaMeshes.forEach(e=>{
+    if(e.state==='perched' || e.state==='sleeping') return;
+    consider(e,'gorilla');
+  });
+  // ⚠ RHINO stays out, deliberately and unchanged: at 2+ tonnes it genuinely does shrug
+  // a croc off, and Steven named gorillas only. Whether a croc can actually WIN against
+  // a gorilla is a balance question, not a targeting one — the aggro/attack code simply
+  // no longer refuses the target. See the CONTEXT note for the measured outcome.
   return best ? {ent:best, kind:bk} : null;
 }
 
@@ -11519,6 +11858,482 @@ function clearCrocodiles(){
 }
 
 // =====================================================================
+//  🦛 HIPPOPOTAMUS  — the pond's OTHER apex  (2026-08-07)
+// =====================================================================
+// Steven: "lives in ponds with crocodiles… opens mouth, gores/thrusts with tusks… legs
+// move, swims when in water… passive by default, eats grass… attacked → retreats to
+// pond… at night wanders up to 70 m from pond, attacks things it encounters… if
+// provoked → charges with tusks."
+//
+// ⚠ THE TWO-TRIGGER RULE IS THE WHOLE ANIMAL, and the two triggers point OPPOSITE WAYS.
+// Read literally, Steven asked for something that sounds contradictory: hurt it and it
+// runs away, but stand near it and it charges you. That is not a contradiction, it is
+// exactly how a real hippo behaves — it bluff-charges anything that crowds it and bolts
+// for deep water the moment it is genuinely hurt. So:
+//   PROVOKED (something inside PROVOKE_R)  → CHARGE, tusks first
+//   ATTACKED (an actual HP drop)           → RETREAT, straight for its own pond
+// RETREAT wins: the HP-drop watchdog overrides a charge in progress. A hippo you have
+// wounded will disengage even mid-lunge, which is what makes it a fight you can end.
+//
+// ⚠ IT IS THE ONE ANIMAL WATER DOES NOT SLOW. Every other mover in the game multiplies
+// its speed by `waterSpeedMul` (one third in a pond) — `hippoStep` deliberately does
+// not, and swaps in SPEED_SWIM instead. That single omission is "swims when in water":
+// a hippo in its own pond is FASTER than a hippo on the bank, and chasing one into the
+// water is the worst decision available to you. Flagged loudly because it is an
+// intentional break from the shared rule, and a future refactor that "fixes" hippoStep
+// to use waterSpeedMul like everything else would silently delete the mechanic.
+const HIPPO = {
+  PER_POND_MIN: 1, PER_POND_MAX: 2,   // ponds are shared with the crocs, as asked
+  MAX: 6,
+  // ⚠ CALIBRATION, stated because Steven asked for "gorilla-scale" and this is above it.
+  // Anchors already in the game: gorilla 160 · rhino 220 · crocodile 600. A hippo that
+  // sat at the gorilla's 160 would be softer than a rhino, which reads wrong for the
+  // animal that kills more people than any other in Africa — so it lands one step ABOVE
+  // the rhino and well under the croc: the toughest thing that walks on land, but not a
+  // pond boss. "Legit dangerous" is carried by GORE_DMG, not by the HP pool.
+  HEALTH:     300,
+  GORE_DMG:    48,   // the biggest single hit any animal lands (rhino gore 35, cheetah
+                     // sprint 46). Two connect and an unarmoured player is dead.
+  GORE_CD:    2.0,   // …but slow. The counterplay is spacing, not tanking.
+  GORE_R:     3.8,   // tusk reach — it is a big animal with a bigger mouth
+  GORE_STUN:  0.7,   // the thrust knocks you off your feet
+  GORE_KB:     16,
+  BODY_R:    1.05,   // ⚠ COLLISION radius fed to segCrossesWall/collideWalls. Hand-set and
+                     // does NOT ride group.scale — the same trap documented on PORC.BODY_R
+                     // and GOR.BODY_R. Body is ~2.0 wide, so this is half-width + margin.
+                     // MOVE IT BY HAND if HIPPO_SCALE ever changes.
+  SPEED_GRAZE: 2.4,  // head-down amble along the shore
+  SPEED_ROAM:  4.2,  // the night wander
+  SPEED_CHARGE:13.5, // ⚠ faster than a WALK (10), slower than a SPRINT (16). Deliberate:
+                     // strolling away from a charging hippo must fail, and sprinting away
+                     // must work. Same shape as the rhino's 15.
+  SPEED_SWIM:  6.0,  // in water — and NOT multiplied down. See the note above.
+  SPEED_RETREAT: 12, // bolting for the pond after being hurt
+  GRAZE_RANGE: 14,   // how far from its own rim it will graze by day
+  NIGHT_RANGE: 70,   // ⚠ Steven's number, exact — the night leash
+  PROVOKE_R:    9,   // crowd it this close and it charges (day, near its water)
+  NIGHT_AGGRO_R: 16, // …and at night, out on the plain, it starts things from further off
+  GIVEUP:      34,   // it will not chase one target across the map
+  CALM_AFTER:  6.0,  // seconds back home before it can be provoked again — stops a
+                     // wounded hippo from re-charging the instant it touches water
+  MOUTH_RATE:  7.0,  // jaw open/close lerp
+};
+// Night is `!dn.isDay`, the same flag the gorilla's whole day/night FSM reads. Not a
+// gameHour() range: two night predicates that can drift apart is a bug waiting to happen.
+function hippoIsNight(){ return !dn.isDay; }
+function hippoLeash(H){
+  return H.pool.r + (hippoIsNight() ? HIPPO.NIGHT_RANGE : HIPPO.GRAZE_RANGE);
+}
+// ⚠ THE XZ TEST IS NOT OPTIONAL, and copying the crocodile's version without it was a
+// bug. `crocSubmerged` is a pure HEIGHT test — "is the ground under me below my pond's
+// surface" — and that is safe for a croc only because a croc is leashed to its own rim
+// plus 3 m and can never be anywhere else. A hippo roams 70 m inland at night, where any
+// low-lying hollow sits below the pond's water line and read as "in water": measured, a
+// wounded hippo 38.7 m from its pond reported itself swimming, ended its RETREAT on dry
+// grass, and would have got the un-slowed swim speed out on the plain. Ask which pool it
+// is actually STANDING IN (`poolAt`), then check the depth of that one.
+function hippoInWater(H){
+  const w = poolAt(H.pos.x, H.pos.z);
+  return !!w && terrainY(H.pos.x, H.pos.z) < poolSurfaceY(w) - 0.30;
+}
+const HIPPO_SCALE = 1.0;
+
+function makeHippo(x, z, pool){
+  const g = new THREE.Group();
+  // Palette: wet slate-grey back fading to the famous pink-brown belly and muzzle.
+  const hideM  = new THREE.MeshLambertMaterial({color:0x6b6168});
+  const bellyM = new THREE.MeshLambertMaterial({color:0x9a6f6a});
+  const mouthM = new THREE.MeshLambertMaterial({color:0x7d3f45});
+  const ivoryM = new THREE.MeshLambertMaterial({color:0xefe7cf});
+  const darkM  = new THREE.MeshLambertMaterial({color:0x3a3238});
+
+  // ---- BARREL BODY ----
+  const body = new THREE.Group(); body.position.y = 1.02; g.add(body);
+  const barrel = new THREE.Mesh(new THREE.SphereGeometry(1.02, 10, 8), hideM);
+  barrel.scale.set(1.0, 0.82, 1.62); barrel.castShadow = true; body.add(barrel);
+  const belly = new THREE.Mesh(new THREE.SphereGeometry(0.84, 8, 6), bellyM);
+  belly.scale.set(1.0, 0.55, 1.45); belly.position.y = -0.30; body.add(belly);
+  g._body = body;
+
+  // ---- HEAD: the enormous blunt muzzle is the read ----
+  const head = new THREE.Group(); head.position.set(0, 0.10, 1.62); body.add(head);
+  const skull = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.72, 0.92), hideM);
+  skull.castShadow = true; head.add(skull);
+  const upperJaw = new THREE.Mesh(new THREE.BoxGeometry(1.06, 0.34, 0.78), hideM);
+  upperJaw.position.set(0, -0.08, 0.72); head.add(upperJaw);
+  // ⚠ THE JAW IS A PIVOT GROUP HINGED AT THE BACK of the mouth, not a box that moves
+  // down. Hinging it at the hinge is what makes the gape read as a hippo's 150° yawn
+  // rather than as a drawer sliding open.
+  const jaw = new THREE.Group(); jaw.position.set(0, -0.22, 0.32); head.add(jaw);
+  const lower = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.30, 0.80), hideM);
+  lower.position.set(0, -0.10, 0.42); lower.castShadow = true; jaw.add(lower);
+  const gums = new THREE.Mesh(new THREE.BoxGeometry(0.84, 0.16, 0.70), mouthM);
+  gums.position.set(0, 0.04, 0.42); jaw.add(gums);
+  // ---- THE TUSKS — Steven's "gores/thrusts with tusks". Lower canines, curved up. ----
+  for(const s of [-1, 1]){
+    const tusk = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.46, 6), ivoryM);
+    tusk.position.set(s*0.31, 0.16, 0.70); tusk.rotation.x = -0.30; tusk.rotation.z = s*0.13;
+    tusk.castShadow = true; jaw.add(tusk);
+    const inc = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.24, 5), ivoryM);
+    inc.position.set(s*0.13, 0.12, 0.74); inc.rotation.x = -0.18; jaw.add(inc);
+  }
+  g._jaw = jaw;
+  // eyes, ears and nostrils all ride HIGH on the skull — the periscope silhouette that
+  // makes a submerged hippo readable as a hippo with only 15 cm showing.
+  for(const s of [-1, 1]){
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.085, 6, 5), darkM);
+    eye.position.set(s*0.30, 0.40, 0.24); head.add(eye);
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.11, 6, 5), hideM);
+    ear.scale.set(0.7, 1.0, 0.55); ear.position.set(s*0.36, 0.44, -0.22); head.add(ear);
+    const nos = new THREE.Mesh(new THREE.SphereGeometry(0.075, 6, 5), darkM);
+    nos.position.set(s*0.17, 0.14, 1.06); head.add(nos);
+  }
+
+  // ---- LEGS: stumpy, and they MOVE (Steven asked for it explicitly) ----
+  const legs = [];
+  for(let i=0;i<4;i++){
+    const side = (i%2) ? 1 : -1, front = (i<2);
+    const lz = front ? 0.74 : -0.76, restY = 0.62;
+    const hip = new THREE.Group(); hip.position.set(side*0.62, restY, lz); g.add(hip);
+    const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.21, 0.42, 6), hideM);
+    upper.position.y = -0.21; upper.castShadow = true; hip.add(upper);
+    const knee = new THREE.Group(); knee.position.y = -0.42; hip.add(knee);
+    const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.19, 0.30, 6), hideM);
+    shin.position.y = -0.15; knee.add(shin);
+    const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.235, 0.235, 0.12, 7), darkM);
+    foot.position.y = -0.34; knee.add(foot);
+    legs.push({ hip, knee, side, restY, restZ: lz });
+  }
+  g._legs = legs;
+  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.04, 0.34, 5), hideM);
+  tail.position.set(0, 1.10, -1.62); tail.rotation.x = 0.5; g.add(tail);
+
+  g.name = 'hippo';
+  g.scale.setScalar(HIPPO_SCALE);
+  const gy = terrainY(x, z);
+  g.position.set(x, gy, z);
+  scene.add(g);
+  // ⚠ origMat on every mesh, captured by TRAVERSE not by children — the tusks and the
+  // gums live inside the jaw pivot, so a children-only sweep would leave them out of the
+  // hit-flash and they would stay lit while the body flashed. Same bug the porcupine's
+  // quills had.
+  g.traverse(c=>{ if(c.isMesh) c.userData.origMat = c.material; });
+
+  const H = {
+    mesh:g, pos:g.position, pool,
+    health:HIPPO.HEALTH, maxHealth:HIPPO.HEALTH,
+    state:'WALLOW', stateT:rand(0,6), heading:rand(0,Math.PI*2),
+    goreCd:0, flashTimer:0, stunTimer:0, calmT:0, gait:0, bob:rand(0,6.28),
+    mouth:0, grazeT:rand(2,7), dest:null,
+    target:null, targetKind:null,
+    _prevHealth:HIPPO.HEALTH, _lastSpeed:0,
+    label:'hippo', species:'hippo',
+  };
+  setHitbox(H); attachHealthBar(H); hippoMeshes.push(H);
+  return H;
+}
+
+// ---- MOVEMENT ---------------------------------------------------------------
+// ⚠ NO `waterSpeedMul` HERE. See the module note: this is the animal that swims. It
+// still takes the bramble slow (thorns on the bank scratch a hippo like anything else)
+// and it still uses the shared swept-wall + MTV collision path every ground mover uses,
+// so it cannot tunnel a palisade.
+function hippoStep(H, tx, tz, speed, dt){
+  const swimming = hippoInWater(H);
+  if(swimming) speed = HIPPO.SPEED_SWIM;
+  speed *= brambleSpeedMul(H.pos.x, H.pos.z);
+  const bx = H.pos.x, bz = H.pos.z;
+  // Leash: a hippo is bound to its pond exactly like a croc, only the radius changes
+  // between day (graze the shore) and night (Steven's 70 m).
+  const w = H.pool, lim = hippoLeash(H);
+  const ddx = tx-w.x, ddz = tz-w.z, dd = Math.hypot(ddx, ddz);
+  if(dd > lim){ tx = w.x + ddx/dd*lim; tz = w.z + ddz/dd*lim; }
+  const dx = tx-bx, dz = tz-bz, d = Math.hypot(dx, dz);
+  if(d > 0.001){ const step = Math.min(speed*dt, d); H.pos.x += dx/d*step; H.pos.z += dz/d*step; }
+  H.pos.x = clamp(H.pos.x, -HALF+1, HALF-1); H.pos.z = clamp(H.pos.z, -HALF+1, HALF-1);
+  if(segCrossesWall(bx, bz, H.pos.x, H.pos.z, HIPPO.BODY_R)){ H.pos.x = bx; H.pos.z = bz; }
+  collideWalls(H.pos, HIPPO.BODY_R); collideStoneWalls(H.pos, HIPPO.BODY_R);
+  const a = Math.atan2(tx-bx, tz-bz);
+  let ddg = a - H.heading;
+  while(ddg > Math.PI) ddg -= Math.PI*2; while(ddg < -Math.PI) ddg += Math.PI*2;
+  H.heading += ddg * Math.min(1, 3.2*dt); H.mesh.rotation.y = H.heading;
+  H._lastSpeed = (d > 0.001) ? speed : 0;
+  hippoFloat(H, dt);
+}
+// ⚠ BUOYANCY IS ITS OWN FUNCTION AND RUNS EVERY FRAME — this cost a bug. It used to live
+// inside `hippoStep`, so a hippo that never stepped never floated: one that spawned on the
+// pond BED and went straight into a state with nothing to walk to just sat there, 3.66 m
+// under its own water, legs paddling on the bottom. Measured exactly that on the first run.
+// Height is a property of WHERE IT IS, not of whether it moved this frame.
+//
+// Swimming is a height rule rather than a movement mode: in its pond the body rides at the
+// surface so only the eye/ear/nostril line shows — the periscope silhouette the head was
+// modelled for. On land it sits on the terrain like every other ground animal.
+function hippoFloat(H, dt){
+  // ⚠ Floats at the surface of the pool it is IN, not of the pool it belongs to. Those
+  // are usually the same pond and occasionally are not — a night wanderer can reach a
+  // neighbour's water, and reading its home pond's level there would sink it or hover it.
+  const w = poolAt(H.pos.x, H.pos.z);
+  const want = hippoInWater(H) ? (poolSurfaceY(w) - 0.86)
+                               : terrainY(H.pos.x, H.pos.z);
+  H.pos.y += (want - H.pos.y) * Math.min(1, 7*dt);
+  H.mesh.position.copy(H.pos);
+}
+
+// ---- ANIMATION: the legs walk, the body wallows, the mouth gapes ----
+function animateHippo(H, dt){
+  const spd = H._lastSpeed || 0;
+  const swimming = hippoInWater(H);
+  H.bob += dt;
+  // MOUTH. Open wide while charging (the gape IS the threat display Steven described),
+  // shut otherwise, with a slow idle yawn while it wallows so a resting one is alive.
+  const wantMouth = (H.state==='CHARGE') ? 1.0
+                  : (H.state==='WALLOW' && Math.sin(H.bob*0.45) > 0.93) ? 0.75 : 0.04;
+  H.mouth += (wantMouth - H.mouth) * Math.min(1, HIPPO.MOUTH_RATE*dt);
+  if(H.mesh._jaw) H.mesh._jaw.rotation.x = H.mouth * 1.15;   // ~66° gape at full
+
+  const legs = H.mesh._legs, bodyG = H.mesh._body;
+  if(legs){
+    // ⚠ Swimming does NOT stop the legs — it changes their gait. A hippo does not really
+    // swim, it punts off the bottom, so in water the same cycle runs slower and with a
+    // longer, lazier reach. Freezing them (the crocodile's rule) would read as a dead
+    // model floating in the pond.
+    const moving = spd > 0.12;
+    const rate = swimming ? (0.7 + spd*0.10) : (0.9 + spd*0.16);
+    H.gait = (H.gait||0) + (moving ? dt*rate : dt*0.35);
+    const reach = swimming ? 0.34 : 0.26, lift = swimming ? 0.05 : 0.13;
+    legs.forEach((lg, idx)=>{
+      const diag = (idx===0 || idx===3) ? 0 : 0.5;     // diagonal pairs, as a real quadruped
+      const ph = ((H.gait + diag) % 1 + 1) % 1;
+      const swing = Math.sin(ph*Math.PI*2);
+      const up    = Math.max(0, Math.sin(ph*Math.PI*2)) * (moving ? 1 : 0.25);
+      lg.hip.position.z = lg.restZ + swing*reach*(moving?1:0.3);
+      lg.hip.position.y = lg.restY + up*lift;
+      lg.hip.rotation.x = -swing*0.5*(moving?1:0.3);
+      lg.knee.rotation.x = up*0.7;
+    });
+    if(bodyG){
+      // the barrel rolls onto whichever diagonal is planted; in water it just bobs
+      bodyG.rotation.z = swimming ? Math.sin(H.bob*1.1)*0.03
+                                  : Math.sin(H.gait*Math.PI*2)*0.05*(moving?1:0.2);
+      bodyG.position.y = 1.02 + (swimming ? Math.sin(H.bob*0.9)*0.05 : 0);
+    }
+  }
+}
+
+// ---- WHO CAN A HIPPO PICK A FIGHT WITH ----
+// ⚠ Built off the SHARED registry, not another hand-written species list — the exact
+// thing that let a crocodile walk through brambles for free. Prey are excluded: a hippo
+// is a grazer and barging zebras is not the animal. It will, however, take on the
+// predators, which is why a hippo wandering inland at night is genuinely disruptive.
+// ⚠ THE CROCODILE IS NOT A FOE, and that is load-bearing. Steven's brief opens with
+// "lives in ponds WITH crocodiles" — they are meant to share the water. The first build
+// had 'crocodile' in this list and every hippo in the game went to CHARGE on frame one,
+// because 1–2 crocs spawn in the same pool well inside PROVOKE_R. Worse, it was a
+// one-sided war: `crocPickTarget` does not consider hippos, so the crocs never fought
+// back and simply got tusked to death in their own ponds. Pond-mates, by design.
+function hippoFoe(kind){
+  return kind==='lion' || kind==='dog' || kind==='cheetah' || kind==='gorilla' ||
+         kind==='porcupine' || kind==='snake';
+}
+function hippoPickTarget(H, radius){
+  let best = null, bd = radius;
+  if(gameState==='playing' && player.health>0 && !playerOffGround()){
+    const d = Math.hypot(player.pos.x-H.pos.x, player.pos.z-H.pos.z);
+    if(d < bd){ bd = d; best = { ent:player, kind:'player' }; }
+  }
+  forEachCreature((e, kind)=>{
+    if(e === H || !hippoFoe(kind)) return;
+    const d = Math.hypot(e.pos.x-H.pos.x, e.pos.z-H.pos.z);
+    if(d < bd){ bd = d; best = { ent:e, kind }; }
+  });
+  return best;
+}
+// The tusk thrust. One damage site, so the player branch and the animal branch can never
+// drift apart on numbers.
+function hippoGore(H, t, kind){
+  if(H.goreCd > 0) return;
+  H.goreCd = HIPPO.GORE_CD;
+  if(kind === 'player'){
+    player.health -= HIPPO.GORE_DMG;
+    player.stunTimer = Math.max(player.stunTimer||0, HIPPO.GORE_STUN);
+    const ax = player.pos.x-H.pos.x, az = player.pos.z-H.pos.z, al = Math.hypot(ax,az)||1;
+    player.knockback.x = (ax/al)*HIPPO.GORE_KB; player.knockback.z = (az/al)*HIPPO.GORE_KB;
+    player.lastHitBy = H; player.lastHitKind = 'hippo';
+    shakeTime = Math.max(shakeTime, 0.4); shakeAmt = 0.018; playSound('roar');
+    showKillfeed('🦛 The hippo gapes and drives its tusks into you! (-'+HIPPO.GORE_DMG+')');
+  } else {
+    t.health -= HIPPO.GORE_DMG; t.flashTimer = 0.25;
+    t.lastHitBy = H; t.lastHitKind = 'hippo';     // its own watchdog blames the hippo
+    if(t.health <= 0) showKillfeed('🦛 The hippo tusks the '+(t.label || kind)+' to death!');
+  }
+}
+
+function updateHippos(dt){
+  if(gameState!=='playing') return;
+  const night = hippoIsNight();
+  hippoMeshes.forEach(H=>{
+    if(H.flashTimer>0){ H.flashTimer -= dt; const f = H.flashTimer>0;
+      H.mesh.traverse(c=>{ if(c.isMesh) c.material = f?FLASH_MAT:c.userData.origMat; }); }
+    H.stateT += dt;
+    H.goreCd = Math.max(0, H.goreCd - dt);
+    H.calmT  = Math.max(0, H.calmT  - dt);
+
+    // ⚠ TRIGGER 1 — "attacked → retreats to pond". An HP-drop watchdog, the lions' and
+    // the porcupine's pattern, so EVERY damage path in the game (present and future)
+    // wakes it without having to remember to. It also OVERRIDES a charge in progress.
+    if(H.health < H._prevHealth - 0.001 && H.health > 0 && H.state !== 'RETREAT'){
+      H.state = 'RETREAT'; H.stateT = 0; H.target = null; H.targetKind = null; H.dest = null;
+      if(Math.hypot(player.pos.x-H.pos.x, player.pos.z-H.pos.z) < 55)
+        showKillfeed('🦛 The hippo wheels and bolts for the water!');
+    }
+    H._prevHealth = H.health;
+
+    animateHippo(H, dt);
+    hippoFloat(H, dt);          // every frame, whatever the state does — see hippoFloat
+    if((H.stunTimer||0) > 0){ H.stunTimer -= dt; H._lastSpeed = 0; return; }
+
+    switch(H.state){
+      // ---- RETREAT: straight home, and it does not stop to fight on the way ----
+      case 'RETREAT': {
+        hippoStep(H, H.pool.x, H.pool.z, HIPPO.SPEED_RETREAT, dt);
+        if(hippoInWater(H)){
+          H.state = 'WALLOW'; H.stateT = 0;
+          H.calmT = HIPPO.CALM_AFTER;      // safe in the water — no instant re-charge
+        } else if(H.stateT > 30){          // stranding guard: walled off from its own pond
+          H.state = 'WALLOW'; H.stateT = 0;
+        }
+        break;
+      }
+      // ---- CHARGE: tusks first, at anything that crowded it ----
+      case 'CHARGE': {
+        const t = H.target;
+        const isP = H.targetKind === 'player';
+        const alive = isP ? (player.health>0 && !playerOffGround()) : (t && t.health>0 && !t.dying);
+        const tp = isP ? player.pos : (t && t.pos);
+        if(!alive || !tp || Math.hypot(tp.x-H.pos.x, tp.z-H.pos.z) > HIPPO.GIVEUP){
+          H.state = night ? 'ROAM' : 'GRAZE'; H.stateT = 0; H.target = null; H.dest = null;
+          break;
+        }
+        const d = Math.hypot(tp.x-H.pos.x, tp.z-H.pos.z);
+        if(d > HIPPO.GORE_R) hippoStep(H, tp.x, tp.z, HIPPO.SPEED_CHARGE, dt);
+        else {
+          H._lastSpeed = 0;
+          // ⚠ Line of sight, the same segHitsWall gate the croc bite and the rhino gore
+          // use — a hippo must not tusk you through a palisade it cannot pass.
+          if(!segHitsWall(H.pos.x, H.pos.z, tp.x, tp.z)) hippoGore(H, t, H.targetKind);
+        }
+        break;
+      }
+      // ---- ROAM: night only. Steven's 70 m, and it starts fights out there. ----
+      case 'ROAM': {
+        if(!night){ H.state = 'GRAZE'; H.stateT = 0; H.dest = null; break; }
+        const pick = (H.calmT<=0) ? hippoPickTarget(H, HIPPO.NIGHT_AGGRO_R) : null;
+        if(pick){ H.state='CHARGE'; H.stateT=0; H.target=pick.ent; H.targetKind=pick.kind; break; }
+        if(!H.dest || H.stateT > 9){
+          const a = rand(0, 6.28), rr = rand(H.pool.r, H.pool.r + HIPPO.NIGHT_RANGE);
+          H.dest = { x: clamp(H.pool.x + Math.cos(a)*rr, -MAPR, MAPR),
+                     z: clamp(H.pool.z + Math.sin(a)*rr, -MAPR, MAPR) };
+          H.stateT = 0;
+        }
+        hippoStep(H, H.dest.x, H.dest.z, HIPPO.SPEED_ROAM, dt);
+        break;
+      }
+      // ---- GRAZE: the daytime default. "Passive by default, eats grass." ----
+      case 'GRAZE': {
+        if(night){ H.state = 'ROAM'; H.stateT = 0; H.dest = null; break; }
+        const pick = (H.calmT<=0) ? hippoPickTarget(H, HIPPO.PROVOKE_R) : null;
+        if(pick){ H.state='CHARGE'; H.stateT=0; H.target=pick.ent; H.targetKind=pick.kind; break; }
+        H.grazeT -= dt;
+        if(H.grazeT <= 0){
+          // back into the water for a wallow every so often — a hippo cannot stay out of
+          // water indefinitely, and it is what keeps them readable as pond animals by day
+          if(Math.random() < 0.45){ H.state='WALLOW'; H.stateT=0; H.dest=null; H.grazeT=rand(8,18); break; }
+          H.dest = null; H.grazeT = rand(6, 14);
+        }
+        if(!H.dest){
+          // ⚠ It aims at GRASS when there is any in reach — "eats grass" is a real
+          // preference, not a label. Falls back to any spot on its shore otherwise.
+          const a = rand(0, 6.28), rr = rand(H.pool.r*0.9, H.pool.r + HIPPO.GRAZE_RANGE);
+          let dx = clamp(H.pool.x + Math.cos(a)*rr, -MAPR, MAPR);
+          let dz = clamp(H.pool.z + Math.sin(a)*rr, -MAPR, MAPR);
+          const g = tallGrassAt(dx, dz) || tallGrassAt(H.pos.x, H.pos.z);
+          if(g && Math.hypot(g.x-H.pool.x, g.z-H.pool.z) < H.pool.r + HIPPO.GRAZE_RANGE){
+            dx = g.x; dz = g.z;
+          }
+          H.dest = { x:dx, z:dz };
+        }
+        if(Math.hypot(H.dest.x-H.pos.x, H.dest.z-H.pos.z) > 1.6)
+          hippoStep(H, H.dest.x, H.dest.z, HIPPO.SPEED_GRAZE, dt);
+        else { H._lastSpeed = 0; H.dest = null; }
+        break;
+      }
+      // ---- WALLOW: sitting in its own pond. The resting state, day or night. ----
+      default: {
+        const pick = (H.calmT<=0) ? hippoPickTarget(H, HIPPO.PROVOKE_R) : null;
+        if(pick){ H.state='CHARGE'; H.stateT=0; H.target=pick.ent; H.targetKind=pick.kind; break; }
+        if(H.stateT > rand(6, 10)){
+          H.state = night ? 'ROAM' : 'GRAZE'; H.stateT = 0; H.dest = null; break;
+        }
+        if(!H.dest || Math.hypot(H.dest.x-H.pos.x, H.dest.z-H.pos.z) < 1.2){
+          const a = rand(0, 6.28), rr = Math.sqrt(Math.random())*H.pool.r*0.75;
+          H.dest = { x: H.pool.x + Math.cos(a)*rr, z: H.pool.z + Math.sin(a)*rr };
+        }
+        hippoStep(H, H.dest.x, H.dest.z, HIPPO.SPEED_SWIM*0.35, dt);
+        break;
+      }
+    }
+  });
+  // dead-loop — the ONE removal path, so the disposal invariant holds by construction
+  for(let i=hippoMeshes.length-1;i>=0;i--){
+    const H = hippoMeshes[i];
+    if(H.health <= 0){
+      // ⚠ DROP ON THE BANK, NEVER IN THE POND. A hippo spends most of its life in deep
+      // water, and `dropBone` / `spawnCarcass` both place at the XZ they are given — so
+      // the naive version leaves the tusk and 120 meat sitting on the pond BED, under
+      // water the player has to swim down into while a crocodile lives there. The croc's
+      // own kill code already solved this ("a floating carcass reads as a bug, and it
+      // keeps the scavenger chain working on walkable ground"); this is the same fix for
+      // the same reason. On land it drops exactly where it fell.
+      let dx = H.pos.x, dz = H.pos.z;
+      if(hippoInWater(H)){
+        const w = H.pool, a = Math.atan2(H.pos.z-w.z, H.pos.x-w.x);
+        dx = w.x + Math.cos(a)*(w.r+1.5); dz = w.z + Math.sin(a)*(w.r+1.5);
+      }
+      const where = new THREE.Vector3(dx, terrainY(dx, dz), dz);
+      dropBone('hippo', where);                        // 🦛 the tusk
+      spawnCarcass(where.clone(), 120, 'hippo');       // a LOT of meat — it is a huge animal
+      killObj(H.mesh); hippoMeshes.splice(i, 1);
+      showKillfeed('🦛 The hippo is dead.');
+    }
+  }
+}
+// 1–2 per pond, in their own water — they share the ponds with the crocodiles, as asked.
+function spawnHippos(){
+  waterHoles.forEach(w=>{
+    const n = HIPPO.PER_POND_MIN + ((Math.random()*(HIPPO.PER_POND_MAX-HIPPO.PER_POND_MIN+1))|0);
+    for(let i=0;i<n && hippoMeshes.length < HIPPO.MAX;i++){
+      const a = rand(0,6.28), rr = Math.sqrt(Math.random())*w.r*0.6;
+      makeHippo(w.x+Math.cos(a)*rr, w.z+Math.sin(a)*rr, w);
+    }
+  });
+}
+function restockHippos(){
+  waterHoles.forEach(w=>{
+    if(hippoMeshes.length >= HIPPO.MAX) return;
+    if(hippoMeshes.some(H=>H.pool===w && H.health>0)) return;
+    const a=rand(0,6.28), rr=Math.sqrt(Math.random())*w.r*0.6;
+    makeHippo(w.x+Math.cos(a)*rr, w.z+Math.sin(a)*rr, w);
+    if(Math.hypot(player.pos.x-w.x, player.pos.z-w.z) < w.r+40)
+      showKillfeed('🦛 A hippo has moved into the water…');
+  });
+}
+function clearHippos(){
+  hippoMeshes.forEach(H=>killObj(H.mesh));
+  hippoMeshes.length = 0;
+}
+
+// =====================================================================
 //  🎒 PICK UP / DROP  — one item at a time  (2026-07-31)
 // =====================================================================
 // Steven: "make a button so you can pick up rocks and berries and wood and drop them,
@@ -11678,6 +12493,11 @@ const BONE_KINDS = {
   wilddog:     { label:'wild dog fang',                         icon:'🐕', colour:0xe2d9c0, form:'fang'   },
   cheetah:     { label:'cheetah claw',                          icon:'🐆', colour:0x2e2822, form:'claw'   },
   crocodile:   { label:'crocodile tooth', plural:'crocodile teeth', icon:'🐊', colour:0xdcd2b4, form:'tooth' },
+  // 🦛 ⚠ A TROPHY WITH NO RECIPE YET, and that is Steven's own call — he asked for the
+  // hippo to drop "a distinct trophy" that "gets its own recipe slot for future". So it
+  // drops, it tallies and it survives despawn like every other material; nothing spends
+  // it. Wiring one up later is one line in CRAFT_RECIPES.
+  hippo:       { label:'hippo tusk',      plural:'hippo tusks', icon:'🦛', colour:0xf7f0dd, form:'tusk'  },
   // --- birds: the flier gives feathers, the raptors give what they kill with ---
   vulture:     { label:'vulture feather',                       icon:'🪶', colour:0x4a4e52, form:'feather' },
   eagle:       { label:'eagle talon',                           icon:'🦅', colour:0x201b16, form:'claw'    },
@@ -11947,20 +12767,24 @@ function unregisterGateCollision(g){
   if(i >= 0){ wallMeshes.splice(i,1); wallAABBs.splice(i,1); }
 }
 function placeKitGate(){
+  // 👻 Same plan the ghost draws. `plan.warn` (free-standing) is deliberately NOT a
+  // refusal — see the gate note by gatePlacementPlan — but it is said out loud once,
+  // at the moment of placing, so the amber ghost is never a mystery.
+  const plan = gatePlacementPlan();
+  if(plan.blocked){ showKillfeed('🚪 '+plan.blocked); return false; }
   if(kitGates.length >= KIT_GATE_MAX){
     showKillfeed('🚪 Gate limit ('+KIT_GATE_MAX+') reached — hammer one down to free space'); return false;
   }
   if(woodCount < GATE_COST.wood){
     showKillfeed('🚪 Need '+GATE_COST.wood+' wood (have '+woodCount+')'); return false;
   }
-  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
-  const pos = player.pos.clone().addScaledVector(fwd, 2.5);
-  const { grp, swing } = makeGateMesh(pos.x, pos.z, yaw);
+  const { grp, swing } = makeGateMesh(plan.x, plan.z, plan.yaw);
   const g = { mesh:grp, swing, open:false };
   kitGates.push(g);
   registerGateCollision(g);                      // placed CLOSED — it is a wall on arrival
   woodCount -= GATE_COST.wood; updateWoodHUD();
   playSound('place');
+  if(plan.warn) showKillfeed('🚪 '+plan.warn);
   return true;
 }
 // [E] on a gate. PLAYER ONLY — nothing in any animal module calls this, which is what
@@ -12091,6 +12915,7 @@ function nearestAnimalInFront(range, minDot){
   scan(cheetahMeshes,'cheetah');
   scan(porcupineMeshes,'porcupine');
   scan(crocMeshes,'crocodile');
+  scan(hippoMeshes,'hippo');
   scan(skyVultureMeshes,'skyvulture', V=>(V.pos.y - terrainY(V.pos.x,V.pos.z)) > SKYV.MELEE_CEIL);   // melee only reaches it when low (landed / diving)
   scan(eagleMeshes,'eagle', E=>E.dying || (E.pos.y - terrainY(E.pos.x,E.pos.z)) > EAGLE.MELEE_CEIL); // …same for the eagle: only while it mantles or stoops low
   scan(secretaryMeshes,'secretary', B=>(B.pos.y - terrainY(B.pos.x,B.pos.z)) > SECR.GROUND_CEIL);    // it's a walker — only out of reach mid-escape-flight
@@ -12172,6 +12997,14 @@ function dealKitMelee(hit, dmg, tool){
     o.target = player; o.targetKind = 'player';      // it turns on you — you're in its water now
     o.lastHitBy = player; o.lastHitKind = 'player';
     showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the crocodile!');
+  } else if(hit.kind==='hippo'){
+    // ⚠ NO retaliation wiring here on purpose: the HP-drop watchdog in updateHippos
+    // already turns any damage into a RETREAT, and setting a target as well would fight
+    // it. Meleeing a hippo drives it to the water — that IS the designed response.
+    t='hippo';
+    o.health -= dmg;
+    o.lastHitBy = player; o.lastHitKind = 'player';
+    showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the hippo — it turns for the water!');
   } else if(hit.kind==='cheetah'){
     t='cheetah';
     o.health -= dmg;
@@ -12414,7 +13247,7 @@ function updateAbilities(dt){
   updateSkyHammers(dt);      // big "hammer from the sky" VFX (fall → impact → fade)
   updateImpactFlashes(dt);   // bright ground bursts under a landed sky hammer
   updateScope(dt);           // crossbow ADS: lerp camera FOV + toggle the scope overlay
-  updateWallGhost();         // 🏢👻 wall placement preview — green ground / cyan roof-top / red refused
+  updatePlacementGhosts();   // 👻 wall / roof / bramble / gate preview — green legal, cyan a storey up, amber odd, red refused
 
   tickAbilityBar();
 }
@@ -12781,6 +13614,7 @@ function spawnDailyWave(){
   for(let i=0;i<CHEETAH.PER_DAWN && cheetahMeshes.length < CHEETAH.MAX; i++) spawnCheetah();
   for(let i=0;i<PORC.PER_DAWN && porcupineMeshes.length < PORC.MAX; i++) spawnPorcupine();   // 🦔
   restockCrocodiles();          // 🐊 any pond that got cleared out yesterday gets one back
+  restockHippos();              // 🦛 …and the pond's other apex
   for(let i=0;i<2 && gorillaMeshes.length < GOR.MAX;  i++) spawnGorilla();
   for(let i=0;i<2 && rhinoMeshes.length   < RHINO.MAX;i++) spawnRhino();   // 2 rhinos/day (was 1)
   for(let i=0;i<DOG.PACK && dogMeshes.length < DOG.MAX;  i++) spawnWildDog();   // 10 wild dogs/day (cap 15)
@@ -12849,6 +13683,9 @@ function healAllAnimals(){
   // Nor does one sunk on the bed: driving a croc off should mean it is genuinely
   // wounded and healing where you can still go and finish it.
   crocMeshes.forEach(C=>{ if(ok(C) && crocGrab.croc!==C && C.state!=='SUNK') C.health=C.maxHealth; });
+  // 🦛 …but NOT one that is currently bolting for the water: same rule as the fleeing
+  // porcupine, so a hippo you drove off does not get healed back to full mid-retreat.
+  hippoMeshes.forEach(H=>{ if(ok(H) && H.state!=='RETREAT') H.health=H.maxHealth; });
   snakeMeshes.forEach(S=>{ if(!S.dying && !S.turret && ok(S)) S.health=S.maxHealth; });
 }
 
@@ -13270,6 +14107,19 @@ function drawMinimap(){
     mmCtx.beginPath(); mmCtx.arc(px,py,5,0,Math.PI*2); mmCtx.fill();
   });
 
+  // 🦛 Hippos — the biggest dot on the radar (6 vs the heavyweights' 5), because a hippo
+  // outweighs everything else that walks. ⚠ Colour picked against the crowded bands
+  // already here: slate-mauve #8e7f96 is nowhere near the croc's sand #d4a05c sharing its
+  // water, nor the rhino's #c9c4b0, nor the gorilla's #b05cff. It blazes deep magenta the
+  // instant it commits to a charge — distinct from the sky vulture's dive pink #ff5aa0 by
+  // being far more saturated.
+  hippoMeshes.forEach(K=>{
+    if(K.health<=0) return;
+    mmCtx.fillStyle = (K.state==='CHARGE') ? '#ff2e7a' : '#8e7f96';
+    const [px,py]=toMM(K.pos.x-player.pos.x, K.pos.z-player.pos.z);
+    mmCtx.beginPath(); mmCtx.arc(px,py,6,0,Math.PI*2); mmCtx.fill();
+  });
+
   // 🐆 Cheetahs — Steven's spec exactly: a YELLOW dot with a BLACK circle in the middle.
   // ⚠ The yellow band on this radar is crowded — lion-idle #ffcc00, gold cobra #d8a81e
   // (hot #ffe066) and martial eagle #e8b23a are all golds. The concentric black core is
@@ -13371,6 +14221,7 @@ function resetGame(){
   [...kitBrambles].forEach(b=>killObj(b.mesh));
   clearKitRoofs();
   clearCrocodiles(); spawnCrocodiles();   // 🐊 fresh crocs, every pond restocked
+  clearHippos();     spawnHippos();       // 🦛 …and fresh hippos in the same water
   namedAnimals.length = 0;                // 🏷️ every named animal was just disposed
   clearCarry();                        // 🎒 empty the hand and clear anything left lying about
   [...skyVultureMeshes].forEach(V=>killObj(V.mesh));
@@ -13495,6 +14346,7 @@ function animate(){
   updateCheetahs(dt);         // 🐆 lounges all day, one or two lethal midday sprints
   updatePorcupines(dt);       // 🦔 forages, ignores you — until you hit it, then quills first
   updateCrocodiles(dt);       // 🐊 pond apex — bask / lurk / cruise, grab + death roll
+  updateHippos(dt);           // 🦛 wallow / graze by day, roam 70 m and start fights by night
   updateBrambles(dt);         // 🌿 prick anything standing in a bramble fence         // fast pack predator — hunt/roam, relentless vendetta if provoked
   updateSkyVultures(dt);      // high-cruising raptor — dives on smaller prey, never dies airborne
   updateMartialEagles(dt);    // 🦅 sky hunter — soar high on level wings, bank → stoop → strike → mantle → rebound
@@ -13536,6 +14388,7 @@ createSavanna();          // sky dome, hills, grass, dust, tall-grass clumps
 createTrees();
 createBerryBushes();      // 🫐 prickly bushes with a daily berry crop
 spawnCrocodiles();        // 🐊 1–2 per pond — no pond is a safe pond
+spawnHippos();            // 🦛 …sharing that water with the crocodiles
 createRocks();
 createRockFormations();   // scenery boulders/standing stones/outcrops
 registerControls();

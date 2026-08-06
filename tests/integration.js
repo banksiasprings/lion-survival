@@ -737,7 +737,43 @@ test('roof: walk under a line of roofs unobstructed, and still stand on top', ()
 // ground under it and blocks you at ground level too. A one-storey smoke test cannot see
 // that — you need several storeys AND to walk every level against every level, which is
 // what the N×N matrix below does. Assert the ZEROES, not just the ones.
-const STOREY_X = 60, STOREY_Z = 60;                 // a fixed build site, well clear of the ponds
+// ⚠ THE BUILD SITE IS CHOSEN AGAINST THE ACTUAL WORLD, NOT HARD-CODED — and that is the
+// third time this exact bug has been found in this suite (see the mobile double-tap check,
+// 974c06e). It used to be `const STOREY_X = 60, STOREY_Z = 60` with the comment "well clear
+// of the ponds". It is not: `chooseWaterHoles()` places three pools of radius 20–29 at
+// RANDOM, once per page load, and `resetGame()` deliberately does not re-roll them — so
+// (60,60) is dry on some loads and 18 m under water on others. On a wet load the whole
+// tower is built in a pond, the player swims instead of jumping, and the storey tests fail
+// with numbers that look like a collision regression. Measured on the load that caught it:
+// pond at (78,62) r=28, `terrainY(60,60) = -3.32`, `waterSpeedMul(60,60) = 1/3`.
+//
+// A fixed site cannot be right in a world with random water. Ask the world instead: sweep a
+// grid and take the first spot whose whole build+walk footprint is dry. The footprint has to
+// cover more than the tower — `walkedUnderTower` marches ±8 on X — so it is checked out to
+// SITE_CLEAR, not just at the centre.
+const SITE_CLEAR = 12;              // metres of dry ground needed around the build site
+function pickBuildSite(){
+  const dry = (x, z)=>{
+    if(waterSpeedMul(x, z) !== 1) return false;
+    for(let a=0; a<8; a++){         // rim samples — a pond edge inside the footprint is still wet
+      const t = a*Math.PI/4;
+      if(waterSpeedMul(x + Math.cos(t)*SITE_CLEAR, z + Math.sin(t)*SITE_CLEAR) !== 1) return false;
+    }
+    return true;
+  };
+  const lim = MAPR - 40;
+  for(let ring=0; ring<=lim; ring+=10){          // spiral out from the old site so a dry
+    for(let a=0; a<16; a++){                     // world still builds near (60,60)
+      const t = a*Math.PI/8;
+      const x = 60 + Math.cos(t)*ring, z = 60 + Math.sin(t)*ring;
+      if(Math.abs(x) > lim || Math.abs(z) > lim) continue;
+      if(dry(x, z)) return { x: Math.round(x), z: Math.round(z) };
+    }
+  }
+  return { x: 60, z: 60 };                       // no dry ground anywhere → let it fail loudly
+}
+const _SITE = pickBuildSite();
+const STOREY_X = _SITE.x, STOREY_Z = _SITE.z;
 function clearRoofs(){ clearKitRoofs(); }
 // Plant the player somewhere solid without touching updatePlayer (used mid-build, where
 // the feet are deliberately up on a deck rather than on the terrain).
