@@ -3309,3 +3309,118 @@ nothing, and read that as the feature being missing.
 ### 🐊 Crocodiles — confirmed good, no action
 Steven on the 2026-08-05 ambush/drag work: *"crocodiles are better now."* Nothing changed here; recorded
 so a future session does not re-open it.
+
+
+## 🏢 MULTI-STOREY — walls stack on roofs, to any height (2026-08-06)
+Steven: *"multi-story houses: place walls ON TOP of roofs to build up. Chain: wall → roof → wall → roof →
+wall → roof (arbitrary height). Double, triple, quadruple, etc."* This is the stacked-collision refactor
+that the 2026-07-31 roof session explicitly deferred ("walls CANNOT be placed on a roof — that's a future
+session"). **Verified to 20 decks, top deck y = 50.41.**
+
+### The one assumption that had to be broken
+`pushOutOfAABB` is **purely XZ** — it is shared with the animals, which are 2-D movers, so it treats every
+box as an **infinite vertical column**. Every consumer of `wallAABBs` inherited that. It was correct while
+every wall stood on the ground; the moment a wall sits on a roof three metres up, that same code blocks a
+lion standing underneath it and blocks *you* at ground level. This is the identical category error as the
+2026-08-05c roof fix ("a roof is a floor, not a wall") — one layer up.
+
+### Two rules, and the split is the existing architecture's
+- **The player is a 3-D mover** (real feet Y, jumps, stands on roofs) → `pushPlayerOutOfWalls` does a
+  genuine **vertical-overlap** test. The new skip is the mirror of the old one: *feet at/above the top −
+  step* means it is a floor, *head at/below the underside* means walk under it. Head is `PLAYER.eyeHeight`
+  (1.7), the game's existing notion of the top of the player. Deliberately not feet-based: that would let
+  you clip a wall at chest height off slightly lower ground, and blocking is a wall's whole job.
+- **Animals are 2-D movers** → an elevated wall **does not exist** to them at all. `collideWalls`,
+  `collideStoneWalls`, `segCrossesWall`, `segHitsWall`, lion wall-avoidance and vulture landing all skip it.
+
+### ⚠ THE FLAG IS COMPUTED AGAINST THE TERRAIN UNDER THE WALL, NOT AGAINST THE ANIMAL
+The obvious implementation — "skip a wall whose base is far above your feet" — has **no safe threshold**.
+Measured on this terrain: relief is up to **0.721 over 1.5 units** and **1.653 over 2.5**, so the cut would
+have to clear ~1.7 of pure slope noise while staying under the ~2.0 worst-case storey gap. Comparing the
+wall's base to `terrainY` **under that wall** has no such problem — slope cancels because both samples are
+taken at the same place, and the reading is **0.00 for a ground wall vs ≥ 2.26 for a stacked one**.
+- **One registration point, `pushWallAABB(mesh)`** — used by `placeKitWall` *and* the gate close, so the
+  flag cannot drift from the box it describes.
+- ⚠ **The flag is `elevated`, not `ground`, and that direction is deliberate.** Anything reaching
+  `wallAABBs` without the classifier reads `undefined` → falsy → **blocks like a normal wall**. A missing
+  field must never mean "safe to ignore" — the same absence-from-silence failure Freyr's guards shipped.
+
+### Placement — one solver, two callers
+`wallPlacementPlan()` decides everything; `placeKitWall` builds from it and the ghost preview **draws** it.
+A preview that recomputed the target independently is a preview that can lie.
+- **Base Y snaps to the roof top.** Storey pitch comes out **uniform at 2.595** all the way up.
+- **Elevated walls snap yaw to 90°.** Not cosmetic: a wall's collider is an AABB via `setFromObject`, so a
+  45°-rotated 2.5×0.3 wall has a **1.98×1.98** footprint — 5× its real area. Survivable on open ground,
+  mush inside a tight house. Roofs are axis-aligned anyway. **Ground placement is untouched.**
+- ⚠ **THE RIM SNAP EXISTS BECAUSE OF A NUMBER.** A roof is 4.4 wide (half 2.2) and you build 2.5 in front
+  of you — so standing dead centre on your own roof the raw target is **0.3 past the edge**, and without a
+  snap a single-roof storey **could not be walled at all**. When the raw target misses every roof but you
+  are standing on one, it is pulled back onto that roof's footprint, from within **half a wall's width
+  (1.25)**. Walk to the rim and aim properly out into space and it is beyond that slack → refused. Both
+  behaviours fall out of the one rule.
+- **Support means a ROOF, not a wall top** (judgment call). You can stand on a wall top, but a 0.3-thick
+  beam is not a foundation, and standing on one still drops an ordinary ground wall exactly as before.
+
+### ⚠ "Am I upstairs" is `roofUnderPlayer()`, NOT a height comparison — this cost a red test
+Deriving it from `player.pos.y − terrainY(here)` reads TRUE for anyone whose y is merely stale or mid-air,
+**and it fires on a hillside**: 30 of 100 ground walls were refused on open savannah. Ask for the roof
+directly. No threshold, nothing to drift.
+
+### 👻 Placement preview
+A translucent wall drawn exactly where the real one lands: **green** = ground, **cyan** = landing on a roof
+one storey up, **red** = refused. Named `wallGhost`, *not* `wall` — the click raycast filters scene children
+by name, so calling it `wall` would make the preview itself an axe target floating in front of your face.
+Disposal: one lazily-built singleton, never freed, `userData.keep` on **both** geometries and **both**
+materials, with a `!parent` re-attach. A refused ghost is drawn at **your own feet height**, so it hangs in
+the air where you aimed and reads as "that would be a floating wall".
+
+### ⚠ `wallSupportY` was allocating two arrays every frame
+It was `wallAABBs.concat(kitRoofs.map(r=>r.aabb))` — a fresh array of every box **plus** a fresh array of
+every roof AABB, per frame. Harmless at one shed; a 20-storey tower is 40 walls + 20 roofs and that garbage
+is per-frame, so it buys frame **hitches** rather than average cost. Rewritten to walk both lists in place:
+**21.1 µs → 0.72 µs** at 20 decks. Elevated walls are deliberately *not* skipped here — a second-storey
+wall top is a real surface you can stand on.
+
+### Verified — suite 19 → 24, all green (3 consecutive runs, 0 console errors)
+| pin | result |
+|---|---|
+| **layering matrix** | 5 decks × one wall per deck × 6 levels walked = **perfect identity**. A wall blocks on its own deck and returns **0 on every other level, including the ground row** |
+| animals | ground creature + swept `segCrossesWall` blocked **0 times** under every elevated wall, at every deck |
+| both ways | 5 body radii walk clean under an upper deck, then **all 5 stop dead** at a ground wall in the same footprint (a lone "nothing was blocked" is also what broken collision prints) |
+| placement | 4 cardinals from deck centre all land on the deck top, snapped, inside the footprint, cardinal yaw |
+| refusal | from the rim aiming out: refused, **0 walls added, 0 wood charged** |
+| no regression | ground placement still terrain-based; standing on a **wall top** still drops a ground wall |
+| climb | 4 decks, **one single jump each**, landing exactly on 1.22 / 3.81 / 6.41 / 9.00 |
+| enclosure | into the ring wall **281 blocked frames**; out through the doorway **0** — same storey, same ring |
+| one-way top | walk off the top deck → falls 9.00 → −1.25 and lands (db8d212 preserved) |
+| **20 decks** | uniform pitch, 40 walls / 20 roofs, lockstep held, every deck standable, top y **50.41** |
+| teardown | 0 orphan meshes, **0 geometries leaked, 0 textures leaked, 0 scene delta** |
+| frame budget | `pushPlayerOutOfWalls` 3.4 µs, `wallSupportY` 0.72 µs at 20 decks — vs `updateLions` 80.7 µs and a 16 667 µs budget |
+
+### Jump reach — the explicit answer Steven asked for
+Measured on **clear ground** (the first attempt measured with the tower still standing, so the "apex" was
+just the deck above — a textbook false green, and the number was wrong by 0.8):
+- **Single jump apex 3.373** → clears a **2.595** storey pitch with 0.78 to spare. **One deck per jump,
+  reliably**, and this is the normal way up.
+- **Double jump apex 5.547** *when the second press is near the apex* (frame ~33; pressed at frame 10 it is
+  only 4.039). That reaches **deck 1 from the ground** (needs 5.090) but **deck 2 never** (needs 7.685).
+- **So: 3+ storeys always needs intermediate footing.** You climb it, you don't skip it.
+
+### Edge cases, measured
+- **Partial overhang:** a rim wall sits with its centre exactly on the deck edge — **0.15 overhangs, 0.15
+  supported**, half its 0.30 depth. It cannot become a floating wall; half of it is always on the deck.
+- **Staircase profile:** roofing from near the rim offsets the next deck by 1.9 with 2.5 of 4.4 overlap.
+  Both decks stay standable at their own heights.
+- **Adjacent decks:** two roofs side by side make one wide floor; a wall aimed across the seam needs **no
+  snap** and bases on the far deck. On slope the two decks can differ (measured 1.12 vs 1.35) — a 0.23
+  step, well inside the 0.7 step-up, so you walk between them.
+
+### ⚠ Quirks Steven should know, stated not hidden
+1. **A 0.06 slit at the top of every elevated wall.** Wall top = base + 2.2; the roof above it underhangs at
+   base + 2.26. Deterministic, ~6 cm, visible as a hairline where wall meets ceiling. **Not fixed on
+   purpose:** the one-line fix is `ROOF.CLEARANCE` 2.3 → 2.24, which retunes a constant the shipped roof
+   headroom test and the db8d212 walk-under fix both depend on. Not worth it for 6 cm without his call.
+2. **The ground floor is 0.6 wider than every storey above it.** Ground walls land 2.5 out (aim distance);
+   elevated ones snap to the 2.2 rim. So the tower steps inward once, at deck 0, then goes straight up.
+3. **Cap arithmetic.** `KIT_WALL_MAX` 100 and `ROOF.MAX` 30 → a 4-walls-per-storey tower tops out at
+   **25 storeys** on walls, 30 on roofs. Nothing warns before then beyond the existing cap message.

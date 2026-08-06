@@ -729,6 +729,391 @@ test('roof: walk under a line of roofs unobstructed, and still stand on top', ()
 });
 
 // =====================================================================
+//  🏢 MULTI-STOREY — walls stack on roofs, wall → roof → wall → roof → …
+// =====================================================================
+// ⚠ THE BUG SHAPE THESE EXIST TO CATCH is the one this whole feature could have shipped
+// with: `pushOutOfAABB` is purely XZ, so every wall is an INFINITE VERTICAL COLUMN. Put a
+// wall on a third-storey roof and, without the layering, it blocks a lion standing on the
+// ground under it and blocks you at ground level too. A one-storey smoke test cannot see
+// that — you need several storeys AND to walk every level against every level, which is
+// what the N×N matrix below does. Assert the ZEROES, not just the ones.
+const STOREY_X = 60, STOREY_Z = 60;                 // a fixed build site, well clear of the ponds
+function clearRoofs(){ clearKitRoofs(); }
+// Plant the player somewhere solid without touching updatePlayer (used mid-build, where
+// the feet are deliberately up on a deck rather than on the terrain).
+function standAt(x, y, z){
+  player.pos.set(x, y, z); player.vel.set(0,0,0);
+  player.onGround = true; player.inTree = false; player.climbing = false; player.swimming = false;
+  player.health = 100; player.hunger = 100; player.poisonT = 0; gameState = 'playing';
+}
+// A bare stack of N decks — roofs only, no walls. Returns each deck's TOP y (the surface
+// you stand on and the surface a wall placed there is based at).
+function buildDecks(n, x, z){
+  const floors = [];
+  let feet = terrainY(x, z) + 0.1;
+  for(let s=0; s<n; s++){
+    standAt(x, feet, z);
+    if(!placeKitRoof()) break;
+    floors.push(kitRoofs[kitRoofs.length-1].aabb.max.y);
+    feet = floors[floors.length-1] + 0.1;
+  }
+  return floors;
+}
+// Walk the player at `feetY` straight along +Z into (x,z) and report whether anything
+// stopped them. Drives the REAL push, not a reimplementation of it.
+function walkIntoBlocked(x, z, feetY, fromDist){
+  standAt(x, feetY, z - (fromDist || 6));
+  let blocked = 0;
+  for(let i=0; i<300 && player.pos.z < z - 0.4; i++){
+    const before = player.pos.z;
+    player.pos.z += 0.08;
+    pushPlayerOutOfWalls();
+    if(player.pos.z < before + 0.08 - 1e-6) blocked++;
+  }
+  return { blocked, stoppedAt: r2(z - player.pos.z) };
+}
+
+// THE MATRIX. Five decks, one wall on ONE deck at a time, then walk every level including
+// true ground. A wall must block on its own deck and be invisible everywhere else — and
+// invisible to the animals' 2-D world at every level, always.
+test('storeys: a wall blocks on its own deck and on no other', ()=>{
+  clearWalls(); clearRoofs(); pinPlayer();
+  woodCount = 9000; rockCount = 9000;
+  const detail = {}, N = 5, X = STOREY_X, Z = STOREY_Z;
+  const floors = buildDecks(N, X, Z);
+  detail.decks = floors.map(r2);
+  detail.pitch = r2(floors[1] - floors[0]);
+  const groundFeet = terrainY(X, Z) + 0.1;
+  const levels = [groundFeet].concat(floors.map(f => f + 0.1));   // level 0 = true ground
+
+  const rows = [];
+  for(let k=0; k<N; k++){
+    clearWalls();
+    standAt(X, floors[k] + 0.1, Z); yaw = 0;          // fwd = (0,0,-1) → the -Z rim of deck k
+    const placed = placeKitWall(false);
+    const bb = wallAABBs[0];
+    // ⚠ keep the RAW base for the equality check — comparing an r2()-rounded value to an
+    // unrounded deck height with a 1e-6 tolerance scores a correct build as a failure.
+    const row = { deck:k, placed, base:r2(bb.min.y), _rawBase:bb.min.y,
+                  top:r2(bb.max.y), elevated:!!bb.elevated, blocked:[] };
+    for(let f=0; f<levels.length; f++) row.blocked.push(walkIntoBlocked(X, Z, levels[f]).blocked > 0 ? 1 : 0);
+    // …and the 2-D world: a ground creature walking the same line, plus the swept
+    // segment test the movement anti-tunnel guard uses.
+    const cp = new THREE.Vector3(X, terrainY(X, Z-6), Z-6);
+    let cblk = 0;
+    for(let i=0;i<300 && cp.z < Z-0.4; i++){
+      const b = cp.z; cp.z += 0.08; cp.y = terrainY(cp.x, cp.z);
+      collideWalls(cp, 0.7); collideStoneWalls(cp, 0.7);
+      if(cp.z < b + 0.08 - 1e-6) cblk++;
+    }
+    row.creatureBlocked = cblk > 0 ? 1 : 0;
+    row.segBlocked = segCrossesWall(X, Z-6, X, Z+6, 0.7) ? 1 : 0;
+    rows.push(row);
+  }
+  detail.rows = rows;
+  // Every wall sat on its deck, exactly.
+  detail.basedOnDeck   = rows.every((r,k) => Math.abs(r._rawBase - floors[k]) < 1e-6);
+  detail.allElevated   = rows.every(r => r.elevated);
+  // The identity matrix: blocked[level] is 1 iff level === deck+1 (level 0 is the ground).
+  detail.identity      = rows.every((r,k) => r.blocked.every((v,f) => v === (f === k+1 ? 1 : 0)));
+  // ⚠ The assertion that would have caught the whole bug class: the GROUND row is all
+  // zeroes, i.e. no floating wall ever blocks a player standing underneath it.
+  detail.groundRowClear = rows.every(r => r.blocked[0] === 0);
+  detail.creaturesClear = rows.every(r => r.creatureBlocked === 0 && r.segBlocked === 0);
+
+  clearWalls(); clearRoofs(); pinPlayer();
+  const pass = floors.length === N && detail.basedOnDeck && detail.allElevated &&
+               detail.identity && detail.groundRowClear && detail.creaturesClear;
+  return { pass, detail };
+});
+
+// Placement legality: a wall needs a roof under it. Also pins the rim snap, which is the
+// only reason a 4.4-wide deck can be walled at all from a 2.5 reach.
+test('storeys: a wall needs a roof under it, and the rim snap is what makes a deck wallable', ()=>{
+  clearWalls(); clearRoofs(); pinPlayer();
+  woodCount = 9000; rockCount = 9000;
+  const detail = {}, X = STOREY_X, Z = STOREY_Z;
+  const floors = buildDecks(2, X, Z);
+  const deck = kitRoofs[0].aabb;
+
+  // 1. From the deck centre, all four cardinals: each must land ON the deck, at its top.
+  const rim = [];
+  for(let k=0;k<4;k++){
+    clearWalls();
+    standAt(X, floors[0] + 0.1, Z); yaw = k * Math.PI/2;
+    const plan = wallPlacementPlan();
+    const ok = placeKitWall(false);
+    const bb = wallAABBs[0];
+    rim.push({ ok, elevated:plan.elevated, snapped:plan.snapped,
+               base:r2(bb.min.y), onDeckTop: Math.abs(bb.min.y - deck.max.y) < 1e-6,
+               insideFootprint: plan.x >= deck.min.x-1e-6 && plan.x <= deck.max.x+1e-6 &&
+                                plan.z >= deck.min.z-1e-6 && plan.z <= deck.max.z+1e-6,
+               yawIsCardinal: Math.abs((plan.yaw % (Math.PI/2))) < 1e-9 });
+  }
+  detail.fourCardinals = rim;
+  detail.allFourLanded = rim.every(r => r.ok && r.elevated && r.snapped &&
+                                        r.onDeckTop && r.insideFootprint && r.yawIsCardinal);
+
+  // 2. Stand ON the rim and aim OUT — beyond the snap slack, so it must refuse and the
+  //    refusal must be free (the classic "charged for a wall it never built").
+  clearWalls();
+  standAt(deck.max.x - 0.05, deck.max.y + 0.1, (deck.min.z + deck.max.z)/2);
+  yaw = -Math.PI/2;                                    // fwd = (+1,0,0), straight off the edge
+  woodCount = 500;
+  const wallsBefore = wallAABBs.length, woodBefore = woodCount;
+  const refusedPlan = wallPlacementPlan();
+  const refused = placeKitWall(false);
+  detail.midAir = { blocked: !!refusedPlan.blocked, reason: refusedPlan.blocked,
+                    returned: refused, wallsAdded: wallAABBs.length - wallsBefore,
+                    woodCharged: woodBefore - woodCount };
+  detail.midAirRefused = refusedPlan.blocked && refused === false &&
+                         detail.midAir.wallsAdded === 0 && detail.midAir.woodCharged === 0;
+
+  // 3. Ground placement is UNTOUCHED — open savannah, well away from the tower.
+  clearWalls(); pinPlayer();
+  const gOk = placeAheadAt(X - 40, Z - 40, ()=>placeKitWall(false));
+  const gbb = wallAABBs[0];
+  detail.ground = { placed:gOk, elevated: !!(gbb && gbb.elevated),
+                    onTerrain: !!gbb && Math.abs(gbb.min.y - terrainY((gbb.min.x+gbb.max.x)/2,
+                                                                     (gbb.min.z+gbb.max.z)/2)) < 0.05 };
+  detail.groundUnchanged = detail.ground.placed && !detail.ground.elevated && detail.ground.onTerrain;
+
+  // 4. Standing on a WALL TOP is not standing on a storey — it still drops an ordinary
+  //    ground wall, exactly as it did before storeys existed. (No silent regression for
+  //    anyone who builds by walking along their own palisade.)
+  standAt((gbb.min.x+gbb.max.x)/2, gbb.max.y + 0.1, (gbb.min.z+gbb.max.z)/2);
+  yaw = Math.PI;
+  const wtPlan = wallPlacementPlan();
+  const wtOk = placeKitWall(false);
+  detail.fromWallTop = { placed:wtOk, elevated:wtPlan.elevated, blocked:wtPlan.blocked };
+  detail.wallTopUnchanged = wtOk === true && wtPlan.elevated === false && !wtPlan.blocked;
+
+  clearWalls(); clearRoofs(); pinPlayer();
+  const pass = floors.length === 2 && detail.allFourLanded && detail.midAirRefused &&
+               detail.groundUnchanged && detail.wallTopUnchanged;
+  return { pass, detail };
+});
+
+// The playable loop, end to end: jump up INSIDE an enclosed tower storey by storey, prove
+// each storey's ring really does enclose you and its doorway really does let you out, and
+// confirm the top deck is still the one-way platform db8d212 made it.
+//
+// ⚠ THE TOWER HERE HAS NO GROUND-FLOOR RING ON PURPOSE. An enclosed ground floor is a
+// perfectly good house but it makes the "walk under your own overhang" assertion untestable
+// — you would be stopped by a ground wall and score it as the storeys leaking downward.
+// Every ring sits on a deck, so at ground level the whole tower is overhang.
+test('storeys: jump up an enclosed tower, out through its door, and off the one-way top', ()=>{
+  clearWalls(); clearRoofs(); pinPlayer();
+  equipSinew();                       // 🪽 storey-to-storey hops are what the Sinew buys
+  woodCount = 9000; rockCount = 9000;
+  const detail = {}, DT = 1/60, X = STOREY_X, Z = STOREY_Z, N = 4;
+  const clearAir = ()=>{ keys['Space'] = false; player._jumpDown = false; };
+  detail.sinew = maxJumps() === 2;
+
+  // Deck 0 first (no ring under it), then a THREE-wall ring on every deck: the missing
+  // fourth side is the doorway, and it faces -Z on every storey.
+  const floors = [];
+  standAt(X, terrainY(X, Z) + 0.1, Z);
+  placeKitRoof(); floors.push(kitRoofs[0].aabb.max.y);
+  for(let s=0; s<N-1; s++){
+    const feet = floors[s] + 0.1;
+    for(let k=1;k<4;k++){ standAt(X, feet, Z); yaw = k*Math.PI/2; placeKitWall(false); }  // skip k=0 → the door
+    standAt(X, feet, Z);
+    if(!placeKitRoof()) break;
+    floors.push(kitRoofs[kitRoofs.length-1].aabb.max.y);
+  }
+  detail.decks = floors.map(r2);
+  detail.walls = wallAABBs.length;
+  detail.elevatedWalls = wallAABBs.filter(a=>a.elevated).length;
+  detail.groundWalls   = wallAABBs.filter(a=>!a.elevated).length;
+
+  // ⚠ THE OVERHANG ASSERTION: nine walls hang overhead. Cross the whole footprint at
+  // ground level, on the X axis, and nothing up there may touch you.
+  standAt(X - 8, terrainY(X-8, Z) + 0.1, Z);
+  let underBlocked = 0;
+  for(let i=0;i<400 && player.pos.x < X + 8; i++){
+    const b = player.pos.x;
+    player.pos.y = terrainY(player.pos.x, player.pos.z) + 0.1;
+    player.pos.x += 0.08;
+    pushPlayerOutOfWalls();
+    if(player.pos.x < b + 0.08 - 1e-6) underBlocked++;
+  }
+  detail.walkedUnderTower = { blockedFrames: underBlocked, finalX: r2(player.pos.x),
+                              cleared: player.pos.x >= X + 7.9 };
+
+  // CLIMB, for real: stand under your own deck and jump UP THROUGH it. This is the
+  // documented one-way platform in the upward direction — you pass through the slab on
+  // the way up and the swept `crossed` test catches your feet on the way down.
+  // ⚠ ONE SINGLE JUMP PER DECK, not a double. Measured on clear ground: a single jump
+  // peaks 3.373, and a deck-to-deck hop is 2.595, so one press clears one storey with 0.78
+  // to spare. Spending the air jump here would OVERSHOOT — from the ground a well-timed
+  // double reaches 5.547, i.e. straight past deck 0 and onto deck 1 — and the test would
+  // then score "landed two decks up" as a failure to climb one.
+  const hops = [];
+  standAt(X, terrainY(X, Z) + 0.1, Z);
+  clearAir();
+  for(let i=0;i<10;i++) updatePlayer(DT);
+  for(let d=0; d<floors.length; d++){
+    const want = floors[d] + 0.1;
+    clearAir();
+    player.jumpsLeft = maxJumps();
+    keys['Space'] = true; updatePlayer(DT);
+    clearAir();                                       // release at once — no air jump
+    for(let i=0;i<400 && !(player.onGround && player.pos.y > want - 0.05); i++) updatePlayer(DT);
+    hops.push({ deck:d, want:r2(want), got:r2(player.pos.y),
+                landed: player.onGround && Math.abs(player.pos.y - want) < 0.05 });
+    if(!hops[d].landed) break;
+  }
+  detail.hops = hops;
+  detail.climbedEveryDeck = hops.length === floors.length && hops.every(h=>h.landed);
+
+  // ENCLOSURE: on the TOPMOST RINGED deck, walk into the +Z wall — blocked. Then walk out
+  // through the -Z doorway — not blocked. Same storey, same ring, opposite results.
+  // ⚠ Deliberately NOT the top deck: rings sit on decks 0..N-2 (each ring is the storey
+  // BETWEEN two decks), so the top deck is open sky and would score a free, meaningless
+  // pass on both halves.
+  const ringedDeck = floors[floors.length-2];
+  const wallSide = walkIntoBlocked(X, Z + 4, ringedDeck + 0.1, 4);   // into the +Z ring wall
+  standAt(X, ringedDeck + 0.1, Z);
+  let outBlocked = 0;
+  for(let i=0;i<200 && player.pos.z > Z - 5; i++){
+    const b = player.pos.z; player.pos.z -= 0.08; pushPlayerOutOfWalls();
+    if(player.pos.z > b - 0.08 + 1e-6) outBlocked++;
+  }
+  detail.enclosure = { deck: r2(ringedDeck), intoWallBlockedFrames: wallSide.blocked,
+                       stoppedShortOf: wallSide.stoppedAt,
+                       outTheDoorBlockedFrames: outBlocked, exitedTo: r2(player.pos.z) };
+  detail.ringHolds = wallSide.blocked > 0 && outBlocked === 0 && player.pos.z <= Z - 4.9;
+
+  // ONE-WAY PLATFORM, PRESERVED: stand on the TOP deck, walk off the rim, and fall.
+  const top = kitRoofs[kitRoofs.length-1].aabb;
+  standAt((top.min.x+top.max.x)/2, top.max.y + 0.1, (top.min.z+top.max.z)/2);
+  clearAir();
+  for(let i=0;i<20;i++) updatePlayer(DT);
+  const startY = player.pos.y;
+  let leftTheDeck = false;
+  for(let i=0;i<600;i++){
+    if(!leftTheDeck) player.pos.x += 0.08;
+    updatePlayer(DT);
+    if(player.pos.x > top.max.x + 1.2) leftTheDeck = true;
+    if(leftTheDeck && player.onGround) break;
+  }
+  detail.walkOffTop = { startY: r2(startY), endY: r2(player.pos.y),
+                        fell: player.pos.y < startY - 2, landed: player.onGround };
+
+  clearAir(); restoreAccessories();
+  clearWalls(); clearRoofs(); pinPlayer();
+  const pass = detail.sinew && floors.length === N && detail.groundWalls === 0 &&
+               detail.elevatedWalls === (N-1)*3 &&
+               detail.walkedUnderTower.blockedFrames === 0 && detail.walkedUnderTower.cleared &&
+               detail.climbedEveryDeck && detail.ringHolds &&
+               detail.walkOffTop.fell && detail.walkOffTop.landed;
+  return { pass, detail };
+});
+
+// Scale + teardown. Twenty decks is far past anything Steven will build by hand, which is
+// the point: if a per-storey leak exists it is 20× more visible here, and the disposal
+// invariant (killObj on every removal path) has to hold all the way down.
+test('storeys: twenty decks up and all the way down, leaving nothing behind', ()=>{
+  clearWalls(); clearRoofs(); pinPlayer();
+  woodCount = 90000; rockCount = 90000;
+  const detail = {}, X = STOREY_X, Z = STOREY_Z, N = 20;
+  const geo0 = renderer.info.memory.geometries, tex0 = renderer.info.memory.textures;
+  const meshes0 = scene.children.length;
+
+  const floors = [];
+  let feet = terrainY(X, Z) + 0.1;
+  for(let s=0; s<N; s++){
+    for(let k=0;k<2;k++){ standAt(X, feet, Z); yaw = k*Math.PI; placeKitWall(false); }
+    standAt(X, feet, Z);
+    if(!placeKitRoof()) break;
+    floors.push(kitRoofs[kitRoofs.length-1].aabb.max.y);
+    feet = floors[floors.length-1] + 0.1;
+  }
+  detail.decksBuilt = floors.length;
+  detail.topDeckY   = r2(floors[floors.length-1]);
+  detail.pitchUniform = floors.every((f,i) => i===0 || Math.abs((f - floors[i-1]) - 2.595) < 0.01);
+  detail.walls = wallAABBs.length;
+  detail.elevatedWalls = wallAABBs.filter(a=>a.elevated).length;
+  detail.lockstep = wallMeshes.length === wallAABBs.length && kitWalls.length === wallMeshes.length;
+  // every deck is genuinely standable at its own height
+  detail.everyDeckSupports = floors.every(f =>
+    Math.abs(wallSupportY(X, Z, f + 0.1, f + 0.1, 0) - f) < 1e-6);
+
+  // FRAME BUDGET at full height — the player push is the per-frame cost that scales with
+  // the tower, so time the real function rather than asserting from theory.
+  standAt(X, floors[0] + 0.1, Z);
+  const t0 = performance.now();
+  for(let i=0;i<600;i++) pushPlayerOutOfWalls();
+  detail.pushUsPerFrame = Math.round((performance.now()-t0)/600*1000);
+
+  // TEAR IT ALL DOWN through the real removal paths.
+  while(wallMeshes.length) removeWallAt(wallMeshes.length-1);
+  kitWalls.length = 0;
+  clearKitRoofs();
+  detail.after = { wallMeshes: wallMeshes.length, wallAABBs: wallAABBs.length,
+                   kitWalls: kitWalls.length, kitRoofs: kitRoofs.length };
+  detail.orphansInScene = scene.children.filter(c => c.name === 'wall' || c.name === 'roof').length;
+  detail.geometriesLeaked = renderer.info.memory.geometries - geo0;
+  detail.texturesLeaked   = renderer.info.memory.textures - tex0;
+  detail.sceneDelta       = scene.children.length - meshes0;
+
+  pinPlayer();
+  const pass = detail.decksBuilt === N && detail.pitchUniform && detail.lockstep &&
+               detail.elevatedWalls === (N-1)*2 && detail.everyDeckSupports &&
+               detail.after.wallMeshes === 0 && detail.after.wallAABBs === 0 &&
+               detail.after.kitRoofs === 0 && detail.orphansInScene === 0 &&
+               detail.geometriesLeaked <= 0 && detail.texturesLeaked <= 0 &&
+               detail.sceneDelta <= 0;
+  return { pass, detail };
+});
+
+// The animals' half of the contract, asserted BOTH ways. "Nothing was blocked" is a
+// worthless green on its own — it is also what a completely broken collision system
+// prints — so every creature that walks freely under the deck must then be stopped dead
+// by a ground wall in the very same spot.
+test('storeys: ground creatures walk under an upper deck, and still hit a ground wall', ()=>{
+  clearWalls(); clearRoofs(); pinPlayer();
+  woodCount = 9000; rockCount = 9000;
+  const detail = {}, X = STOREY_X, Z = STOREY_Z;
+  // a deck with four walls around it, floating above open ground
+  const floors = buildDecks(2, X, Z);
+  for(let k=0;k<4;k++){ standAt(X, floors[0] + 0.1, Z); yaw = k*Math.PI/2; placeKitWall(false); }
+  detail.elevatedWalls = wallAABBs.filter(a=>a.elevated).length;
+  detail.groundWalls   = wallAABBs.filter(a=>!a.elevated).length;
+
+  // Several body radii — a wild dog, a lion, a rhino, a cheetah, an elephant-ish bulk.
+  const BODIES = [0.55, 0.7, 1.1, 0.6, 1.4];
+  const cross = ()=> BODIES.map(r=>{
+    const p = new THREE.Vector3(X, terrainY(X, Z-8), Z-8);
+    let blocked = 0;
+    for(let i=0;i<400 && p.z < Z+8; i++){
+      const b = p.z; p.z += 0.08; p.y = terrainY(p.x, p.z);
+      collideWalls(p, r); collideStoneWalls(p, r);
+      if(p.z < b + 0.08 - 1e-6) blocked++;
+    }
+    return { r, blocked, crossed: p.z >= Z + 7.9 };
+  });
+  detail.underTheDeck = cross();
+  detail.allWalkedUnder = detail.underTheDeck.every(x => x.blocked === 0 && x.crossed);
+  detail.segClearUnder  = !segCrossesWall(X, Z-8, X, Z+8, 0.7) && !segHitsWall(X, Z-8, X, Z+8);
+
+  // …now a GROUND wall in the same footprint. Every one of them must stop.
+  standAt(X, terrainY(X,Z) + 0.1, Z - 2.5); yaw = Math.PI;      // fwd = (0,0,1) → wall at Z
+  const gOk = placeKitWall(false);
+  detail.groundWallPlaced = gOk && wallAABBs.filter(a=>!a.elevated).length === 1;
+  detail.atTheGroundWall = cross();
+  detail.allStopped = detail.atTheGroundWall.every(x => x.blocked > 0 && !x.crossed);
+  detail.segBlocksNow = segCrossesWall(X, Z-8, X, Z+8, 0.7);
+
+  clearWalls(); clearRoofs(); pinPlayer();
+  const pass = detail.elevatedWalls === 4 && detail.groundWalls === 0 &&
+               detail.allWalkedUnder && detail.segClearUnder &&
+               detail.groundWallPlaced && detail.allStopped && detail.segBlocksNow;
+  return { pass, detail };
+});
+
+// =====================================================================
 //  FEATURE 4 — the crested porcupine ("spike-back")
 // =====================================================================
 function clearPorcs(){ [...porcupineMeshes].forEach(P=>killObj(P.mesh)); porcupineMeshes.length = 0; }

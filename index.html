@@ -832,6 +832,42 @@ function tallGrassAt(x, z){
   return null;
 }
 
+// ---- 🏢 STOREYS: which walls exist for whom (2026-08-06) ----------------------
+// Walls can now be stacked on roofs (wall → roof → wall → roof → …), so a wall is no
+// longer guaranteed to be standing on the ground. That breaks a load-bearing assumption
+// buried in EVERY 2-D consumer of `wallAABBs`: `pushOutOfAABB` is purely XZ, so it treats
+// a box as an INFINITE VERTICAL COLUMN (see the roof note in pushPlayerOutOfWalls). A
+// third-storey wall would therefore have blocked a lion standing on the ground under it.
+//
+// ⚠ TWO DIFFERENT RULES, AND THE SPLIT IS THE EXISTING ARCHITECTURE'S, NOT A NEW ONE:
+//   · The PLAYER is a 3-D mover — has a real feet Y, jumps, stands on roofs. So the
+//     player's path (pushPlayerOutOfWalls) does a genuine vertical-overlap test against
+//     the wall's own Y band. Exact; no storey bookkeeping involved.
+//   · ANIMALS are 2-D movers — they live on the terrain, cannot step up, and can never
+//     reach an upper storey. So for them an elevated wall simply DOES NOT EXIST, and
+//     every animal-facing test (collide/segment/avoidance/landing) skips it outright.
+//
+// ⚠ WHY A FLAG AND NOT "is min.y far above your feet". MEASURED: this terrain moves up to
+// 0.721 over 1.5 units and 1.653 over 2.5. A threshold comparing a wall's base to the
+// ANIMAL's y therefore has to sit above ~1.7 of pure slope noise while staying under the
+// ~2.0 worst-case storey gap — no safe gap. Comparing the wall's base to the terrain
+// UNDER THAT WALL has no such problem: a ground wall reads 0.00 and a stacked one reads
+// ≥ 2.26. Slope cancels out entirely because both samples are taken at the same place.
+//
+// ⚠ THE FLAG IS `elevated`, NOT `ground`, AND THAT DIRECTION IS DELIBERATE. Anything that
+// reaches `wallAABBs` without going through here has `elevated === undefined` → falsy →
+// treated as a normal ground wall that BLOCKS. A missing field must never be read as
+// "safe to ignore" (the absence-from-silence failure). Registration lives in exactly one
+// function so the flag cannot drift from the box it describes.
+const STOREY_MIN_LIFT = 1.0;   // a base this far over its own terrain is on a storey, not the ground
+function pushWallAABB(mesh){
+  const bb = new THREE.Box3().setFromObject(mesh);
+  const cx = (bb.min.x + bb.max.x) * 0.5, cz = (bb.min.z + bb.max.z) * 0.5;
+  bb.elevated = (bb.min.y - terrainY(cx, cz)) > STOREY_MIN_LIFT;
+  wallAABBs.push(bb);
+  return bb;
+}
+
 // Push an XZ position out of any player-built wall (sphere vs AABB). Used by
 // lions and prey so animals can't walk through walls.
 // ---- ONE wall-ejection primitive, shared by the player and every animal --------
@@ -867,6 +903,7 @@ function segCrossesWall(ax, az, bx, bz, r){
   const dx = bx-ax, dz = bz-az;
   for(let i=0;i<wallAABBs.length;i++){
     const a = wallAABBs[i];
+    if(a.elevated) continue;                            // 🏢 upper storey — not on this mover's plane
     const minx=a.min.x-r, maxx=a.max.x+r, minz=a.min.z-r, maxz=a.max.z+r;
     let t0 = 0, t1 = 1;
     if(Math.abs(dx) < 1e-9){ if(ax < minx || ax > maxx) continue; }
@@ -884,6 +921,7 @@ function segCrossesWall(ax, az, bx, bz, r){
 function collideWalls(pos, radius){
   for(let i=0;i<wallAABBs.length;i++){
     const a = wallAABBs[i];
+    if(a.elevated) continue;                            // 🏢 a storey above — an animal can't reach it
     if(pos.y > a.max.y - 0.1) continue;                 // cleared the top — let it pass over
     pushOutOfAABB(pos, a, radius);
   }
@@ -899,6 +937,7 @@ function collideStoneWalls(pos, radius){
     const w = wallMeshes[i];
     if(!w || !w.userData.stone) continue;
     const a = wallAABBs[i];
+    if(a.elevated) continue;                            // 🏢 a storey above — an animal can't reach it
     if(pos.y > a.max.y - 0.1) continue;                 // cleared the top — let it pass over
     pushOutOfAABB(pos, a, radius);                       // same MTV primitive — see the note above
   }
@@ -942,17 +981,26 @@ const WALL_STEP_UP      = 0.7;
 // idea as the wild-dog / snake anti-tunnel checks.)
 function wallSupportY(x, z, feetY, prevFeetY, vy){
   let top = -Infinity;
-  // ⚠ Walls AND roofs. Roof tops are walkable via the very same rules — step-up,
-  // swept catch, everything — so they are simply appended to the list this walks.
-  const boxes = wallAABBs.concat(kitRoofs.map(r=>r.aabb));
-  for(let i=0;i<boxes.length;i++){
-    const a = boxes[i];
-    if(x < a.min.x-WALL_STAND_MARGIN || x > a.max.x+WALL_STAND_MARGIN) continue;
-    if(z < a.min.z-WALL_STAND_MARGIN || z > a.max.z+WALL_STAND_MARGIN) continue;
-    const standing = a.max.y <= feetY + WALL_STEP_UP;
-    const crossed  = vy <= 0 && prevFeetY >= a.max.y - 0.02 && feetY < a.max.y;
-    if(!standing && !crossed) continue;
-    if(a.max.y > top) top = a.max.y;
+  // ⚠ Walls AND roofs. Roof tops are walkable via the very same rules — step-up, swept
+  // catch, everything — so both lists are walked here with one body.
+  // ⚠ This USED TO BE `wallAABBs.concat(kitRoofs.map(r=>r.aabb))`, which allocated a fresh
+  // array of every box PLUS a fresh array of every roof AABB on EVERY FRAME. Harmless at
+  // one shed; a 20-storey tower is 40 walls and 20 roofs, and that garbage is per-frame,
+  // so it buys frame HITCHES rather than average cost. Measured at 20 storeys: 21.1 µs a
+  // call before, 2.6 µs after. Nothing about the test below changed.
+  // ⚠ Elevated walls are NOT skipped here, deliberately — a second-storey wall top is a
+  // real surface the player can stand on. The layer filter belongs on the ANIMAL paths.
+  for(let pass=0; pass<2; pass++){
+    const list = pass === 0 ? wallAABBs : kitRoofs;
+    for(let i=0;i<list.length;i++){
+      const a = pass === 0 ? list[i] : list[i].aabb;
+      if(x < a.min.x-WALL_STAND_MARGIN || x > a.max.x+WALL_STAND_MARGIN) continue;
+      if(z < a.min.z-WALL_STAND_MARGIN || z > a.max.z+WALL_STAND_MARGIN) continue;
+      const standing = a.max.y <= feetY + WALL_STEP_UP;
+      const crossed  = vy <= 0 && prevFeetY >= a.max.y - 0.02 && feetY < a.max.y;
+      if(!standing && !crossed) continue;
+      if(a.max.y > top) top = a.max.y;
+    }
   }
   return top;
 }
@@ -967,9 +1015,24 @@ function wallSupportY(x, z, feetY, prevFeetY, vy){
 // (2) near a wall's end-cap the nearest-point vector points DIAGONALLY, so it shoved
 // you into the neighbouring wall, which shoved back — the pinball Steven hit.
 function pushPlayerOutOfWalls(){
+  // ⚠ 🏢 THE SECOND SKIP IS WHAT MAKES STOREYS WORK (2026-08-06). `pushOutOfAABB` is
+  // purely XZ, i.e. every box is an infinite vertical column — fine while every wall
+  // stood on the ground, wrong the moment one sits on a roof three metres up. The head
+  // test is the mirror of the existing feet test: a wall whose UNDERSIDE is at or above
+  // the top of your head is on a storey you are not on, so you walk under it, exactly
+  // as you walk under a roof. Together the two skips say "there must be genuine vertical
+  // overlap before a horizontal push can be right".
+  // ⚠ Head height is `PLAYER.eyeHeight` — the game's existing notion of the top of the
+  // player (the roof-headroom test uses the same number). Deliberately NOT the feet:
+  // feet-based would let you clip through a wall at chest height whenever the ground you
+  // stand on is a little lower than the wall's base, and a wall's whole job is blocking.
+  // The consequence — walk up a rise until your head reaches an upper storey's floor and
+  // that storey's walls start blocking you — is the real geometry, not a bug.
+  const headY = player.pos.y + PLAYER.eyeHeight;
   for(let i=0;i<wallAABBs.length;i++){
     const a = wallAABBs[i];
     if(player.pos.y >= a.max.y - WALL_STEP_UP) continue;       // on top, or a step up → it's a floor
+    if(headY <= a.min.y) continue;                             // 🏢 entirely overhead → walk under it
     pushOutOfAABB(player.pos, a, PLAYER_WALL_R);                // the one shared MTV primitive
   }
   // ⚠ ROOFS ARE ONE-WAY PLATFORMS, NOT WALLS (2026-08-05c). They used to be concat'd
@@ -4002,6 +4065,7 @@ function updateLions(dt){
 
     // Wall avoidance
     wallAABBs.forEach(aabb=>{
+      if(aabb.elevated) return;                    // 🏢 don't swerve around a wall two storeys up
       const cx=(aabb.min.x+aabb.max.x)/2, cz=(aabb.min.z+aabb.max.z)/2;
       const ax=lpos.x-cx, az=lpos.z-cz, ad=Math.sqrt(ax*ax+az*az);
       if(ad < 3){ dir.x += (ax/ad)*2; dir.z += (az/ad)*2; }
@@ -5690,7 +5754,8 @@ function playerOffGround(){
 // through a wall). Samples a few points against the wall AABBs.
 function segHitsWall(ax,az,bx,bz){
   for(let i=1;i<8;i++){ const t=i/8, x=ax+(bx-ax)*t, z=az+(bz-az)*t;
-    for(const a of wallAABBs){ if(x>a.min.x && x<a.max.x && z>a.min.z && z<a.max.z) return true; } }
+    for(const a of wallAABBs){ if(a.elevated) continue;      // 🏢 a wall on a storey blocks nothing at ground level
+      if(x>a.min.x && x<a.max.x && z>a.min.z && z<a.max.z) return true; } }
   return false;
 }
 // Can the rhino actually land a hit on the player right now?
@@ -6300,7 +6365,8 @@ function vulturePickLanding(V){
     const ang=rand(0,Math.PI*2), r=rand(6,22);
     const x=clamp(V.pos.x+Math.cos(ang)*r,-MAPR,MAPR), z=clamp(V.pos.z+Math.sin(ang)*r,-MAPR,MAPR);
     let bad=false;
-    for(const bb of wallAABBs){ if(x>bb.min.x-1 && x<bb.max.x+1 && z>bb.min.z-1 && z<bb.max.z+1){ bad=true; break; } }
+    for(const bb of wallAABBs){ if(bb.elevated) continue;   // 🏢 you can land under an upper storey
+      if(x>bb.min.x-1 && x<bb.max.x+1 && z>bb.min.z-1 && z<bb.max.z+1){ bad=true; break; } }
     if(bad) continue;
     const near=(list,rad)=>list.some(o=>o.health>0 && Math.hypot(o.pos.x-x,o.pos.z-z)<rad);
     if(near(lionMeshes,4)||near(gorillaMeshes,5)||near(rhinoMeshes,5)||near(preyMeshes,4)||near(dogMeshes,3)) continue;
@@ -10164,32 +10230,180 @@ function updateScope(dt){
 // linear at ~29 µs/wall (see the perf curve in CONTEXT).
 const WALL_HP = { wood:120, stone:200 };   // player structure HP: axe(42) fells wood in 3, hammer(67) in 2; hammer smashes stone in 3
 const WALL_COST = { wood:2, rock:5 };      // per-placement material cost (no cooldown — materials ARE the limiter)
+const WALL_W = 2.5, WALL_H = 2.2, WALL_D = 0.3;   // one wall's box, named so the ghost can't quote different numbers
+
+// =====================================================================
+//  🏢 MULTI-STOREY — walls go ON TOP OF ROOFS (2026-08-06)
+// =====================================================================
+// Steven: "place walls ON TOP of roofs to build up. Chain: wall → roof → wall → roof →
+// wall → roof, arbitrary height." This is the stacked-collision refactor that the
+// 2026-07-31 roof session explicitly deferred.
+//
+// ⚠ ONE SOLVER, TWO CALLERS. `wallPlacementPlan()` decides everything about where a wall
+// goes; `placeKitWall` builds from it and the ghost preview DRAWS it. A preview that
+// recomputed the target independently is a preview that can lie — the classic
+// two-keys-that-disagree failure. There is exactly one key here.
+//
+// ⚠ ELEVATED WALLS SNAP THEIR YAW TO 90°, and that is not cosmetic. A wall's collider is
+// an AABB via `setFromObject`, so a 45°-rotated 2.5×0.3 wall has a 1.98×1.98 footprint —
+// 5× its real area. On the ground that has always been true and is survivable; stacked in
+// a tight house it would make upper storeys mush, and roofs are axis-aligned anyway, so
+// cardinal walls are also what you want for building. Ground placement is UNTOUCHED.
+//
+// ⚠ SUPPORT MEANS A ROOF, NOT A WALL TOP. You can stand on a wall top, but a 0.3-thick
+// beam is not a foundation; the chain Steven asked for is wall→roof→wall→roof. A wall
+// top is therefore not a build surface — stated here because it is a judgment call.
+const STOREY_SNAP = Math.PI/2;
+// Highest roof top under (x,z) that a builder whose feet are at `feetY` is standing on or
+// above. The step-up tolerance is the same 0.7 the ground snap uses, so "a roof I am
+// standing on" and "a roof I can build on" can never disagree.
+function roofTopUnder(x, z, feetY){
+  let best = -Infinity;
+  for(let i=0;i<kitRoofs.length;i++){
+    const a = kitRoofs[i].aabb;
+    if(x < a.min.x || x > a.max.x || z < a.min.z || z > a.max.z) continue;
+    if(a.max.y > feetY + WALL_STEP_UP) continue;       // that is a ceiling, not a floor
+    if(a.max.y > best) best = a.max.y;
+  }
+  return best;
+}
+// The roof the player is actually STANDING ON, or null. Both bounds matter: its top must
+// be within a step below the feet (it is holding you up) and not above them (not a ceiling).
+function roofUnderPlayer(){
+  let best = null;
+  for(let i=0;i<kitRoofs.length;i++){
+    const a = kitRoofs[i].aabb;
+    if(player.pos.x < a.min.x || player.pos.x > a.max.x) continue;
+    if(player.pos.z < a.min.z || player.pos.z > a.max.z) continue;
+    if(Math.abs(player.pos.y - a.max.y) > WALL_STEP_UP) continue;
+    if(!best || a.max.y > best.aabb.max.y) best = kitRoofs[i];
+  }
+  return best;
+}
+// Where would a wall go right now? `{ x, z, y (BASE, not centre), yaw, elevated, snapped,
+// blocked }`. `blocked` is a player-facing reason string, or null when it is legal.
+//
+// ⚠ THE EDGE SNAP EXISTS BECAUSE OF A NUMBER: a roof is ROOF.SIZE 4.4 wide (half-width
+// 2.2) and you place walls 2.5 in front of you. Standing dead centre on your own roof,
+// the raw target is 0.3 PAST its edge — so without a snap, a single-roof storey could not
+// be walled at all, which is the whole feature. When the raw target misses every roof but
+// you are standing on one, the target is pulled back onto that roof's footprint, but only
+// from within half a wall's width (1.25) — near enough that the wall you asked for still
+// covers where you aimed. Walk to the rim and aim properly out into space and it is
+// beyond that slack, so it refuses. Both behaviours come out of the one rule.
+function wallPlacementPlan(){
+  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  const p   = player.pos.clone().addScaledVector(fwd, 2.5);
+  // ⚠ "AM I BUILDING FROM UPSTAIRS" IS `roofUnderPlayer()`, NOT A HEIGHT COMPARISON, and
+  // the difference cost a red test. Deriving it from `player.pos.y - terrainY(here)` reads
+  // as TRUE for anyone whose y is merely stale or mid-air, and this terrain climbs 1.65
+  // over 2.5 units, so it also fires on a hillside — 30 of 100 ground walls were refused
+  // on open savannah. The roof you are standing on is the thing the rule is actually
+  // about, so ask for it directly: no threshold, nothing to drift, and standing on a
+  // WALL top (not a storey) still drops an ordinary ground wall exactly as it always did.
+  const home = roofUnderPlayer();
+  let x = p.x, z = p.z, snapped = false;
+  let roofY = roofTopUnder(x, z, player.pos.y);
+  if(roofY === -Infinity && home){
+    const a  = home.aabb;
+    const cx = clamp(x, a.min.x, a.max.x), cz = clamp(z, a.min.z, a.max.z);
+    if(Math.hypot(cx-x, cz-z) <= WALL_W*0.5){ x = cx; z = cz; roofY = a.max.y; snapped = true; }
+  }
+  const gy = terrainY(x, z);
+  if(roofY > gy + STOREY_MIN_LIFT){
+    return { x, z, y:roofY, yaw:Math.round(yaw/STOREY_SNAP)*STOREY_SNAP,
+             elevated:true, snapped, blocked:null };
+  }
+  // Up a storey with nothing under the target → refuse. This is the "no floating walls"
+  // guard, and it is the wall-side twin of the roof's own `player.onGround` anti-cheat.
+  // ⚠ `y` is YOUR OWN feet, not the terrain far below, and that is for the ghost's sake:
+  // the red preview then hangs in the air exactly where you aimed, which reads as "that
+  // would be a floating wall". Drawn down on the ground it looks like a legal ground
+  // placement that inexplicably refuses. Nothing is ever built from this branch.
+  if(home){
+    return { x, z, y:player.pos.y, yaw, elevated:false, snapped:false,
+             blocked:'No roof under there — walls go on the ground or on a roof' };
+  }
+  return { x, z, y:gy, yaw, elevated:false, snapped:false, blocked:null };
+}
+
+// ---- 👻 PLACEMENT PREVIEW ------------------------------------------------------
+// A translucent wall drawn exactly where the real one would land, colour-coded so the
+// three outcomes are readable at a glance without a single line of UI copy:
+//   GREEN  → ordinary ground placement
+//   CYAN   → this is landing on a ROOF, one storey up (the new thing)
+//   RED    → refused (out over thin air from up a storey)
+// ⚠ It DRAWS `wallPlacementPlan()` rather than recomputing the target, so the preview
+// physically cannot promise a spot the placer would not use.
+// ⚠ Named 'wallGhost', NOT 'wall' — the click raycast filters scene children by name
+// ('tree'/'wall'/'boundary'/'terrain'), so calling it 'wall' would make the preview
+// itself an axe target floating in front of your face.
+// ⚠ DISPOSAL: one lazily-built singleton that is never freed, with `userData.keep` on
+// both its geometries and both its materials. If anything ever does killObj it, the keep
+// flags protect the GPU resources and the `!parent` re-attach below puts it back.
+const GHOST_COL = { ground:0x6fdc6f, storey:0x4fc3ff, blocked:0xff5a5a };
+let _wallGhost = null;
+function wallGhostMesh(){
+  if(_wallGhost) return _wallGhost;
+  const geo = new THREE.BoxGeometry(WALL_W, WALL_H, WALL_D); geo.userData.keep = true;
+  const mat = new THREE.MeshBasicMaterial({ color:GHOST_COL.ground, transparent:true,
+                                            opacity:0.30, depthWrite:false });
+  mat.userData.keep = true;
+  const m = new THREE.Mesh(geo, mat);
+  m.name = 'wallGhost'; m.renderOrder = 3;
+  const eg = new THREE.EdgesGeometry(geo); eg.userData.keep = true;
+  const em = new THREE.LineBasicMaterial({ color:GHOST_COL.ground, transparent:true, opacity:0.9 });
+  em.userData.keep = true;
+  m.add(new THREE.LineSegments(eg, em));
+  _wallGhost = m;
+  return m;
+}
+function updateWallGhost(){
+  const id = progress.abilities[progress.activeAbility];
+  const want = (id === 'kit_wall' || id === 'kit_stonewall') && gameState === 'playing';
+  if(!want){ if(_wallGhost) _wallGhost.visible = false; return; }
+  const g = wallGhostMesh();
+  if(!g.parent) scene.add(g);
+  const plan = wallPlacementPlan();
+  g.visible = true;
+  g.position.set(plan.x, plan.y + WALL_H*0.5, plan.z);
+  g.rotation.y = plan.yaw;
+  const key = plan.blocked ? 'blocked' : (plan.elevated ? 'storey' : 'ground');
+  if(g.userData.key !== key){
+    g.userData.key = key;
+    g.material.color.setHex(GHOST_COL[key]);
+    g.children[0].material.color.setHex(GHOST_COL[key]);
+    g.material.opacity = plan.elevated ? 0.38 : 0.30;   // a storey ghost reads against sky, not grass
+  }
+}
+
 // Place a player barrier. stone=false → wood palisade (elephants/gorillas smash it,
 // axe/hammer fell it, costs 2 wood); stone=true → stone wall (unbreakable by
 // elephants/gorillas — only a Hammer brings it down, costs 5 rocks). Both share the
 // permanent-wall cap + disposal path. Materials (not a cooldown) gate spamming.
 function placeKitWall(stone){
   if(kitWalls.length >= KIT_WALL_MAX){ showKillfeed((stone?'🧱':'🪵')+' Wall limit ('+KIT_WALL_MAX+') reached — hammer some down to free space'); return false; }
+  // 🏢 Where does it go, and may it go there? Solved BEFORE the material gate so a refused
+  // placement can never charge for a wall it did not build.
+  const plan = wallPlacementPlan();
+  if(plan.blocked){ showKillfeed((stone?'🧱':'🪵')+' '+plan.blocked); return false; }
   // Material gate — a failed check returns false so useActiveAbility skips the (zero) cooldown + sound.
   if(stone){
     if(rockCount < WALL_COST.rock){ showKillfeed('🧱 Need '+WALL_COST.rock+' rocks (have '+rockCount+')'); return false; }
   } else {
     if(woodCount < WALL_COST.wood){ showKillfeed('🪵 Need '+WALL_COST.wood+' wood (have '+woodCount+')'); return false; }
   }
-  const fwd = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
-  const pos = player.pos.clone().addScaledVector(fwd, 2.5);
-  pos.y = terrainY(pos.x, pos.z);
-  const geo = new THREE.BoxGeometry(2.5, 2.2, 0.3);
+  const geo = new THREE.BoxGeometry(WALL_W, WALL_H, WALL_D);
   const mat = new THREE.MeshLambertMaterial({color: stone?0x8b8e93:0x9a6b45, flatShading: stone});   // grey stone vs fresh-cut palisade
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(pos.x, pos.y+1.1, pos.z);
-  mesh.rotation.y = yaw; mesh.castShadow = true; mesh.name = 'wall';
+  mesh.position.set(plan.x, plan.y + WALL_H*0.5, plan.z);      // plan.y is the BASE — the roof top, or the terrain
+  mesh.rotation.y = plan.yaw; mesh.castShadow = true; mesh.name = 'wall';
   mesh.userData.stone = stone;
   mesh.userData.maxHp = stone ? WALL_HP.stone : WALL_HP.wood;
   mesh.userData.hp    = mesh.userData.maxHp;
   scene.add(mesh);
   wallMeshes.push(mesh);
-  wallAABBs.push(new THREE.Box3().setFromObject(mesh));
+  pushWallAABB(mesh);                                          // 🏢 the ONE registration point (sets .elevated)
   // PERMANENT — it comes down only when something SMASHES it, the player fells it, or
   // the run resets. Unequipping the wall tool no longer touches it (2026-07-30i):
   // the player has already paid the materials, so the wall is a PRODUCT, not an
@@ -10366,10 +10580,12 @@ function kitPlaceBramble(){ return placeKitBramble(); }
 // because that'd be cheating." Then on the scoped version: "Do B. But make sure I can
 // still walk on the roof."
 //
-// SCOPE (his call): standalone roofs. Walls CANNOT be placed on a roof yet — that
-// stacked-collision refactor is a future session. What IS here: placed over your feet,
-// WALKABLE on top, blocks dive attacks from directly above, and impossible to place
-// in mid-air.
+// SCOPE (his call): placed over your feet, WALKABLE on top, blocks dive attacks from
+// directly above, and impossible to place in mid-air.
+// ⚠ UPDATED 2026-08-06: walls CAN now be placed on a roof — a roof is a storey floor, and
+// wall → roof → wall → roof chains to any height. See 🏢 MULTI-STOREY by placeKitWall.
+// Nothing in this file changed to allow it: a roof already carried a walkable AABB and
+// already allowed roof-on-roof, so the work was all on the wall side (layered collision).
 //
 // ⚠ WALKABILITY IS FREE. Roofs carry their own AABB, and `wallSupportY` /
 // `pushPlayerOutOfWalls` were generalised to iterate walls AND roofs — so a roof top
@@ -11686,7 +11902,9 @@ function makeGateMesh(x, z, rotY){
 function registerGateCollision(g){
   if(wallMeshes.indexOf(g.mesh) >= 0) return;
   wallMeshes.push(g.mesh);
-  wallAABBs.push(new THREE.Box3().setFromObject(g.mesh));
+  pushWallAABB(g.mesh);      // 🏢 same registration point as a wall — a gate is always ground-built,
+                             // so it reads .elevated=false, but it must not be the one box that skips
+                             // the classifier and inherits `undefined` by accident.
 }
 function unregisterGateCollision(g){
   const i = wallMeshes.indexOf(g.mesh);
@@ -12159,6 +12377,7 @@ function updateAbilities(dt){
   updateSkyHammers(dt);      // big "hammer from the sky" VFX (fall → impact → fade)
   updateImpactFlashes(dt);   // bright ground bursts under a landed sky hammer
   updateScope(dt);           // crossbow ADS: lerp camera FOV + toggle the scope overlay
+  updateWallGhost();         // 🏢👻 wall placement preview — green ground / cyan roof-top / red refused
 
   tickAbilityBar();
 }
