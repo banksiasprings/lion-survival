@@ -57,6 +57,80 @@ function placeAheadAt(x, z, place){
 }
 const r2 = v => Math.round(v*100)/100;
 
+// ---- 💧 DRY GROUND, OR THE TEST IS MEASURING A SWIM ---------------------------
+// ⚠ READ THIS BEFORE HARD-CODING A COORDINATE IN THIS FILE. `chooseWaterHoles()` places
+// three pools of radius 20–29 **at random, once per page load**, and `resetGame()`
+// deliberately does not re-roll them. Every fixed spot in this suite is therefore a
+// per-page-load coin flip, and a wet one fails in ways that look like a product
+// regression: a bramble refuses to place ("too deep"), a tower is built underwater and
+// the player swims instead of jumping, a lion walks a line of fences that were never
+// there and takes 0 damage.
+//
+// This has now been found FOUR times: the mobile double-tap check (974c06e), the storey
+// build site (2026-08-07, which made a "25/25 baseline" read 24/25), and both bramble
+// tests plus the new fire test on the very next page load. Stop hard-coding. Ask.
+//
+// `clear` is how much dry ground the test needs AROUND the point — a fence line, a walk
+// path, a tower footprint. Sampled on the rim as well as the centre, because a pond edge
+// inside the footprint is still a pond.
+function dryPatchNear(x0, z0, clear){
+  clear = clear || 12;
+  const dry = (x, z)=>{
+    if(Math.abs(x) > MAPR-10 || Math.abs(z) > MAPR-10) return false;
+    if(waterSpeedMul(x, z) !== 1) return false;
+    for(let a=0; a<8; a++){
+      const t = a*Math.PI/4;
+      if(waterSpeedMul(x + Math.cos(t)*clear, z + Math.sin(t)*clear) !== 1) return false;
+    }
+    return true;
+  };
+  for(let ring=0; ring<=MAPR-30; ring+=8){
+    for(let a=0; a<16; a++){
+      const t = a*Math.PI/8;
+      const x = x0 + Math.cos(t)*ring, z = z0 + Math.sin(t)*ring;
+      if(dry(x, z)) return { x: Math.round(x), z: Math.round(z) };
+    }
+  }
+  return { x:x0, z:z0 };            // nowhere dry → let it fail loudly rather than silently
+}
+
+// ---- 🚫 …AND EMPTY OF OTHER ANIMALS ------------------------------------------
+// ⚠ Dry is not enough for a test that fires a PROJECTILE. `updateThrownRocks` walks the
+// species blocks in order and stops at the first body it touches (`if(!hit) …`), so any
+// creature that happens to be standing inside the hit cylinder absorbs the shot and the
+// intended target scores 0 — which reads exactly like "this animal is immune", the bug
+// those tests exist to catch.
+//
+// This bit on 2026-08-07 the moment hippos were added: six new pond animals with a ~3 m
+// hit radius, and the porcupine weapon test intermittently scored spear/bolt/rock = 0
+// because a hippo sat between the muzzle and the porcupine. Melee and the boomerang kept
+// passing, which makes it a particularly nasty half-failure to read.
+function clearGroundNear(x0, z0, clear, empty){
+  clear = clear || 10; empty = empty || 24;
+  const far = (x, z)=>{
+    let ok = true;
+    allCreatureLists().forEach(([list])=>{
+      if(!ok || !list) return;
+      for(let i=0;i<list.length;i++){
+        const e = list[i];
+        if(e && e.health > 0 && Math.hypot(e.pos.x-x, e.pos.z-z) < empty){ ok = false; return; }
+      }
+    });
+    return ok;
+  };
+  for(let ring=0; ring<=MAPR-30; ring+=10){
+    for(let a=0; a<24; a++){
+      const t = a*Math.PI/12;
+      const x = x0 + Math.cos(t)*ring, z = z0 + Math.sin(t)*ring;
+      if(Math.abs(x) > MAPR-12 || Math.abs(z) > MAPR-12) continue;
+      if(waterSpeedMul(x, z) !== 1) continue;
+      const d = dryPatchNear(x, z, clear);
+      if(d.x === Math.round(x) && d.z === Math.round(z) && far(x, z)) return d;
+    }
+  }
+  return dryPatchNear(x0, z0, clear);      // fall back to dry-only rather than to nothing
+}
+
 // =====================================================================
 //  FEATURE 1 — bramble fences damage INDEPENDENTLY
 // =====================================================================
@@ -71,7 +145,10 @@ test('bramble: five fences in a line each deal their own damage', ()=>{
     clearBrambles();
     brambleCount = 100;
     pinPlayer();
-    const x0 = 0, z0 = 0;
+    // ⚠ was a hard-coded (0,0) — see dryPatchNear. The fence line spans 12 m and the
+    // walk runs from -4 to +16, so it needs a genuinely open 22 m of dry ground.
+    const _s = dryPatchNear(0, 0, 22);
+    const x0 = _s.x, z0 = _s.z;
     for(let i=0;i<5;i++) placeAheadAt(x0, z0 + i*3.0, placeKitBramble);
     if(kitBrambles.length !== 5) return { pass:false, detail:{ placed:kitBrambles.length } };
 
@@ -91,12 +168,18 @@ test('bramble: five fences in a line each deal their own damage', ()=>{
   detail.damageByGait = runs;
   detail.expected = 5 * BRAMBLE.DMG;
 
-  // …and one fence must still be worth exactly one fence.
+  // ⚠ THE SINGLE-FENCE SUB-CASES NEED THEIR OWN DRY GROUND TOO. These three used a
+  // hard-coded (0,0) and were the last survivors of the pond lottery — caught only by
+  // deliberately dropping a 26 m pond on the origin. They scored 0/0/0 (fence refused,
+  // "too deep") while the five-fence measurements above passed, which is a particularly
+  // nasty half-failure to read. See dryPatchNear.
+  const _o = dryPatchNear(0, 0, 14);
+  const OX = _o.x, OZ = _o.z;
   clearBrambles(); brambleCount = 100; pinPlayer();
-  placeAheadAt(0, 0, placeKitBramble);
-  player.pos.set(0, 0, -4); pinPlayer();
+  placeAheadAt(OX, OZ, placeKitBramble);
+  player.pos.set(OX, 0, OZ - 4); pinPlayer();
   let hp0 = player.health;
-  for(let f=0; f<400 && player.pos.z < 6; f++){
+  for(let f=0; f<400 && player.pos.z < OZ + 6; f++){
     player.pos.z += 5.6/60; pinPlayer(false); updateBrambles(1/60);
   }
   detail.singleFence = r2(hp0 - player.health);
@@ -105,16 +188,16 @@ test('bramble: five fences in a line each deal their own damage', ()=>{
   // once — "proximity doesn't chunk a stationary player". The slow is the punishment
   // for standing there.
   clearBrambles(); brambleCount = 100; pinPlayer();
-  placeAheadAt(0, 0, placeKitBramble);
-  player.pos.set(0, 0, 0); pinPlayer();
+  placeAheadAt(OX, OZ, placeKitBramble);
+  player.pos.set(OX, 0, OZ); pinPlayer();
   hp0 = player.health;
   for(let f=0; f<300; f++){ pinPlayer(false); updateBrambles(1/60); }   // 5 s parked
   detail.parked5s = r2(hp0 - player.health);
 
   // …but stepping fully out and back in re-arms it, once RECHARGE has run.
   hp0 = player.health;
-  for(let f=0; f<60; f++){ player.pos.z = 9; pinPlayer(false); updateBrambles(1/60); }  // out, 1 s
-  for(let f=0; f<10; f++){ player.pos.z = 0; pinPlayer(false); updateBrambles(1/60); }  // back in
+  for(let f=0; f<60; f++){ player.pos.z = OZ + 9; pinPlayer(false); updateBrambles(1/60); }  // out, 1 s
+  for(let f=0; f<10; f++){ player.pos.z = OZ;     pinPlayer(false); updateBrambles(1/60); }  // back in
   detail.reEntryAfterLeaving = r2(hp0 - player.health);
 
   clearBrambles();
@@ -128,17 +211,23 @@ test('bramble: five fences in a line each deal their own damage', ()=>{
 // fences must take five bites, not one.
 test('bramble: an animal crossing five fences takes five bites', ()=>{
   clearBrambles(); brambleCount = 100; pinPlayer();
-  for(let i=0;i<5;i++) placeAheadAt(60, 60 + i*3.0, placeKitBramble);
+  // ⚠ was a hard-coded (60,60) — see dryPatchNear. On the page load that caught this,
+  // a 21 m pond sat at (64,74) and every fence was refused, so the lion walked through
+  // nothing at all and scored 0. That reads exactly like the bug this test guards.
+  const _bs = dryPatchNear(60, 60, 22);
+  const BX = _bs.x, BZ = _bs.z;
+  for(let i=0;i<5;i++) placeAheadAt(BX, BZ + i*3.0, placeKitBramble);
   const L = lionMeshes[0];
   if(!L) return { pass:false, detail:'no lion on the map' };
-  L.pos.set(60, 0, 60 - 4);
+  if(kitBrambles.length !== 5) return { pass:false, detail:{ placed:kitBrambles.length, site:_bs } };
+  L.pos.set(BX, 0, BZ - 4);
   // ⚠ Accumulate the damage and top the lion back up every frame instead of reading
   // its end HP: a lion carries 58 and five fences are 100, so it DIES after three and
   // the raw before/after read scores a correct build as 60. (That is what this
   // assertion looked like on the first run — a test bug that mimics the real bug.)
   const dt = 1/60;
   let dealt = 0, bites = 0;
-  for(let f=0; f<3000 && L.pos.z < 60 + 16; f++){
+  for(let f=0; f<3000 && L.pos.z < BZ + 16; f++){
     L.pos.z += 5.6*dt;
     L.pos.y = terrainY(L.pos.x, L.pos.z);
     pinPlayer();
@@ -781,27 +870,9 @@ test('roof: walk under a line of roofs unobstructed, and still stand on top', ()
 // grid and take the first spot whose whole build+walk footprint is dry. The footprint has to
 // cover more than the tower — `walkedUnderTower` marches ±8 on X — so it is checked out to
 // SITE_CLEAR, not just at the centre.
-const SITE_CLEAR = 12;              // metres of dry ground needed around the build site
-function pickBuildSite(){
-  const dry = (x, z)=>{
-    if(waterSpeedMul(x, z) !== 1) return false;
-    for(let a=0; a<8; a++){         // rim samples — a pond edge inside the footprint is still wet
-      const t = a*Math.PI/4;
-      if(waterSpeedMul(x + Math.cos(t)*SITE_CLEAR, z + Math.sin(t)*SITE_CLEAR) !== 1) return false;
-    }
-    return true;
-  };
-  const lim = MAPR - 40;
-  for(let ring=0; ring<=lim; ring+=10){          // spiral out from the old site so a dry
-    for(let a=0; a<16; a++){                     // world still builds near (60,60)
-      const t = a*Math.PI/8;
-      const x = 60 + Math.cos(t)*ring, z = 60 + Math.sin(t)*ring;
-      if(Math.abs(x) > lim || Math.abs(z) > lim) continue;
-      if(dry(x, z)) return { x: Math.round(x), z: Math.round(z) };
-    }
-  }
-  return { x: 60, z: 60 };                       // no dry ground anywhere → let it fail loudly
-}
+// ⚠ The tower footprint plus the ±8 X-axis walk in `walkedUnderTower` needs 12 m clear.
+const SITE_CLEAR = 12;
+function pickBuildSite(){ return dryPatchNear(60, 60, SITE_CLEAR); }
 const _SITE = pickBuildSite();
 const STOREY_X = _SITE.x, STOREY_Z = _SITE.z;
 function clearRoofs(){ clearKitRoofs(); }
@@ -1309,6 +1380,11 @@ test('porcupine: back-charges rump-first, and flees when nearly dead', ()=>{
 // and the cheetah invulnerable for weeks — silently, with no error.
 test('porcupine: is not immune to any weapon', ()=>{
   clearPorcs(); pinPlayer();
+  // ⚠ Stand somewhere DRY and EMPTY before firing anything — see clearGroundNear. The
+  // projectile chain stops at the first body it touches, so a bystander between the
+  // muzzle and the porcupine makes a working weapon score 0.
+  const _p = clearGroundNear(player.pos.x, player.pos.z, 8, 26);
+  player.pos.set(_p.x, 0, _p.z); pinPlayer();
   const hits = {};
   const tryHit = (name, fn)=>{
     clearPorcs();
@@ -1722,11 +1798,12 @@ test('bramble: every creature in the registry takes damage, none crosses free', 
   clearBrambles(); pinPlayer();
   const detail = {}, DT = 1/60;
   // A fence somewhere dry and empty, well away from the player.
-  const site = pickBuildSite();
-  const fx = site.x + 26, fz = site.z + 26;
+  const site = dryPatchNear(60, 60, 14);      // ⚠ ask for the fence's own dry patch —
+  const fx = site.x, fz = site.z;            // do NOT offset off a site verified elsewhere
   brambleCount = 99;
   detail.placed = placeAheadAt(fx, fz, ()=>placeKitBramble());
   const fence = kitBrambles[kitBrambles.length-1];
+  if(!fence) return { pass:false, detail:{ error:'fence refused', site, placed:detail.placed } };
 
   // One live member of every registry list, stood ON the fence, topped up each frame so
   // nothing dies mid-measurement (the documented trap: never read end-HP when the
@@ -1782,6 +1859,9 @@ test('ghosts: all four placeables preview exactly where they land, and refuse in
   clearWalls(); clearRoofs(); clearBrambles(); pinPlayer();
   const detail = {}, X = STOREY_X, Z = STOREY_Z;
   woodCount = 9000; rockCount = 9000; brambleCount = 9000;
+  // ⚠ Each sub-case gets its OWN dry patch rather than an offset off X — an offset
+  // leaves the verified-dry radius and is the pond lottery again. See dryPatchNear.
+  const spot = (dx, dz)=>dryPatchNear(X + dx, Z + dz, 8);
   standAt(X, terrainY(X, Z) + 0.1, Z); yaw = Math.PI;
 
   // ---- 1. every tool has a ghost, and only ONE is ever visible ----
@@ -1804,15 +1884,18 @@ test('ghosts: all four placeables preview exactly where they land, and refuse in
   let d = drawnAt('kit_wall');  placeKitWall(false);
   const w = wallMeshes[wallMeshes.length-1];
   agree.wall = Math.hypot(w.position.x - d.x, w.position.z - d.z) < 0.01;
-  standAt(X + 12, terrainY(X+12, Z) + 0.1, Z); yaw = Math.PI;
+  let sp = spot(12, 0);
+  standAt(sp.x, terrainY(sp.x, sp.z) + 0.1, sp.z); yaw = Math.PI;
   d = drawnAt('kit_bramble'); placeKitBramble();
   const b = kitBrambles[kitBrambles.length-1];
   agree.bramble = Math.hypot(b.pos.x - d.x, b.pos.z - d.z) < 0.01;
-  standAt(X + 24, terrainY(X+24, Z) + 0.1, Z); yaw = Math.PI;
+  sp = spot(24, 0);
+  standAt(sp.x, terrainY(sp.x, sp.z) + 0.1, sp.z); yaw = Math.PI;
   d = drawnAt('kit_gate'); placeKitGate();
   const gt = kitGates[kitGates.length-1];
   agree.gate = Math.hypot(gt.mesh.position.x - d.x, gt.mesh.position.z - d.z) < 0.01;
-  standAt(X + 36, terrainY(X+36, Z) + 0.1, Z);
+  sp = spot(36, 0);
+  standAt(sp.x, terrainY(sp.x, sp.z) + 0.1, sp.z);
   d = drawnAt('kit_roof'); placeKitRoof();
   const rf = kitRoofs[kitRoofs.length-1];
   agree.roof = Math.hypot(rf.mesh.position.x - d.x, rf.mesh.position.z - d.z) < 0.01;
@@ -1835,15 +1918,17 @@ test('ghosts: all four placeables preview exactly where they land, and refuse in
   refusals.roofFree = (kitRoofs.length === roofsBefore && woodCount === woodBefore2);
   player.onGround = true;
   // a free-standing gate is AMBER — legal, but flagged
-  standAt(X - 60, terrainY(X-60, Z) + 0.1, Z); yaw = Math.PI;
+  sp = spot(-60, 0);
+  standAt(sp.x, terrainY(sp.x, sp.z) + 0.1, sp.z); yaw = Math.PI;
   refusals.loneGateIsAmber = ghostKeyFor(gatePlacementPlan()) === 'warn';
   refusals.loneGateStillPlaces = placeKitGate() === true;
   detail.refusals = refusals;
   detail.refusalsHold = Object.keys(refusals).every(k => refusals[k]);
 
   // ---- 4. a corner join must NOT read as occupied, or you cannot build a ring ----
-  standAt(X + 60, terrainY(X+60, Z) + 0.1, Z); yaw = Math.PI;   placeKitWall(false);
-  standAt(X + 60, terrainY(X+60, Z) + 0.1, Z); yaw = Math.PI/2;
+  sp = spot(60, 0);
+  standAt(sp.x, terrainY(sp.x, sp.z) + 0.1, sp.z); yaw = Math.PI;   placeKitWall(false);
+  standAt(sp.x, terrainY(sp.x, sp.z) + 0.1, sp.z); yaw = Math.PI/2;
   detail.cornerNotBlocked = ghostKeyFor(wallPlacementPlan()) === 'ground';
 
   clearWalls(); clearRoofs(); clearBrambles(); pinPlayer();
@@ -2071,8 +2156,8 @@ test('craft: all eleven recipes gate on their material, charge it, and none is f
 test('fire: spreads down a line of fences, consumes them, then burns out leaving nothing', ()=>{
   clearGroundPatches(); clearBrambles(); pinPlayer();
   const detail = {}, DT = 1/60;
-  const site = pickBuildSite();
-  const bx = site.x + 30, bz = site.z + 30;
+  const site = dryPatchNear(-60, -60, 20);    // ⚠ its own dry patch, not an offset
+  const bx = site.x, bz = site.z;
   brambleCount = 999;
   for(let i=0;i<4;i++) placeAheadAt(bx + i*3, bz, ()=>placeKitBramble());
   detail.fencesBefore = kitBrambles.length;
@@ -2108,7 +2193,8 @@ test('fire: spreads down a line of fences, consumes them, then burns out leaving
   detail.noLeak = detail.geoLeaked <= 0 && detail.texLeaked <= 0;
 
   // ---- 🫧 slime reaches EVERY mover, because it rides the shared hazard multiplier ----
-  const sx = site.x + 60, sz = site.z + 60;
+  const slimeSite = dryPatchNear(site.x + 40, site.z, 6);
+  const sx = slimeSite.x, sz = slimeSite.z;
   detail.slimeBefore = r2(hazardSpeedMul(sx, sz));
   addGroundPatch('SLIME', sx, sz);
   detail.slimeAfter  = r2(hazardSpeedMul(sx, sz));
@@ -2134,7 +2220,7 @@ test('cloak: no predator picks a crouched player, and every one of them does unc
   pinPlayer();
   const detail = {}, DT = 1/60;
   const acc0 = progress.accessories.slice();
-  const site = pickBuildSite();
+  const site = dryPatchNear(60, 60, 10);
   player.pos.set(site.x, 0, site.z); pinPlayer();
 
   // Park everything far away, then bring back only the animal under test — otherwise

@@ -58,6 +58,22 @@ run order rather than owning its own setup.
 
 - **Fix:** give the test its own ecosystem setup/teardown rather than relying on run order.
 
+⚠ **2026-08-07 — the whole suite was audited for the POND LOTTERY and it was worse than
+one test.** `chooseWaterHoles()` places three pools of radius 20–29 at random, once per
+page load, and `resetGame()` never re-rolls them, so **every hard-coded coordinate in this
+file was a coin flip**. Found and fixed at five sites: the storey build site (60,60), both
+bramble tests (0,0 and 60,60), the five-fence test's three single-fence sub-cases (0,0),
+and the new fire test. `dryPatchNear(x, z, clear)` is now the only way to get ground.
+**Proved by rebuilding the world with 26 m ponds dropped directly on (0,0) and (60,60) and
+re-running: 31/31.** Do not hard-code a coordinate in this file again.
+
+⚠ **…and dry is not enough for a PROJECTILE test.** `updateThrownRocks` stops at the first
+body it touches, so a bystander inside the hit cylinder makes a working weapon score 0 —
+which reads as "this animal is immune", the exact bug those tests guard. Adding six hippos
+(hit radius ~3 m, one or two per pond) started intermittently breaking
+`porcupine: is not immune to any weapon` on spear/bolt/rock while melee kept passing.
+`clearGroundNear(x, z, clear, empty)` gives ground that is dry **and** empty.
+
 ## 5. A bramble kill pays no bounty
 *Found 2026-08-06 (warthog bounty). Design. Needs Steven's decision.*
 
