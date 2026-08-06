@@ -293,7 +293,14 @@ test('bones: killing several species leaves several distinct named drops', ()=>{
 // Steven called the green cobra out by name, and the 2026-08-05 loot revision added the
 // "skin AND spine" rule — so this now asserts BOTH: the right skin per morph, and that a
 // serpent leaves two drops while a worm leaves only slime.
-test('loot: serpents drop skin AND spine (green cobra green), worms drop slime only', ()=>{
+// ⚠ UPDATED 2026-08-07: a COBRA now drops THREE things — skin, spine and its morph's
+// FANG — because Steven's crafted-item recipes are keyed on "red / green / blue / purple
+// cobra fang" and no such drop existed. Pythons and worms are unchanged (neither has the
+// hollow front fangs the recipes are about, and neither has a morph table). This test
+// caught the change on the first run, which is what it is for; the assertion now pins the
+// new contract, including that each morph's fang is DISTINCT — a table where all five
+// cobras dropped one generic "cobra fang" would defeat the entire point of the recipes.
+test('loot: serpents drop skin AND spine AND a per-morph fang; worms drop slime only', ()=>{
   const fake = id => ({ v: SNAKE_VARIANTS.cobra, colour: COBRA_COLORS.find(c=>c.id===id) });
   const detail = {
     acid:     snakeBoneKey(fake('acid')),
@@ -312,12 +319,35 @@ test('loot: serpents drop skin AND spine (green cobra green), worms drop slime o
   // green must actually BE green: dominant channel is G, and clearly so
   const g = new THREE.Color(BONE_KINDS.cobra_green.colour);
   detail.isActuallyGreen = g.g > g.r && g.g > g.b;
-  // and the two serpent drops must be genuinely different objects, not the same key twice
+  // 🦷 EVERY morph must yield its OWN fang — multi-instance, all five at once, because a
+  // table that collapsed them to one key would still pass a single-morph check while
+  // making four of Steven's six cobra recipes uncraftable.
+  const morphs = COBRA_COLORS.map(c=>c.id);
+  detail.fangs = {};
+  morphs.forEach(id=>{ detail.fangs[id] = cobraFangKey(fake(id)); });
+  const fangKeys = morphs.map(id=>detail.fangs[id]);
+  detail.fangsAllPresent  = fangKeys.every(k=>!!k && !!BONE_KINDS[k]);
+  detail.fangsAllDistinct = new Set(fangKeys).size === morphs.length;
+  detail.fangLabels = fangKeys.map(k=>BONE_KINDS[k].label);
+  detail.fangLabelsDistinct = new Set(detail.fangLabels).size === morphs.length;
+  // …and the colour NAMES must match what Steven asked for, morph by morph
+  detail.namesMatchBrief = detail.fangs.crimson  === 'cobra_fang_crimson'  &&
+                           detail.fangs.acid     === 'cobra_fang_acid'     &&
+                           detail.fangs.midnight === 'cobra_fang_midnight' &&
+                           detail.fangs.violet   === 'cobra_fang_violet';
+  // a python and a worm must NOT gain a fang
+  detail.pythonHasNoFang = cobraFangKey({ v: SNAKE_VARIANTS.python }) === null;
+  detail.wormHasNoFang   = cobraFangKey({ v: SNAKE_VARIANTS.worm })   === null;
+  // and the serpent drops must be genuinely different objects, not the same key repeated
+  detail.acidLootDistinct = new Set(detail.acidLoot).size === detail.acidLoot.length;
   const pass = detail.acid === 'cobra_green' && detail.midnight === 'cobra' &&
                detail.python === 'python' && detail.worm === 'worm' &&
                detail.greenLabel === 'green cobra skin' && detail.isActuallyGreen &&
-               detail.acidLoot.length === 2 && detail.pythonLoot.length === 2 &&
+               detail.acidLoot.length === 3 && detail.pythonLoot.length === 2 &&
                detail.acidLoot[1] === 'serpent_spine' && detail.pythonLoot[1] === 'serpent_spine' &&
+               detail.acidLoot[2] === 'cobra_fang_acid' && detail.acidLootDistinct &&
+               detail.fangsAllPresent && detail.fangsAllDistinct && detail.fangLabelsDistinct &&
+               detail.namesMatchBrief && detail.pythonHasNoFang && detail.wormHasNoFang &&
                detail.wormLoot.length === 1 && detail.wormLoot[0] === 'worm';
   return { pass, detail };
 });
@@ -1676,6 +1706,523 @@ test('bounty: only YOUR killing blow on a warthog pays 100 coins', ()=>{
 
   progress.coins = coinsBefore; saveProgress();    // leave the player's purse as we found it
   pinPlayer();
+  return { pass, detail };
+});
+
+// =====================================================================
+//  🌿 THE BRAMBLE COVERAGE BUG  (2026-08-07)
+// =====================================================================
+// ⚠ THE BUG SHAPE: `updateBrambles` ended in a hand-written list of nine species arrays,
+// and `crocMeshes` was not one of them — so a crocodile crossed a thorn fence for ZERO.
+// A test that only walked a lion through would have passed the whole time it was broken.
+// So this drives ONE MEMBER OF EVERY SPECIES ARRAY IN THE GAME through a real fence and
+// asserts that not one of them is free — and it reads the species list from the registry
+// itself, so a creature added tomorrow is covered without editing this file.
+test('bramble: every creature in the registry takes damage, none crosses free', ()=>{
+  clearBrambles(); pinPlayer();
+  const detail = {}, DT = 1/60;
+  // A fence somewhere dry and empty, well away from the player.
+  const site = pickBuildSite();
+  const fx = site.x + 26, fz = site.z + 26;
+  brambleCount = 99;
+  detail.placed = placeAheadAt(fx, fz, ()=>placeKitBramble());
+  const fence = kitBrambles[kitBrambles.length-1];
+
+  // One live member of every registry list, stood ON the fence, topped up each frame so
+  // nothing dies mid-measurement (the documented trap: never read end-HP when the
+  // expected damage exceeds the victim's pool).
+  const seen = {}, taken = {}, expected = {};
+  allCreatureLists().forEach(([list, kind])=>{
+    if(!list || !list.length) return;
+    const e = list.find(o => o.health > 0 && !o.dying);
+    if(!e) return;
+    seen[kind] = true;
+    expected[kind] = brambleDamageFor(e, kind);
+    const home = { x:e.pos.x, y:e.pos.y, z:e.pos.z };
+    e.pos.set(fence.pos.x, terrainY(fence.pos.x, fence.pos.z), fence.pos.z);
+    if(e.mesh) e.mesh.position.copy(e.pos);
+    e._brambleCds = {};                       // fresh crossing
+    let acc = 0;
+    for(let f=0; f<4; f++){
+      const before = e.health;
+      updateBrambles(DT);
+      acc += Math.max(0, before - e.health);
+      e.health = e.maxHealth;                 // top up — measure damage, not survival
+    }
+    taken[kind] = Math.round(acc*100)/100;
+    e.pos.set(home.x, home.y, home.z); if(e.mesh) e.mesh.position.copy(e.pos);
+  });
+  detail.speciesTested = Object.keys(seen).length;
+  detail.damage = taken;
+  detail.expected = expected;
+  // ⚠ ASSERT THE ZEROES: the failure this exists to catch is a species scoring 0.
+  detail.freeCrossers = Object.keys(taken).filter(k => !(taken[k] > 0));
+  detail.wrongAmount  = Object.keys(taken).filter(k => Math.abs(taken[k] - expected[k]) > 0.01);
+  // …and the crocodile specifically, because it is the one that was broken.
+  detail.crocCovered = taken.crocodile > 0;
+  detail.crocPerTemplate = taken.crocodile === BRAMBLE_DMG.crocodile;
+  // per-template must actually DIFFER, or the table is decorative
+  detail.templatesDiffer = new Set(Object.values(expected)).size > 1;
+
+  clearBrambles(); pinPlayer();
+  const pass = detail.placed && detail.speciesTested >= 8 &&
+               detail.freeCrossers.length === 0 && detail.wrongAmount.length === 0 &&
+               detail.crocCovered && detail.crocPerTemplate && detail.templatesDiffer;
+  return { pass, detail };
+});
+
+// =====================================================================
+//  👻 PLACEMENT PREVIEWS  (2026-08-07)
+// =====================================================================
+// ⚠ THE SHAPE: a preview that recomputes its own target is a preview that can LIE. Every
+// placeable has exactly one `*PlacementPlan()`, and the ghost and the placer both read it.
+// So this asserts the two agree for ALL FOUR placeables — not one — and that a refused
+// plan builds nothing and charges nothing.
+test('ghosts: all four placeables preview exactly where they land, and refuse in red', ()=>{
+  clearWalls(); clearRoofs(); clearBrambles(); pinPlayer();
+  const detail = {}, X = STOREY_X, Z = STOREY_Z;
+  woodCount = 9000; rockCount = 9000; brambleCount = 9000;
+  standAt(X, terrainY(X, Z) + 0.1, Z); yaw = Math.PI;
+
+  // ---- 1. every tool has a ghost, and only ONE is ever visible ----
+  const ids = ['kit_wall','kit_stonewall','kit_gate','kit_roof','kit_bramble'];
+  detail.allToolsHaveGhosts = ids.every(id => !!GHOST_FOR[id]);
+  const visibleFor = id => { progress.abilities[progress.activeAbility] = id;
+    gameState = 'playing'; updatePlacementGhosts();
+    return Object.keys(_ghosts).filter(k => _ghosts[k].visible); };
+  detail.oneAtATime = ids.every(id => visibleFor(id).length === 1);
+  progress.abilities[progress.activeAbility] = 'kit_axe';
+  detail.noneWhenNotBuilding = visibleFor('kit_axe').length === 0;
+
+  // ---- 2. THE GHOST AND THE PLACER AGREE, for each placeable ----
+  // Drawn position vs where the real object actually lands. This is the whole contract.
+  const agree = {};
+  const drawnAt = id => { progress.abilities[progress.activeAbility] = id;
+    updatePlacementGhosts(); const g = _ghosts[GHOST_FOR[id].key];
+    return { x:g.position.x, z:g.position.z }; };
+  standAt(X, terrainY(X, Z) + 0.1, Z); yaw = Math.PI;
+  let d = drawnAt('kit_wall');  placeKitWall(false);
+  const w = wallMeshes[wallMeshes.length-1];
+  agree.wall = Math.hypot(w.position.x - d.x, w.position.z - d.z) < 0.01;
+  standAt(X + 12, terrainY(X+12, Z) + 0.1, Z); yaw = Math.PI;
+  d = drawnAt('kit_bramble'); placeKitBramble();
+  const b = kitBrambles[kitBrambles.length-1];
+  agree.bramble = Math.hypot(b.pos.x - d.x, b.pos.z - d.z) < 0.01;
+  standAt(X + 24, terrainY(X+24, Z) + 0.1, Z); yaw = Math.PI;
+  d = drawnAt('kit_gate'); placeKitGate();
+  const gt = kitGates[kitGates.length-1];
+  agree.gate = Math.hypot(gt.mesh.position.x - d.x, gt.mesh.position.z - d.z) < 0.01;
+  standAt(X + 36, terrainY(X+36, Z) + 0.1, Z);
+  d = drawnAt('kit_roof'); placeKitRoof();
+  const rf = kitRoofs[kitRoofs.length-1];
+  agree.roof = Math.hypot(rf.mesh.position.x - d.x, rf.mesh.position.z - d.z) < 0.01;
+  detail.ghostMatchesPlacement = agree;
+  detail.allAgree = Object.keys(agree).every(k => agree[k]);
+
+  // ---- 3. RED MEANS REFUSED, AND REFUSED MEANS FREE ----
+  const refusals = {};
+  // a wall on top of a wall
+  standAt(X, terrainY(X, Z) + 0.1, Z); yaw = Math.PI;
+  const woodBefore = woodCount, wallsBefore = kitWalls.length;
+  refusals.wallOccupied = ghostKeyFor(wallPlacementPlan()) === 'blocked';
+  refusals.wallRefused  = placeKitWall(false) === false;
+  refusals.wallFree     = (woodCount === woodBefore && kitWalls.length === wallsBefore);
+  // a roof in mid-air
+  player.onGround = false;
+  refusals.roofMidAir = ghostKeyFor(roofPlacementPlan()) === 'blocked';
+  const roofsBefore = kitRoofs.length, woodBefore2 = woodCount;
+  refusals.roofRefused = placeKitRoof() === false;
+  refusals.roofFree = (kitRoofs.length === roofsBefore && woodCount === woodBefore2);
+  player.onGround = true;
+  // a free-standing gate is AMBER — legal, but flagged
+  standAt(X - 60, terrainY(X-60, Z) + 0.1, Z); yaw = Math.PI;
+  refusals.loneGateIsAmber = ghostKeyFor(gatePlacementPlan()) === 'warn';
+  refusals.loneGateStillPlaces = placeKitGate() === true;
+  detail.refusals = refusals;
+  detail.refusalsHold = Object.keys(refusals).every(k => refusals[k]);
+
+  // ---- 4. a corner join must NOT read as occupied, or you cannot build a ring ----
+  standAt(X + 60, terrainY(X+60, Z) + 0.1, Z); yaw = Math.PI;   placeKitWall(false);
+  standAt(X + 60, terrainY(X+60, Z) + 0.1, Z); yaw = Math.PI/2;
+  detail.cornerNotBlocked = ghostKeyFor(wallPlacementPlan()) === 'ground';
+
+  clearWalls(); clearRoofs(); clearBrambles(); pinPlayer();
+  const pass = detail.allToolsHaveGhosts && detail.oneAtATime && detail.noneWhenNotBuilding &&
+               detail.allAgree && detail.refusalsHold && detail.cornerNotBlocked;
+  return { pass, detail };
+});
+
+// =====================================================================
+//  🦛 THE HIPPO  (2026-08-07)
+// =====================================================================
+// ⚠ MULTI-INSTANCE: every hippo on the map is driven, not one. The two triggers point
+// OPPOSITE ways (crowd it → charge, hurt it → retreat) and a single-instance check could
+// pass while one pond's hippo was stuck — so both are asserted across the whole population.
+test('hippo: floats, swims faster than it walks, charges when crowded, bolts when hurt', ()=>{
+  pinPlayer();
+  const detail = {}, DT = 1/60;
+  detail.population = hippoMeshes.length;
+  if(!detail.population) return { pass:false, detail:{ error:'no hippos spawned' } };
+  // park the player far away so nothing is provoked by the measurement itself
+  const home = { x:player.pos.x, z:player.pos.z };
+  player.pos.set(-MAPR+10, 0, -MAPR+10); pinPlayer();
+
+  // ---- 1. EVERY hippo floats at its pond's surface, not on the bed ----
+  hippoMeshes.forEach(H=>{ H.state='WALLOW'; H.calmT=99; H.stunTimer=0;
+    H.pos.set(H.pool.x, terrainY(H.pool.x, H.pool.z), H.pool.z); H.mesh.position.copy(H.pos); });
+  for(let i=0;i<200;i++) updateHippos(DT);
+  // ⚠ THE ASSERTION IS CONDITIONAL ON BEING IN WATER, and the first version was not —
+  // which made it fail for a legitimate reason. A hippo runs a live FSM: 200 frames in,
+  // one of them had wandered into the shallows at the rim to graze, where the correct
+  // height IS the terrain. Demanding every hippo sit at the float line at an arbitrary
+  // moment asserts that the animal never does anything, which is the opposite of the
+  // design. Assert the RULE ("in water → at the water line"), not a snapshot.
+  detail.depths = hippoMeshes.map(H => ({ inWater: hippoInWater(H),
+                                          depth: r2(H.pos.y - poolSurfaceY(poolAt(H.pos.x,H.pos.z) || H.pool)) }));
+  detail.allFloat = hippoMeshes.every(H => !hippoInWater(H) ||
+    Math.abs((H.pos.y - poolSurfaceY(poolAt(H.pos.x,H.pos.z) || H.pool)) + 0.86) < 0.05);
+  detail.someInWater = hippoMeshes.filter(H => hippoInWater(H)).length;
+  // …plus the deterministic half: dropped on the BED at its pond centre, every hippo must
+  // rise to the surface. This is the bug that shipped — buoyancy that only ran while the
+  // animal was walking, so one that spawned on the bed stayed 3.66 m under.
+  const bedTest = hippoMeshes.map(H=>{
+    H.pos.set(H.pool.x, terrainY(H.pool.x, H.pool.z), H.pool.z); H.mesh.position.copy(H.pos);
+    H.state = 'WALLOW'; H.calmT = 99;
+    for(let i=0;i<120;i++) hippoFloat(H, DT);
+    return r2(H.pos.y - poolSurfaceY(H.pool));
+  });
+  detail.roseOffTheBed = bedTest;
+  detail.noneOnTheBed = bedTest.every(d => Math.abs(d + 0.86) < 0.05);
+
+  // ---- 2. WATER DOES NOT SLOW IT — the "swims when in water" rule ----
+  // Same hippo, same speed argument, same frame count: in its pond vs on dry bank.
+  const H0 = hippoMeshes[0], w0 = H0.pool;
+  const runFor = (inWater)=>{
+    if(inWater) H0.pos.set(w0.x, poolSurfaceY(w0)-0.86, w0.z);
+    else { const bx = w0.x + w0.r + 8; H0.pos.set(bx, terrainY(bx, w0.z), w0.z); }
+    H0.mesh.position.copy(H0.pos);
+    const s = { x:H0.pos.x, z:H0.pos.z };
+    for(let i=0;i<60;i++) hippoStep(H0, H0.pos.x + 3, H0.pos.z, HIPPO.SPEED_ROAM, DT);
+    return r2(Math.hypot(H0.pos.x-s.x, H0.pos.z-s.z));
+  };
+  detail.distInWater = runFor(true);
+  detail.distOnLand  = runFor(false);
+  detail.swimsFasterThanItWalks = detail.distInWater > detail.distOnLand;
+
+  // ---- 3. HURT → RETREAT, for EVERY hippo, and it must actually reach water ----
+  const retreats = [];
+  hippoMeshes.forEach(H=>{
+    const w = H.pool, bx = w.x + w.r + 13;
+    H.pos.set(bx, terrainY(bx, w.z), w.z); H.mesh.position.copy(H.pos);
+    H.state='GRAZE'; H.calmT=0; H.stunTimer=0; H.health=H.maxHealth; H._prevHealth=H.health;
+    H.health -= 25;                                  // any damage at all
+    updateHippos(DT);
+    const went = H.state === 'RETREAT';
+    // ⚠ MEASURE THE TRANSITION, NOT THE AFTERMATH. The first version asserted
+    // `hippoInWater(H)` after 900 frames and failed on a CORRECT build: the hippo reaches
+    // its pond around frame 200, switches to WALLOW, and then goes on living — by frame
+    // 700 it may legitimately be grazing the shallows again. "Did it get to water" is a
+    // question about the retreat; "is it in water 15 s later" is a question about nothing.
+    let arrived = false, arrivedAt = -1;
+    for(let i=0;i<900 && !arrived;i++){
+      updateHippos(DT);
+      if(hippoInWater(H)){ arrived = true; arrivedAt = i; }
+    }
+    retreats.push({ enteredRetreat: went, reachedWater: arrived, atFrame: arrivedAt });
+    H.health = H.maxHealth; H._prevHealth = H.health;
+  });
+  detail.retreats = retreats;
+  detail.allRetreated = retreats.every(r => r.enteredRetreat && r.reachedWater);
+
+  // ---- 4. CROWDED → CHARGE, and the gore is the number ----
+  player.pos.set(home.x, 0, home.z); pinPlayer();
+  const H1 = hippoMeshes[0], w1 = H1.pool;
+  const bank = { x:w1.x + w1.r + 6, z:w1.z };
+  H1.pos.set(bank.x, terrainY(bank.x, bank.z), bank.z); H1.mesh.position.copy(H1.pos);
+  H1.state='GRAZE'; H1.calmT=0; H1.health=H1.maxHealth; H1._prevHealth=H1.health; H1.stunTimer=0;
+  progress.accessories = [null, null]; EQUIP = computeEquipMods();   // no cloak in the way
+  player.pos.set(bank.x + 5, 0, bank.z); pinPlayer(false);
+  dn.isDay = true;
+  updateHippos(DT);
+  detail.chargedWhenCrowded = H1.state === 'CHARGE' && H1.targetKind === 'player';
+  detail.tookNoDamageToProvoke = H1.health === H1.maxHealth;
+  // …the tusk thrust itself
+  player.pos.set(H1.pos.x + 2.5, 0, H1.pos.z); pinPlayer(false);
+  player.health = 100; H1.goreCd = 0;
+  updateHippos(DT);
+  detail.goreDamage = r2(100 - player.health);
+  detail.goreIsTheNumber = Math.abs(detail.goreDamage - HIPPO.GORE_DMG) < 0.01;
+
+  // ---- 5. NIGHT: it leaves the water, and the 70 m leash HOLDS ----
+  player.pos.set(-MAPR+10, 0, -MAPR+10); pinPlayer();
+  dn.isDay = false;
+  const H2 = hippoMeshes[0], w2 = H2.pool;
+  H2.state='ROAM'; H2.calmT=99; H2.dest=null; H2.health=H2.maxHealth; H2._prevHealth=H2.health;
+  let maxD = 0;
+  for(let i=0;i<6000;i++){ updateHippos(DT);
+    maxD = Math.max(maxD, Math.hypot(H2.pos.x-w2.x, H2.pos.z-w2.z)); }
+  detail.nightMaxDist = r2(maxD);
+  detail.nightLeash   = r2(w2.r + HIPPO.NIGHT_RANGE);
+  detail.leftTheWater = maxD > w2.r + HIPPO.GRAZE_RANGE;
+  detail.leashHeld    = maxD <= w2.r + HIPPO.NIGHT_RANGE + 0.5;
+
+  // ---- 6. it shares the pond: NO croc was harmed by any of the above ----
+  detail.crocsAlive = crocMeshes.length;
+  detail.crocsUnharmed = crocMeshes.every(C => C.health === C.maxHealth);
+
+  dn.isDay = true;
+  player.pos.set(home.x, 0, home.z); pinPlayer();
+  hippoMeshes.forEach(H=>{ H.health = H.maxHealth; H._prevHealth = H.health; H.state='WALLOW'; });
+  const pass = detail.allFloat && detail.noneOnTheBed && detail.swimsFasterThanItWalks &&
+               detail.allRetreated && detail.chargedWhenCrowded && detail.tookNoDamageToProvoke &&
+               detail.goreIsTheNumber && detail.leftTheWater && detail.leashHeld &&
+               detail.crocsUnharmed;
+  return { pass, detail };
+});
+
+// =====================================================================
+//  ⚒️ THE CRAFTED TIER  (2026-08-07)
+// =====================================================================
+// ⚠ MULTI-INSTANCE over the CATALOGUE: all eleven recipes are gated, priced and spent —
+// not one sampled item. The failure being guarded against is the one the old three-slot
+// craft system would have produced: a recipe whose material key nothing checks, so the
+// item is silently free.
+test('craft: all eleven recipes gate on their material, charge it, and none is free', ()=>{
+  pinPlayer();
+  const detail = {}, IDS = ['gorilla_club','fire_wand','cobra_dagger','poison_bottle',
+    'slime_flask','croc_grabber','invis_cloak','retal_cloak','endurance_charm',
+    'python_coil','night_shoes'];
+  const coins0 = progress.coins, unlocked0 = new Set(progress.unlocked);
+  const bones0 = JSON.stringify(boneCounts);
+  detail.count = IDS.length;
+  detail.allInCatalogue = IDS.every(id => !!SHOP_BY_ID[id]);
+  detail.allPriced      = IDS.every(id => itemPrice(id) > 0);
+  detail.allHaveRecipe  = IDS.every(id => { const c = SHOP_BY_ID[id].craft;
+    return c && Object.keys(c).length > 0; });
+  // every material key must be REAL — a typo here is an uncraftable item
+  detail.unknownMaterials = [];
+  IDS.forEach(id => Object.keys(SHOP_BY_ID[id].craft).forEach(k => {
+    if(!BONE_KINDS[k] && !LEGACY_MAT[k]) detail.unknownMaterials.push(id+':'+k); }));
+
+  // ---- with coins but NO materials, every single one must refuse ----
+  progress.coins = 100000;
+  IDS.forEach(id => progress.unlocked.delete(id));
+  boneCounts = {}; toothCount = 0; tuskCount = 0; hornCount = 0;
+  detail.refusedWithoutMaterial = IDS.filter(id => { unlockItem(id);
+    return !progress.unlocked.has(id); }).length;
+
+  // ---- give exactly the recipe, and every one must unlock AND consume it ----
+  const charged = {};
+  IDS.forEach(id => {
+    const c = SHOP_BY_ID[id].craft;
+    boneCounts = {}; toothCount = 0; tuskCount = 0; hornCount = 0;
+    for(const k in c) boneCounts[k] = c[k];              // exactly enough, no slack
+    progress.unlocked.delete(id);
+    const before = {}; for(const k in c) before[k] = craftMatHave(k);
+    unlockItem(id);
+    const after = {}; for(const k in c) after[k] = craftMatHave(k);
+    charged[id] = { got: progress.unlocked.has(id),
+                    spent: Object.keys(c).every(k => before[k] - after[k] === c[k]) };
+  });
+  detail.charged = charged;
+  detail.allUnlocked   = IDS.every(id => charged[id].got);
+  detail.allChargedMat = IDS.every(id => charged[id].spent);
+
+  // ---- 🟡 THE GOLD FANG IS A WILDCARD, and it is spent LAST ----
+  boneCounts = { cobra_fang_gold: 1 };
+  detail.goldCoversEveryColour = ['fire_wand','cobra_dagger','poison_bottle','invis_cloak']
+    .every(id => canCraft(SHOP_BY_ID[id]));
+  boneCounts = { cobra_fang_crimson: 1, cobra_fang_gold: 1 };
+  craftMatSpend('cobra_fang_crimson', 1);
+  detail.spendsColouredFirst = boneCounts.cobra_fang_crimson === 0 && boneCounts.cobra_fang_gold === 1;
+  craftMatSpend('cobra_fang_crimson', 1);
+  detail.fallsBackToGold = boneCounts.cobra_fang_gold === 0;
+  // …and an ordinary material must NOT be wildcarded by it
+  boneCounts = { cobra_fang_gold: 5 };
+  detail.goldIsNotUniversal = !canCraft(SHOP_BY_ID['night_shoes']);
+
+  // ---- the legacy three-slot recipes still mean what they always meant ----
+  boneCounts = {}; tuskCount = 1;
+  detail.legacyStillWorks = canCraft(SHOP_BY_ID['kit_boomerang']);
+  tuskCount = 0;
+  detail.legacyStillGates = !canCraft(SHOP_BY_ID['kit_boomerang']);
+
+  // restore everything this test touched
+  progress.coins = coins0; progress.unlocked = unlocked0;
+  boneCounts = JSON.parse(bones0); toothCount = 0; tuskCount = 0; hornCount = 0;
+  saveProgress(); pinPlayer();
+  const pass = detail.allInCatalogue && detail.allPriced && detail.allHaveRecipe &&
+               detail.unknownMaterials.length === 0 &&
+               detail.refusedWithoutMaterial === IDS.length &&
+               detail.allUnlocked && detail.allChargedMat &&
+               detail.goldCoversEveryColour && detail.spendsColouredFirst &&
+               detail.fallsBackToGold && detail.goldIsNotUniversal &&
+               detail.legacyStillWorks && detail.legacyStillGates;
+  return { pass, detail };
+});
+
+// =====================================================================
+//  🔥 FIRE PROPAGATION  (2026-08-07)
+// =====================================================================
+// ⚠ MULTI-INSTANCE BY CONSTRUCTION: a LINE of fences, because "fire spreads" that only
+// ever consumed the one fence you shot would pass a single-instance check. Also asserts
+// the three bounds — the cap, the burn-out, and the disposal — because an unbounded
+// spreading fire on a 500×500 map of grass is a game-ending bug, not a feature.
+test('fire: spreads down a line of fences, consumes them, then burns out leaving nothing', ()=>{
+  clearGroundPatches(); clearBrambles(); pinPlayer();
+  const detail = {}, DT = 1/60;
+  const site = pickBuildSite();
+  const bx = site.x + 30, bz = site.z + 30;
+  brambleCount = 999;
+  for(let i=0;i<4;i++) placeAheadAt(bx + i*3, bz, ()=>placeKitBramble());
+  detail.fencesBefore = kitBrambles.length;
+
+  const geo0 = renderer.info.memory.geometries, tex0 = renderer.info.memory.textures;
+  // light the FIRST one only — everything else must catch from it
+  addGroundPatch('FIRE', bx, bz);
+  detail.litOne = groundPatches.length;
+  for(let i=0;i<600;i++) updateGroundPatches(DT);
+  detail.fencesAfter = kitBrambles.length;
+  detail.spreadDownTheLine = detail.fencesBefore === 4 && detail.fencesAfter === 0;
+  detail.capRespected = groundPatches.length <= PATCH.MAX;
+
+  // ---- it BURNS things standing in it ----
+  clearGroundPatches();
+  const victims = [];
+  for(let i=0;i<3;i++){ const P = makePrey('gazelle', bx + i*0.6, bz, 'firetest');
+    P.health = 9999; P.maxHealth = 9999; victims.push(P); }
+  addGroundPatch('FIRE', bx, bz);
+  const hp0 = victims.map(v=>v.health);
+  for(let i=0;i<60;i++) updateGroundPatches(DT);
+  detail.burnPerSecond = victims.map((v,i)=>r2(hp0[i]-v.health));
+  detail.allBurned = detail.burnPerSecond.every(d => Math.abs(d - PATCH.FIRE.dps) < 0.6);
+  victims.forEach(v=>{ v.health = 0; }); updatePrey(0.05);
+
+  // ---- …and it BURNS OUT, freeing every resource ----
+  for(let i=0;i<60*40;i++) updateGroundPatches(DT);
+  detail.patchesLeft = groundPatches.length;
+  detail.burnedOut = groundPatches.length === 0;
+  clearGroundPatches();
+  detail.geoLeaked = renderer.info.memory.geometries - geo0;
+  detail.texLeaked = renderer.info.memory.textures - tex0;
+  detail.noLeak = detail.geoLeaked <= 0 && detail.texLeaked <= 0;
+
+  // ---- 🫧 slime reaches EVERY mover, because it rides the shared hazard multiplier ----
+  const sx = site.x + 60, sz = site.z + 60;
+  detail.slimeBefore = r2(hazardSpeedMul(sx, sz));
+  addGroundPatch('SLIME', sx, sz);
+  detail.slimeAfter  = r2(hazardSpeedMul(sx, sz));
+  detail.slimeAlsoOnTheAnimalPath = r2(brambleSpeedMul(sx, sz)) === PATCH.SLIME.slow;
+  detail.slimeSlows = detail.slimeBefore === 1 && detail.slimeAfter === PATCH.SLIME.slow;
+
+  clearGroundPatches(); clearBrambles(); pinPlayer();
+  const pass = detail.spreadDownTheLine && detail.capRespected && detail.allBurned &&
+               detail.burnedOut && detail.noLeak && detail.slimeSlows &&
+               detail.slimeAlsoOnTheAnimalPath;
+  return { pass, detail };
+});
+
+// =====================================================================
+//  🥷 THE INVISIBILITY CLOAK  (2026-08-07)
+// =====================================================================
+// ⚠ THE SHAPE: Steven asked for "creatures don't aggro" — ALL creatures, not the one you
+// happened to test. Detection in this game is per-module (a lion reads a detection radius,
+// a cheetah runs its own pick, a croc another), so the only honest test drives EVERY
+// predator that can pick the player and asserts a clean zero, then asserts the same set
+// DOES aggro uncloaked — because "nothing chased me" is also what a broken spawn prints.
+test('cloak: no predator picks a crouched player, and every one of them does uncloaked', ()=>{
+  pinPlayer();
+  const detail = {}, DT = 1/60;
+  const acc0 = progress.accessories.slice();
+  const site = pickBuildSite();
+  player.pos.set(site.x, 0, site.z); pinPlayer();
+
+  // Park everything far away, then bring back only the animal under test — otherwise
+  // predators target EACH OTHER and the result says nothing about the player.
+  const park = keep => { let k = 0; allCreatureLists().forEach(([list])=>{ if(!list) return;
+    list.forEach(e=>{ if(e === keep) return; k++;
+      e.pos.set(-MAPR+2+(k%20)*1.5, 0, -MAPR+2+((k/20)|0)*1.5);
+      e.pos.y = terrainY(e.pos.x, e.pos.z); if(e.mesh) e.mesh.position.copy(e.pos); }); }); };
+  const setCloak = on => { progress.accessories = ['invis_cloak', null];
+    player.crouching = on; player._cloakBreak = 0;
+    EQUIP = computeEquipMods(); updateStealth(DT); };
+  const beside = e => { e.pos.set(player.pos.x + 4, terrainY(player.pos.x+4, player.pos.z), player.pos.z);
+    if(e.mesh) e.mesh.position.copy(e.pos); };
+
+  const probes = {
+    cheetah:   { list: ()=>cheetahMeshes,   pick: C => { const t = cheetahPickTarget(C); return !!t && t.kind==='player'; } },
+    porcupine: { list: ()=>porcupineMeshes, pick: P => { const t = porcPickTarget(P);    return !!t && t.kind==='player'; } },
+    hippo:     { list: ()=>hippoMeshes,     pick: H => { const t = hippoPickTarget(H, HIPPO.NIGHT_AGGRO_R); return !!t && t.kind==='player'; } },
+    crocodile: { list: ()=>crocMeshes,      pick: C => { C.lungeCd = 0;
+                   C.pos.set(C.pool.x, terrainY(C.pool.x, C.pool.z), C.pool.z);
+                   player.pos.set(C.pool.x + 3, 0, C.pool.z); pinPlayer();
+                   const t = crocPickTarget(C); return !!t && t.kind === 'player'; } },
+  };
+  // ⚠ SPAWN WHAT IS MISSING RATHER THAN SKIPPING IT. First run of this test probed only
+  // 2 of the 4 predators, because earlier tests in the suite kill cheetahs and porcupines
+  // and never restock them — so the coverage silently halved depending on run order. A
+  // test that quietly tests less is the same failure as a test that passes wrongly.
+  const spawned = [];
+  if(!cheetahMeshes.length   && typeof spawnCheetah   === 'function'){ spawnCheetah();   spawned.push('cheetah'); }
+  if(!porcupineMeshes.length && typeof spawnPorcupine === 'function'){ spawnPorcupine(); spawned.push('porcupine'); }
+  detail.spawnedForTest = spawned;
+
+  const cloaked = {}, bare = {};
+  detail.missing = [];
+  for(const name in probes){
+    const p = probes[name], L = p.list();
+    if(!L || !L.length){ detail.missing.push(name); continue; }
+    const e = L[0];
+    player.pos.set(site.x, 0, site.z); pinPlayer();
+    park(e); if(name !== 'crocodile') beside(e);
+    setCloak(true);  cloaked[name] = p.pick(e);
+    player.pos.set(site.x, 0, site.z); pinPlayer();
+    park(e); if(name !== 'crocodile') beside(e);
+    setCloak(false); bare[name]    = p.pick(e);
+  }
+  detail.aggroWhileCloaked   = cloaked;
+  detail.aggroWhileUncloaked = bare;
+  detail.probesRun = Object.keys(cloaked).length;
+  detail.noneAggroCloaked = Object.keys(cloaked).every(k => cloaked[k] === false);
+  // ⚠ the CONTROL, and it is the important half: a lone "nothing chased me" is exactly
+  // what a broken world prints too.
+  detail.allAggroUncloaked = Object.keys(bare).every(k => bare[k] === true);
+
+  // ---- THE PRIDE: every lion, driven through the real update ----
+  player.pos.set(site.x, 0, site.z); pinPlayer();
+  const runPride = on => {
+    lionMeshes.forEach((L,i)=>{ const a = i*1.1;
+      L.pos.set(player.pos.x+Math.cos(a)*5, 0, player.pos.z+Math.sin(a)*5);
+      L.pos.y = terrainY(L.pos.x, L.pos.z); if(L.mesh) L.mesh.position.copy(L.pos);
+      L.state = 'wander'; L.health = L.maxHealth; L.fedTimer = 0; L.hunger = 100; });
+    setCloak(on);
+    for(let i=0;i<240;i++){ pinPlayer(); player.crouching = on; updateLions(DT); }
+    return lionMeshes.filter(L => L.state === 'chase').length;
+  };
+  detail.prideSize        = lionMeshes.length;
+  detail.lionsChasingCloaked   = runPride(true);
+  detail.lionsChasingUncloaked = runPride(false);
+
+  // ---- attacking BREAKS it, and it re-forms on its own ----
+  setCloak(true);
+  detail.activeBeforeAttack = cloakActive();
+  breakCloak();
+  detail.brokenByAttack = !cloakActive();
+  for(let i=0;i<Math.ceil(CLOAK_BREAK*60)+10;i++) updateAbilities(DT);
+  player.crouching = true;
+  detail.reforms = cloakActive();
+  // ---- and standing up ends it immediately ----
+  player.crouching = false;
+  detail.endsOnStandingUp = !cloakActive();
+
+  progress.accessories = acc0; player.crouching = false;
+  EQUIP = computeEquipMods(); pinPlayer();
+  const pass = detail.probesRun === Object.keys(probes).length &&
+               detail.missing.length === 0 &&
+               detail.noneAggroCloaked && detail.allAggroUncloaked &&
+               detail.prideSize > 0 && detail.lionsChasingCloaked === 0 &&
+               detail.lionsChasingUncloaked === detail.prideSize &&
+               detail.brokenByAttack && detail.reforms && detail.endsOnStandingUp;
   return { pass, detail };
 });
 

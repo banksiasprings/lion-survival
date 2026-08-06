@@ -522,6 +522,67 @@ let hornCount  = 0;
 const KIT_WALL_MAX = 100;   // walls (wood + stone share this pool)
 const KIT_GATE_MAX = 20;    // gates are a separate ability with a separate pool
 
+// =====================================================================
+//  ⚒️ CRAFTED ITEMS — the trophy economy  (2026-08-07)
+// =====================================================================
+// Steven: eleven recipes, each "the named animal material + gold", priced against the
+// existing shop. Until today the game had THREE recipes (necklace, boomerang, crossbow)
+// spending three materials; loot from every other creature was a tally with no sink.
+// This is what turns 24 species of drop into currency.
+//
+// ⚠ ONE TUNABLE BLOCK, the `KILL_BOUNTY` / `COIN_PRICES` discipline. Every number a
+// crafted item cares about lives here, so retuning the whole tier is one screen — not a
+// hunt through eleven `else if` branches. The recipes themselves ride the EXISTING
+// `craft:{}` field on SHOP_ITEMS (now generalised to accept any BONE_KINDS key), so
+// nothing new had to be invented to express "1 green cobra fang".
+//
+// ⚠ PRICE CALIBRATION, stated because Steven asked for the reasoning. Anchors already in
+// the game: daily drip = 1 coin × day number (ten days survived banks 55) · cheapest buy
+// 4 · 🏹 Rhino Crossbow 80, described in its own note as "super expensive" and a day-13
+// goal · 🪃 Boomerang 40 · 🪽 double jump 24. Steven's brief: "cheaper than crossbow (80)
+// for weak items, more expensive for powerful ones."
+//   BUT — he also flagged the warthog bounty (100 a kill) as generous, and it is: it makes
+// the entire old table reachable on day 1-2 by anyone who hunts. So these are priced
+// against a player who HUNTS, not one who only survives, and the material gate does the
+// real gating anyway. Every one of these costs a kill that is genuinely hard to get:
+// a gorilla, a colour-specific cobra, a cheetah.
+//   The three above the crossbow's 80 are there deliberately — a permanent +70% move
+// speed and near-total invisibility are both stronger than anything the shop sold before.
+const CRAFT = {
+  // --- 🦴 GORILLA CLUB: high damage, short reach, small cooldown ---
+  CLUB_DMG:      95,   // between the hammer (67) and the boomerang (100). Two swings down
+                       // a gorilla's 160; the hammer needs three.
+  CLUB_REACH:   3.4,   // ⚠ SHORT, as asked — the hammer reaches PLAYER.pounceRange (~6).
+                       // You have to be inside a lion's own strike range to use it.
+  CLUB_CD:      0.9,   // "small cooldown" — 1.5× the hammer's rate at 1.4× its damage
+  // --- 🗡️ COBRA DAGGER: Steven's exact numbers ---
+  DAGGER_DMG:    25,
+  DAGGER_CD:   0.33,   // ~3 hits/sec → 75 dps, the highest sustained melee in the game
+  DAGGER_REACH: 2.8,   // …bought with the shortest reach of anything
+  // --- 🔥 FIRE WAND ---
+  FIRE_DMG:      22,   // the bolt itself is modest; the FIRE is the weapon
+  FIRE_CD:      2.2,
+  FIRE_SPEED:    46,
+  // --- ☠️ POISON BOTTLE ---
+  POISON_R:     5.0,   // splash radius
+  POISON_CD:    9.0,
+  POISON_SPEED:  34,
+  // --- 🦔 RETALIATION CLOAK ---
+  SPIKE_BACK:    10,   // Steven's number
+  SPIKE_STUN:   0.8,   // "brief"
+  // --- 🪝 CROC GRABBER ---
+  GRAB_RANGE:    26,
+  GRAB_PULL:     18,   // units/sec the victim is dragged toward you
+  GRAB_TIME:    0.9,
+  GRAB_CD:      6.0,
+  // --- passives ---
+  ENDURANCE_DRAIN: 0.45,   // stamina drains at 45% (Steven: "significant, not marginal")
+  ENDURANCE_REGEN: 2.30,   // …and comes back 2.3× as fast
+  NIGHT_SHOES:     1.70,   // +70% movement — Steven's number, exact
+  CLOAK_VIS:       0.10,   // 90% harder to see — Steven's number, as a multiplier
+  COIL_CROUCH:     1.00,   // 🐍 crouch no longer halves your speed (the 0.5 becomes 1.0)
+};
+
 // Catalogue. `starter:true` items are unlocked (and pre-equipped) on a fresh
 // save. Effects are applied through small hooks in updatePlayer/updateStealth/
 // updateHealth/updateHunger and the fire-torch FX; nothing here mutates the
@@ -590,6 +651,48 @@ const SHOP_ITEMS = [
   // GATES A VERB ("without it, no pounce") rather than scaling a stat.
   { id:'springbok_sinew', type:'accessory', icon:'🪽', name:'Springbok Sinew',
     desc:'Spring-tendon cut from a springbok\'s hind leg and bound to your ankles. While worn you can DOUBLE JUMP — press jump again in mid-air for a second leap at 80% of the first. Without it, one jump only.' },
+  // ---- ⚒️ CRAFTED TIER (2026-08-07) — every one costs a trophy AND gold ----
+  // ⚠ Material names are Steven's, mapped onto the drops the game actually has. Two of
+  // his names did not match a real drop and were interpreted rather than invented:
+  //   "2 gorilla BONES"  → 2 gorilla FANGS  (a gorilla has never dropped a bone)
+  //   "1 cheetah TOOTH"  → 1 cheetah CLAW   (a cheetah has never dropped a tooth)
+  //   "1 sand python SCALE" → 1 python SKIN (the same part, different word)
+  //   "1 wild dog TOOTH" → 1 wild dog FANG  (ditto)
+  // The four cobra fangs are NEW drops added for these recipes — see BONE_KINDS.
+  { id:'gorilla_club',  type:'ability', icon:'🦴', name:'Gorilla Club',
+    desc:`A gorilla's own arm-bone, bound and swung two-handed. ${CRAFT.CLUB_DMG} damage — the heaviest melee in the game — but you have to be almost on top of the animal (${CRAFT.CLUB_REACH}m, half a hammer's reach). ${CRAFT.CLUB_CD}s cooldown. Craft: 2 gorilla fangs.`,
+    cd:CRAFT.CLUB_CD, craft:{ gorilla:2 } },
+  { id:'fire_wand',     type:'ability', icon:'🔥', name:'Fire Wand',
+    desc:`A red cobra's fang set in a charred branch. Spits a bolt of flame for ${CRAFT.FIRE_DMG} — and whatever it lands on CATCHES. Bramble fences and tall grass burn, the fire spreads to whatever is next to them, and anything standing in it cooks. ${CRAFT.FIRE_CD}s cooldown. Craft: 1 red cobra fang.`,
+    cd:CRAFT.FIRE_CD, craft:{ cobra_fang_crimson:1 } },
+  { id:'cobra_dagger',  type:'ability', icon:'🗡️', name:'Cobra Dagger',
+    desc:`A blue cobra's fang, still hollow, bound to a grip. Only ${CRAFT.DAGGER_DMG} a hit and the shortest reach of anything — but it strikes about three times a second, which is the most damage per second you can put out. Craft: 1 blue cobra fang.`,
+    cd:CRAFT.DAGGER_CD, craft:{ cobra_fang_midnight:1 } },
+  { id:'poison_bottle', type:'ability', icon:'☠️', name:'Poison Bottle',
+    desc:`A purple cobra's venom gland, corked in a gourd. Throw it: it bursts in a ${CRAFT.POISON_R}m cloud and everything caught in it is POISONED — bleeding down toward death for a full day, the same venom the cobras carry. ${CRAFT.POISON_CD}s cooldown. Craft: 1 purple cobra fang.`,
+    cd:CRAFT.POISON_CD, craft:{ cobra_fang_violet:1 } },
+  { id:'slime_flask',   type:'ability', icon:'🫧', name:'Slime Flask',
+    desc:'A gourd of pink worm slime. Throw it to glaze the ground — anything crossing the slick, you included, is slowed to half speed until it dries. No damage: this is for breaking a chase, not winning a fight. 7s cooldown. Craft: 1 worm slime.',
+    cd:7, craft:{ worm:1 } },
+  { id:'croc_grabber',  type:'ability', icon:'🪝', name:'Croc Grabber',
+    desc:`A crocodile's tooth on a plaited hide line. Hook whatever you are looking at inside ${CRAFT.GRAB_RANGE}m and HAUL it to you — drag a warthog out of a herd, or rip a crocodile up onto dry land where it is slow. ${CRAFT.GRAB_CD}s cooldown. Craft: 1 crocodile tooth.`,
+    cd:CRAFT.GRAB_CD, craft:{ crocodile:1 } },
+  // ---- crafted accessories ----
+  { id:'invis_cloak',   type:'accessory', icon:'🥷', name:'Invisibility Cloak',
+    desc:'Woven around a green cobra\'s fang. WHILE CROUCHED you are all but gone — 90% harder to see, and nothing on the savannah will pick you as a target at all. Stand up, or attack something, and the spell breaks instantly. Craft: 1 green cobra fang.',
+    craft:{ cobra_fang_acid:1 } },
+  { id:'retal_cloak',   type:'accessory', icon:'🦔', name:'Retaliation Cloak',
+    desc:`A hide cloak stitched through with porcupine quills, points out. Anything that damages you takes ${CRAFT.SPIKE_BACK} straight back and is stunned for a moment. Passive — it works while you are eating, building or running away. Craft: 6 porcupine quills.`,
+    craft:{ porcupine:6 } },
+  { id:'endurance_charm', type:'accessory', icon:'🐕', name:'Endurance Charm',
+    desc:'A wild dog\'s fang on a thong — they run their prey to death. Stamina drains at less than half the rate and comes back more than twice as fast, so you can sprint most of the way across the map and be ready to do it again. Craft: 1 wild dog fang.',
+    craft:{ wilddog:1 } },
+  { id:'python_coil',   type:'accessory', icon:'🐍', name:'Sand-Python Coil',
+    desc:'A sand python\'s shed skin, wound around the waist. Crouching no longer slows you — you creep at full walking pace — and your crouched footfalls make no sound at all. A python crosses open sand without a whisper. Craft: 1 python skin.',
+    craft:{ python:1 } },
+  { id:'night_shoes',   type:'accessory', icon:'👟', name:'Night Shoes',
+    desc:'Cheetah-claw cleats. +70% movement speed, walking and sprinting — far and away the fastest thing you can own. Craft: 1 cheetah claw.',
+    craft:{ cheetah:1 } },
   { id:'name_tag',      type:'accessory', icon:'🏷️', name:'Name Tag',
     desc:'A scratched bone tag on a thong. While worn, [RMB] (phone: the 🏷️ NAME button) on any animal you are looking at gives it a name — "Bob" by default, or type your own. The name floats over its head, and the killfeed will remember it by name when it dies.' },
 ];
@@ -655,7 +758,40 @@ let heightmap = [];
 // =====================================================================
 function v3(x,y,z){ return new THREE.Vector3(x,y,z); }
 function rand(a,b){ return a + Math.random()*(b-a); }
+
+// ---- 🌍 WORLD SEED — the thing that makes a save file MEAN anything ----------
+// ⚠ THE WHOLE WORLD IS RE-ROLLED ON EVERY PAGE LOAD, and that is fatal to a save.
+// `terrainY(x,z)` looks like a pure function — sin/cos, no randomness — but it then
+// SUBTRACTS the pond bowls, and `chooseWaterHoles()` places those three ponds with
+// `Math.random()` once per load (radius 20–29, anywhere on the map). Trees, berry
+// bushes, rocks and grass are scattered the same way. So without a seed, a house
+// saved on dry ground reloads into an 18 m-deep lake, every wall's base Y is wrong,
+// and the player spawns underwater. Measured before the fix: `terrainY(60,60)` read
+// −3.32 on one load and +0.41 on the next, same coordinates.
+//
+// The fix is ONE NUMBER. Install a seeded PRNG over `Math.random` for the worldgen
+// span, save the seed, and the same seed rebuilds a byte-identical world.
+//
+// ⚠ THE SEED IS INSTALLED FOR WORLDGEN ONLY and torn down immediately after
+// (`unseedWorld()` at the end of the bootstrap). Gameplay randomness — lion AI,
+// weather rolls, loot, spawn jitter — keeps the native `Math.random` and stays
+// genuinely random. A seeded *game* would make every run identical, which is a
+// different (and much worse) product than a seeded *map*.
+let worldSeed = 0;
+function makeRng(seed){
+  let s = seed >>> 0; if(s === 0) s = 0x9e3779b9;      // xorshift32 dies on 0
+  return function(){
+    s ^= s << 13; s >>>= 0;
+    s ^= s >>> 17;
+    s ^= s << 5;  s >>>= 0;
+    return s / 4294967296;
+  };
+}
+const _nativeRandom = Math.random;
+function seedWorld(seed){ worldSeed = seed >>> 0; Math.random = makeRng(worldSeed); }
+function unseedWorld(){ Math.random = _nativeRandom; }
 function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+
 function lerp(a,b,t){ return a+(b-a)*t; }
 function fmtTime(s){
   const m=Math.floor(s/60), ss=Math.floor(s%60);
@@ -1949,7 +2085,7 @@ function cheetahMidday(){
 }
 function cheetahPickTarget(C){
   let best=null, bd=CHEETAH.DETECT;
-  if(!playerOffGround() && player.health>0){
+  if(!playerOffGround() && !playerUnseen() && player.health>0){
     const d = Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z);
     if(d<bd){ bd=d; best={pos:player.pos, kind:'player', ent:player}; }
   }
@@ -2529,7 +2665,7 @@ function porcSpikeContact(P, dt){
 // Once provoked it goes for "anything nearby" — nearest wins, player included.
 function porcPickTarget(P){
   let best=null, bd=PORC.AGGRO_R;
-  if(gameState==='playing' && player.health>0 && !playerOffGround()){
+  if(gameState==='playing' && player.health>0 && !playerOffGround() && !playerUnseen()){
     const d = Math.hypot(player.pos.x-P.pos.x, player.pos.z-P.pos.z);
     if(d<bd){ bd=d; best={ent:player, kind:'player'}; }
   }
@@ -3309,16 +3445,17 @@ function updatePlayer(dt){
   if(player._pounceCd>0)  player._pounceCd  -= dt;
 
   if(wantSprint){
-    player.stamina = Math.max(0, player.stamina - PLAYER.staminaDrain*dt);
+    player.stamina = Math.max(0, player.stamina - PLAYER.staminaDrain*EQUIP.staminaDrainMul*dt);
     player.sprinting = true;
   } else {
     // Passive stamina regen whenever not sprinting — a tree is a safe place to catch your breath.
-    player.stamina = Math.min(PLAYER.maxStamina, player.stamina + PLAYER.staminaRegen*dt);
+    player.stamina = Math.min(PLAYER.maxStamina, player.stamina + PLAYER.staminaRegen*EQUIP.staminaRegenMul*dt);
     player.sprinting = false;
   }
 
   let speed = (player.sprinting && player.stamina>0) ? PLAYER.sprintSpeed : PLAYER.speed;
-  if(player.crouching) speed *= 0.5;   // crouch-walk: 5 u/s ≈ ⅓ of top speed, stealthy
+  // 🐍 The Sand-Python Coil replaces this 0.5 with 1.0 — see computeEquipMods.
+  if(player.crouching) speed *= EQUIP.crouchMul;   // crouch-walk: 5 u/s ≈ ⅓ of top speed, stealthy
   speed *= EQUIP.speedMul;             // Swift Boots / Adrenaline surge (kit accessories & abilities)
 
   // Direction
@@ -3806,6 +3943,7 @@ function updateStealth(dt){
   if(player.inTree){ visMul *= 0.15; aud = Math.min(aud, 2); }
   visMul *= EQUIP.visMul;   // Camo Cloak (passive) / Smoke Screen (ability) — kit stealth mods
 
+  aud *= EQUIP.audMul;      // 🐍 Sand-Python Coil silences a crouched approach entirely
   stealth.inGrass=inGrass; stealth.moving=moving; stealth.sprint=sprint;
   stealth.crouch=crouch; stealth.visMul=visMul; stealth.aud=aud;
 
@@ -3918,6 +4056,11 @@ function updateLions(dt){
     let detR = Math.max(visual, audio);
     if(L.fedTimer > 0) detR *= 0.55;             // a fed lion is far less interested in you
     if(guardingKill) detR += 6;                  // …unless you're near its kill — it defends it
+    // 🥷 THE CLOAK IS AN OFF-SWITCH, not another multiplier. `stealth.visMul` already
+    // cuts `visual` to a tenth, but AUDIO and SCENT are separate senses and a lion that
+    // heard you would still come. One gate on the final detection radius covers sight,
+    // sound, wind and the fire beacon at once — every downstream use of detR reads 0.
+    if(playerUnseen()) detR = 0;
     L._detR = detR; L._visR = visual; L._audR = audio;
     // Symmetric concealment: a lion lying up in tall grass (not yet committed to
     // the open chase) is hidden from the player's radar until very close.
@@ -4745,6 +4888,7 @@ function updateVultures(dt){
 // True while the Lion Tooth Necklace accessory is worn — the gate that unlocks pounce.
 function hasNecklace(){ return progress.accessories.includes('lion_necklace'); }
 function pouncePrey(){
+  breakCloak();   // 🥷 attacking gives you away
   if(player.inTree || player._pounceCd>0) return;
   if(!hasNecklace()){ showKillfeed('🦷 Need the Lion Tooth Necklace to pounce'); return; }
   player._pounceCd = 0.8;
@@ -5529,7 +5673,9 @@ function updateGorillas(dt){
     // Grass/crouch conceal a GROUNDED player from the gorilla too — same stealth
     // signature the lions read (stealth.visMul). A treed player is the exception:
     // the gorilla always sees that one, then closes in to tree-grab.
-    const noticesPlayer = distP < GOR.PURSUE_RANGE * (treed ? 1 : stealth.visMul);
+    // 🥷 …and the gorilla, which otherwise sees a treed player at full range.
+    const noticesPlayer = !playerUnseen() &&
+                          distP < GOR.PURSUE_RANGE * (treed ? 1 : stealth.visMul);
 
     // 1) Tree-grab a sheltered player already in reach — the prize.
     if(treed && distP < GOR.GRAB_RANGE && G.grabCd <= 0){
@@ -5867,7 +6013,7 @@ function updateRhinos(dt){
     // the gorilla's swipe / a thrown weapon).
     if(!rhinoTargetValid(R) || R.aggroTimer<=0){
       R.target=null; R.targetKind=null;
-      if(!playerOffGround()){
+      if(!playerOffGround() && !playerUnseen()){
         const dp=Math.hypot(player.pos.x-R.pos.x, player.pos.z-R.pos.z);
         if(dp < RHINO.SENSE_RANGE*stealth.visMul){ R.target=player; R.targetKind='player'; R.aggroTimer=RHINO.AGGRO_TIME; }
       }
@@ -6202,7 +6348,7 @@ function updateWildDogs(dt){
     } else {
       // Cautiously hunt an exposed player (crouch-in-grass shrinks DETECT), else a
       // serpent it has stumbled on, else the nearest prey.
-      if(!playerOffGround()){
+      if(!playerOffGround() && !playerUnseen()){
         const dp=Math.hypot(player.pos.x-D.pos.x, player.pos.z-D.pos.z);
         if(dp < DOG.DETECT*stealth.visMul){ tgtPos=player.pos; chaseSpd=DOG.SPEED_HUNT; biteWhat='player'; }
       }
@@ -6381,7 +6527,7 @@ function vultureFly(V, tx, tz, targetY, spd, dt){
 function vulturePickTarget(V){
   let best=null, bd=SKYV.DETECT;
   const test=(o,kind)=>{ if(!o||o.health<=0) return; const d=Math.hypot(o.pos.x-V.pos.x,o.pos.z-V.pos.z); if(d<bd){ bd=d; best={o,kind}; } };
-  if(!playerOffGround() && Math.hypot(player.pos.x-V.pos.x,player.pos.z-V.pos.z) < SKYV.DETECT*stealth.visMul) test(player,'player');
+  if(!playerOffGround() && !playerUnseen() && Math.hypot(player.pos.x-V.pos.x,player.pos.z-V.pos.z) < SKYV.DETECT*stealth.visMul) test(player,'player');
   preyMeshes.forEach(P=>{ if(P.species!=='elephant') test(P,'prey'); });   // hits giraffe/zebra/kudu/etc — NOT the elephant
   rhinoMeshes.forEach(R=>test(R,'rhino'));
   dogMeshes.forEach(D=>test(D,'dog'));
@@ -6698,7 +6844,7 @@ function eagleGrounded(E){ return (E.pos.y - terrainY(E.pos.x,E.pos.z)) <= EAGLE
 function eaglePickTarget(E){
   let best=null, bd=EAGLE.DETECT;
   const test=(o,kind)=>{ if(!o||o.health<=0) return; const d=Math.hypot(o.pos.x-E.pos.x,o.pos.z-E.pos.z); if(d<bd){ bd=d; best={o,kind}; } };
-  if(!playerOffGround() && Math.hypot(player.pos.x-E.pos.x,player.pos.z-E.pos.z) < EAGLE.DETECT*stealth.visMul) test(player,'player');
+  if(!playerOffGround() && !playerUnseen() && Math.hypot(player.pos.x-E.pos.x,player.pos.z-E.pos.z) < EAGLE.DETECT*stealth.visMul) test(player,'player');
   preyMeshes.forEach(P=>{ if(EAGLE.SMALL_BUCK.indexOf(P.species)>=0) test(P,'prey'); });
   dogMeshes.forEach(D=>test(D,'dog'));
   return best;
@@ -9648,6 +9794,7 @@ function updateThrownRocks(dt){
   for(let i=thrownRocks.length-1;i>=0;i--){
     const r = thrownRocks[i];
     if(r.boomerang){ updateBoomerang(r, dt, i); continue; }   // returning arc — its own physics + hit model
+    if(r.splat){ updateSplatProjectile(r, dt, i); continue; } // 🔥☠️🫧 area weapons — detonate, don't wound
     r.mesh.position.addScaledVector(r.vel, dt);
     r.dist += r.vel.length()*dt;
     r.vel.y -= (r.crossbow ? 1.0 : 5)*dt;  // crossbow bolt flies flat & far; rock/spear keep light gravity
@@ -9869,6 +10016,31 @@ const COIN_PRICES = {
                          // day 7-8 rather than a day-2 default.
   kit_boomerang:  40,    // …and still costs 1 elephant tusk
   kit_crossbow:   80,    // Steven: "super expensive". Also still costs 1 rhino horn.
+
+  // ---- ⚒️ THE CRAFTED TIER (2026-08-07) — see the CRAFT block for the reasoning ----
+  // Ordered cheapest → dearest. Each also costs its trophy, which is the real gate.
+  slime_flask:     18,   // pure utility, no damage — the cheapest of the eleven
+  python_coil:     22,   // a movement quality-of-life passive, not a power spike
+  endurance_charm: 28,   // strong, but stamina is the least lethal of the meters
+  croc_grabber:    30,   // a tool that opens plays rather than winning fights outright
+  retal_cloak:     35,   // 10 back + a stun is real, but only if something reaches you
+  gorilla_club:    45,   // ⚠ under the boomerang's 40? No — ABOVE it, and it should be:
+                         // 95 damage on a 0.9 s cooldown is ~105 dps against the
+                         // boomerang's 100 every 20 s. The short reach is what keeps it
+                         // from being strictly better, not the price.
+  poison_bottle:   50,   // an area denial + a guaranteed kill on anything you can hit
+  cobra_dagger:    55,   // 75 sustained dps, the highest in the game
+  fire_wand:       70,   // ⚠ just under the crossbow: it is the only item that changes
+                         // the MAP rather than an animal's health bar
+  night_shoes:     75,   // ⚠ +70% speed vs the Swift Boots' +15% for 14 coins. Five times
+                         // the effect for five times the price, PLUS a cheetah kill — and
+                         // a cheetah is the fastest thing alive, so the material is the
+                         // hard part. Flagged: this is the biggest raw stat in the shop.
+  invis_cloak:     90,   // ⚠ THE DEAREST THING IN THE GAME, above the crossbow's 80.
+                         // "Nothing aggros you at all" is a hard off-switch for the
+                         // entire predator roster; if anything here is mispriced low it
+                         // is this one. Deliberately above every other item so it reads
+                         // as the endgame buy Steven's description implies.
 };
 function itemPrice(id){ const p = COIN_PRICES[id]; return (p == null) ? 0 : p; }
 function canAffordCoins(id){ return progress.coins >= itemPrice(id); }
@@ -9991,16 +10163,93 @@ function saveProgress(){
 
 // ---- Passive modifiers: recomputed each frame from accessories + timed buffs ----
 function computeEquipMods(){
-  const m = { speedMul:1, visMul:1, healthRegenMul:1, hungerDrainMul:1 };
+  const m = { speedMul:1, visMul:1, healthRegenMul:1, hungerDrainMul:1,
+              staminaDrainMul:1, staminaRegenMul:1, crouchMul:0.5, audMul:1 };
   for(const id of progress.accessories){
     if(id==='swift_boots')     m.speedMul       *= 1.15;
     if(id==='camo_cloak')      m.visMul         *= 0.70;
     if(id==='bone_talisman')   m.healthRegenMul *= 2.2;
     if(id==='forager_satchel') m.hungerDrainMul *= 0.60;
+    // ---- ⚒️ crafted passives (2026-08-07) ----
+    if(id==='night_shoes')     m.speedMul       *= CRAFT.NIGHT_SHOES;      // 👟 +70%
+    if(id==='endurance_charm'){ m.staminaDrainMul *= CRAFT.ENDURANCE_DRAIN;
+                                m.staminaRegenMul *= CRAFT.ENDURANCE_REGEN; }
+    // 🐍 THE COIL replaces the crouch penalty rather than scaling it — crouching costs
+    // you nothing, and your crouched footsteps stop carrying at all. Both halves are
+    // "a python crosses open sand without a whisper".
+    if(id==='python_coil'){ m.crouchMul = CRAFT.COIL_CROUCH; if(player.crouching) m.audMul *= 0; }
   }
   if(buffs.adrenaline>0) m.speedMul *= 1.4;   // Adrenaline speed surge
   if(buffs.smoke>0)      m.visMul   *= 0.15;  // Smoke Screen near-invisibility
+  if(cloakActive())      m.visMul   *= CRAFT.CLOAK_VIS;   // 🥷 90% harder to see
   return m;
+}
+
+// ---- 🥷 THE INVISIBILITY CLOAK ------------------------------------------------
+// Steven: "while crouched, 90% harder for AI to detect (practically invisible — creatures
+// don't aggro until player uncrouches or attacks)."
+//
+// ⚠ THAT IS TWO SEPARATE MECHANISMS, and it needs to be, because the game has two kinds
+// of detection. The "90% harder" half is a number and rides the existing stealth channel
+// (`EQUIP.visMul` → `stealth.visMul`), which every range-based sense already multiplies
+// through — lions, sky vultures, martial eagles. The "don't aggro AT ALL" half is not a
+// number, it is a HARD GATE, and it goes in the target-picking functions via
+// `playerUnseen()`: a scan that cannot see you cannot choose you, however close you are.
+// A visMul alone would have left a lion that walked into you still finding you.
+//
+// ⚠ ATTACKING BREAKS IT, on a timer rather than instantly-and-forever, so the cloak is a
+// stalking tool and not a permanent immunity you can shoot from. `breakCloak()` is called
+// from every player attack path.
+const CLOAK_BREAK = 3.0;      // seconds of visibility after you attack from cover
+function cloakActive(){
+  return !!player.crouching && (player._cloakBreak||0) <= 0 &&
+         progress.accessories.indexOf('invis_cloak') >= 0;
+}
+// The predicate every target scan asks. Named for what it MEANS, so a future creature's
+// scan reads correctly: "is the player unseeable right now".
+function playerUnseen(){ return cloakActive(); }
+function breakCloak(){
+  if(progress.accessories.indexOf('invis_cloak') < 0) return;
+  if((player._cloakBreak||0) <= 0 && player.crouching)
+    showKillfeed('🥷 They have seen you — the cloak is broken');
+  player._cloakBreak = CLOAK_BREAK;
+}
+
+// ---- 🦔 THE RETALIATION CLOAK -------------------------------------------------
+// Steven: "passive: any attacker takes 10 dmg back + brief stun."
+//
+// ⚠ IMPLEMENTED AS AN HP-DROP WATCHDOG, not as a hook in each attack. There is no single
+// "the player took damage" function in this game — a lion maul, a croc roll, a gorilla
+// smack, venom, brambles and a fall all decrement `player.health` in their own modules.
+// Wiring a callback into each would mean finding every one and would break the next time
+// somebody adds a creature. But EVERY direct attacker already sets `player.lastHitBy`,
+// exactly like the porcupine's and the lions' own retaliation triggers — so watch the HP
+// and read who did it. Same pattern, third user.
+//
+// ⚠ It deliberately fires only for a real ATTACKER: `lastHitBy` is a creature object.
+// Starving, drowning, burning and falling drop your HP with nobody to spike, and the
+// stale `lastHitBy` from a fight ten minutes ago must not take 10 damage for it — which
+// is what `_retalMark` guards, by only ever paying out once per distinct hit event.
+function updateRetaliationCloak(dt){
+  if(gameState!=='playing') return;
+  const worn = progress.accessories.indexOf('retal_cloak') >= 0;
+  const prev = player._retalHp;
+  player._retalHp = player.health;
+  if(!worn || prev == null || player.health >= prev - 0.001) return;
+  const a = player.lastHitBy;
+  if(!a || a === player || !(a.health > 0) || a.dying) return;
+  // One spike per BLOW, not per frame. A croc's death roll and a burning fire both drop
+  // your HP on consecutive frames while `lastHitBy` stays the same object; without this
+  // the cloak would do 10 damage sixty times a second and delete the animal instantly.
+  player._retalT = (player._retalT||0) - dt;
+  if(player._retalMark === a && player._retalT > 0) return;
+  player._retalMark = a; player._retalT = 0.35;
+  a.health -= CRAFT.SPIKE_BACK;
+  a.flashTimer = 0.2;
+  a.stunTimer = Math.max(a.stunTimer||0, CRAFT.SPIKE_STUN);
+  const nm = a.label || a.species || 'attacker';
+  showKillfeed(a.health<=0 ? '🦔 The quills kill the '+nm+'!'
+                           : '🦔 The cloak\'s quills bite the '+nm+' (-'+CRAFT.SPIKE_BACK+')');
 }
 
 // True while the Fire Torch ability is lit — read by the lion detection model as
@@ -10051,6 +10300,13 @@ function useActiveAbility(){
   else if(id==='kit_roof'){      did = kitPlaceRoof();     quiet = true; }
   else if(id==='kit_fire'){      did = kitPlaceCampfire();  quiet = true; }
   else if(id==='kit_axe'){       did = kitAxe();            quiet = true; }
+  // ---- ⚒️ crafted abilities (2026-08-07) ----
+  else if(id==='gorilla_club'){  did = kitClub();          quiet = true; }
+  else if(id==='cobra_dagger'){  did = kitDagger();        quiet = true; }
+  else if(id==='fire_wand'){     did = kitFireWand();      quiet = true; }
+  else if(id==='poison_bottle'){ did = kitPoisonBottle();  quiet = true; }
+  else if(id==='slime_flask'){   did = kitSlimeFlask();    quiet = true; }
+  else if(id==='croc_grabber'){  did = kitCrocGrabber();   quiet = true; }
   else if(id==='kit_hammer'){    did = kitHammer();         quiet = true; }
   else { did = false; }
   if(did){
@@ -10116,6 +10372,7 @@ function clearFireTorch(){
 //  • Axe      → a transient swing mesh in kitSwings[] (self-disposes; cleared on reset/game-over)
 const SPEAR_COST = { rock:1, wood:2 };   // per-throw material cost (matches the wall economy — no cooldown, materials gate it)
 function kitThrowSpear(){
+  breakCloak();   // 🥷 attacking gives you away
   // Material gate — refuse + name the shortfall, no lockout on a failed throw
   // (return false → useActiveAbility skips cooldown + sound), then deduct on success.
   if(rockCount < SPEAR_COST.rock || woodCount < SPEAR_COST.wood){
@@ -10160,6 +10417,7 @@ function canAfford(id){
 // throws down a gorilla; three down an elephant). 20s cooldown (generic gate).
 const BOOM = { life:1.8, reach:26, spread:8 };   // ~1.8s round trip, out ~26m, lateral swing ~8m
 function kitThrowBoomerang(){
+  breakCloak();   // 🥷 attacking gives you away
   const dir = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation); dir.y=0;
   if(dir.lengthSq()<1e-4) dir.set(0,0,-1); dir.normalize();
   const side = new THREE.Vector3(dir.z, 0, -dir.x);   // left-perpendicular → the curve's lateral swing
@@ -10274,6 +10532,7 @@ const CROSSBOW_SPEED = 110;                       // fast, sniper-ish bolt
 const CROSSBOW_RANGE = Math.round(WORLD*0.65);    // ~325 — almost all the way across the map
 const CROSSBOW_COST  = { horn:1 };                // 1 rhino horn per bolt (unlimited was too strong — Steven)
 function kitFireCrossbow(){
+  breakCloak();   // 🥷 attacking gives you away
   // Ammo gate — refuse + name the shortfall, no lockout on a failed shot
   // (return false → useActiveAbility skips cooldown + sound), then deduct on success.
   if(hornCount < CROSSBOW_COST.horn){
@@ -10650,6 +10909,38 @@ function updatePlacementGhosts(){
   }
 }
 
+// ---- 🧱 THE CONSTRUCTOR, split out from the placer (2026-08-07) ----------------
+// `placeKitWall` answers "may I, and can I afford it"; THIS answers "build one, here".
+// The split exists so the SAVE can rebuild a fort through the exact same construction
+// path the player used — same mesh, same userData, same `pushWallAABB` registration —
+// rather than a second copy that agrees by habit until someone edits one of them.
+// It is the same "one solver, two callers" rule `wallPlacementPlan` already follows.
+//
+// ⚠ `yBase` is the wall's BASE (terrain, or a roof top), NOT its centre — matching
+// what `wallPlacementPlan()` returns. `hp` is optional and only the loader passes it:
+// a wall the player has half-smashed must come back half-smashed.
+function buildWallAt(x, yBase, z, ry, stone, hp){
+  const geo = new THREE.BoxGeometry(WALL_W, WALL_H, WALL_D);
+  const mat = new THREE.MeshLambertMaterial({color: stone?0x8b8e93:0x9a6b45, flatShading: stone});   // grey stone vs fresh-cut palisade
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(x, yBase + WALL_H*0.5, z);
+  mesh.rotation.y = ry; mesh.castShadow = true; mesh.name = 'wall';
+  mesh.userData.stone = stone;
+  mesh.userData.maxHp = stone ? WALL_HP.stone : WALL_HP.wood;
+  mesh.userData.hp    = (hp == null) ? mesh.userData.maxHp
+                                     : clamp(hp, 1, mesh.userData.maxHp);
+  scene.add(mesh);
+  wallMeshes.push(mesh);
+  pushWallAABB(mesh);                                          // 🏢 the ONE registration point (sets .elevated)
+  // PERMANENT — it comes down only when something SMASHES it, the player fells it, or
+  // the run resets. Unequipping the wall tool no longer touches it (2026-07-30i):
+  // the player has already paid the materials, so the wall is a PRODUCT, not an
+  // active effect of holding the tool. `ability` is informational now (which material
+  // built it) — nothing filters on it.
+  kitWalls.push({ mesh, ability: stone?'kit_stonewall':'kit_wall' });
+  return mesh;
+}
+
 // Place a player barrier. stone=false → wood palisade (elephants/gorillas smash it,
 // axe/hammer fell it, costs 2 wood); stone=true → stone wall (unbreakable by
 // elephants/gorillas — only a Hammer brings it down, costs 5 rocks). Both share the
@@ -10666,23 +10957,7 @@ function placeKitWall(stone){
   } else {
     if(woodCount < WALL_COST.wood){ showKillfeed('🪵 Need '+WALL_COST.wood+' wood (have '+woodCount+')'); return false; }
   }
-  const geo = new THREE.BoxGeometry(WALL_W, WALL_H, WALL_D);
-  const mat = new THREE.MeshLambertMaterial({color: stone?0x8b8e93:0x9a6b45, flatShading: stone});   // grey stone vs fresh-cut palisade
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(plan.x, plan.y + WALL_H*0.5, plan.z);      // plan.y is the BASE — the roof top, or the terrain
-  mesh.rotation.y = plan.yaw; mesh.castShadow = true; mesh.name = 'wall';
-  mesh.userData.stone = stone;
-  mesh.userData.maxHp = stone ? WALL_HP.stone : WALL_HP.wood;
-  mesh.userData.hp    = mesh.userData.maxHp;
-  scene.add(mesh);
-  wallMeshes.push(mesh);
-  pushWallAABB(mesh);                                          // 🏢 the ONE registration point (sets .elevated)
-  // PERMANENT — it comes down only when something SMASHES it, the player fells it, or
-  // the run resets. Unequipping the wall tool no longer touches it (2026-07-30i):
-  // the player has already paid the materials, so the wall is a PRODUCT, not an
-  // active effect of holding the tool. `ability` is informational now (which material
-  // built it) — nothing filters on it.
-  kitWalls.push({ mesh, ability: stone?'kit_stonewall':'kit_wall' });
+  buildWallAt(plan.x, plan.y, plan.z, plan.yaw, stone);
   if(stone){ rockCount -= WALL_COST.rock; updateRockHUD(); }             // deduct materials (HUD reads counters in updateHUD)
   else     { woodCount -= WALL_COST.wood; updateWoodHUD(); }
   playSound('place');
@@ -10735,9 +11010,19 @@ function placeKitBramble(){
   if(brambleCount < BRAMBLE.COST){
     showKillfeed('🌿 Need '+BRAMBLE.COST+' bramble (have '+brambleCount+') — chop a berry bush with the axe');
     return false; }
-  const pos = new THREE.Vector3(plan.x, 0, plan.z);
-  const gy = plan.y;
-  const g = new THREE.Group(); g.position.set(pos.x, gy, pos.z); g.rotation.y = plan.yaw;
+  buildBrambleAt(plan.x, plan.y, plan.z, plan.yaw);
+  brambleCount -= BRAMBLE.COST;
+  playSound('place');
+  return true;
+}
+// ---- 🌿 THE CONSTRUCTOR, split out from the placer (2026-08-07) ----------------
+// Same split as buildWallAt / buildRoofAt so the save rebuilds fences the player's way.
+// ⚠ The tangle's 31 parts are all placed with `rand()`, so a RESTORED fence is a
+// different tangle of the same size in the same spot. That is cosmetic and deliberate:
+// the gameplay surface is `pos` + BRAMBLE.RADIUS, and baking 31 offsets into every
+// saved fence would cost ~1 KB each to reproduce a bush nobody can tell apart.
+function buildBrambleAt(x, gy, z, ry){
+  const g = new THREE.Group(); g.position.set(x, gy, z); g.rotation.y = ry;
   const vineM  = new THREE.MeshLambertMaterial({color:0x40361f});
   const thornM = new THREE.MeshLambertMaterial({color:0x8a7a5e});
   const leafM  = new THREE.MeshLambertMaterial({color:0x35471f});
@@ -10759,10 +11044,9 @@ function placeKitBramble(){
   }
   g.name = 'bramble';
   scene.add(g);
-  kitBrambles.push({ id: ++_brambleId, mesh:g, pos:new THREE.Vector3(pos.x, gy, pos.z) });
-  brambleCount -= BRAMBLE.COST;
-  playSound('place');
-  return true;
+  const b = { id: ++_brambleId, mesh:g, pos:new THREE.Vector3(x, gy, z) };
+  kitBrambles.push(b);
+  return b;
 }
 // Is (x,z) inside any bramble? Returns the fence, or null. Used by the movement
 // multiplier and by the per-frame damage pass.
@@ -10778,7 +11062,17 @@ function brambleAt(x, z){
 // Folded into waterSpeedMul's callers via brambleSpeedMul so every mover picks it up at
 // the same nine sites the water rule uses. (Deliberately not stacked: the *damage* is
 // what scales with the number of fences, the slow is a binary "you are in thorns".)
-function brambleSpeedMul(x, z){ return brambleAt(x,z) ? BRAMBLE.SPEED : 1; }
+// ⚠ THIS IS THE GROUND-HAZARD MULTIPLIER, not just the bramble one — the name is kept
+// because it has TWELVE call sites, one in every mover's step function, and that single
+// choke point is exactly why the Slime Flask needed no per-creature wiring at all. It now
+// returns bramble × slime; both are "the ground here is bad", both compose with
+// waterSpeedMul at every one of those sites, and a hazard added here reaches every animal
+// in the game for free. `hazardSpeedMul` is the honest name and is what new code should
+// call; `brambleSpeedMul` stays as its alias so the twelve sites did not have to churn.
+function hazardSpeedMul(x, z){
+  return (brambleAt(x,z) ? BRAMBLE.SPEED : 1) * slimeSpeedMul(x, z);
+}
+function brambleSpeedMul(x, z){ return hazardSpeedMul(x, z); }
 
 // ---- 🧬 THE CREATURE REGISTRY ------------------------------------------------
 // ⚠ THIS EXISTS BECAUSE OF A SHIPPED BUG. `updateBrambles` used to end with a
@@ -10931,6 +11225,172 @@ function updateBrambles(dt){
 function kitPlaceBramble(){ return placeKitBramble(); }
 
 // =====================================================================
+//  🔥🫧 GROUND PATCHES — burning ground and slick ground  (2026-08-07)
+// =====================================================================
+// Two of the crafted items put a lasting EFFECT on the ground rather than damage on an
+// animal: the Fire Wand sets things alight, the Slime Flask glazes the dirt. Built as
+// ONE system with a `kind`, not as two, because they are the same object with different
+// numbers — a circle on the map, a lifetime, a per-frame effect on whatever is inside.
+// The bramble fence is the third member of that family and is deliberately NOT folded in:
+// it is a placed, paid-for, permanent structure with per-fence cooldown bookkeeping,
+// where these are transient FX.
+//
+// ⚠ DISPOSAL: every patch is one Group with its own geometries and materials, freed by
+// killObj on exactly two paths — expiry in updateGroundPatches, and clearGroundPatches()
+// from resetGame. Nothing is shared between patches, so there is no keep-flag subtlety.
+const PATCH = {
+  MAX: 20,          // hard cap — fire SPREADS, and an uncapped spread is a map-wide fire
+  FIRE:  { r:3.2, life: 9, dps:14, colour:0xff6a1a, icon:'🔥' },
+  SLIME: { r:3.6, life:16, dps: 0, colour:0xe58fb0, icon:'🫧', slow:0.5 },
+  SPREAD_R:    5.0,   // how far a fire reaches for the next thing to catch
+  SPREAD_AT:   0.8,   // …and when it tries, once, in seconds after it starts
+  GRASS_RELIGHT: 40,  // a burnt grass clump can't re-catch for this long — the one thing
+                      // standing between "fire spreads" and "the whole savannah is alight"
+};
+let groundPatches = [];   // { kind, x, z, r, t, life, mesh, spread }
+
+function makePatchMesh(kind, r){
+  const C = PATCH[kind];
+  const g = new THREE.Group();
+  // a stained disc on the ground…
+  const discM = new THREE.MeshBasicMaterial({ color:C.colour, transparent:true,
+                                              opacity: kind==='FIRE' ? 0.42 : 0.55,
+                                              depthWrite:false });
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 14), discM);
+  disc.rotation.x = -Math.PI/2; disc.position.y = 0.06; g.add(disc);
+  // …plus four flames, for fire only. Slime is a slick: it has no height.
+  if(kind === 'FIRE'){
+    for(let i=0;i<4;i++){
+      const fm = new THREE.MeshBasicMaterial({ color: i%2 ? 0xffc04a : 0xff5a12,
+                                               transparent:true, opacity:0.8, depthWrite:false });
+      const f = new THREE.Mesh(new THREE.ConeGeometry(0.42, 1.5, 6), fm);
+      const a = (i/4)*Math.PI*2;
+      f.position.set(Math.cos(a)*r*0.45, 0.75, Math.sin(a)*r*0.45);
+      g.add(f);
+    }
+  }
+  return g;
+}
+// Light/glaze the ground at (x,z). Returns the patch, or null if the cap is full or one
+// is already burning there — the second guard is what stops a fire re-igniting itself
+// through its own spread pass and looping forever.
+function addGroundPatch(kind, x, z){
+  if(groundPatches.length >= PATCH.MAX) return null;
+  const C = PATCH[kind];
+  for(let i=0;i<groundPatches.length;i++){
+    const p = groundPatches[i];
+    if(p.kind === kind && Math.hypot(p.x-x, p.z-z) < C.r*0.7) return null;
+  }
+  const g = makePatchMesh(kind, C.r);
+  const gy = terrainY(x, z);
+  g.position.set(x, gy, z);
+  g.name = 'patch';
+  scene.add(g);
+  const p = { kind, x, z, r:C.r, t:0, life:C.life, mesh:g, spread:false };
+  groundPatches.push(p);
+  return p;
+}
+// Is (x,z) on a slick? Folded into the shared movement multiplier below.
+function slimeSpeedMul(x, z){
+  for(let i=0;i<groundPatches.length;i++){
+    const p = groundPatches[i];
+    if(p.kind !== 'SLIME') continue;
+    const dx = x-p.x, dz = z-p.z;
+    if(dx*dx + dz*dz < p.r*p.r) return PATCH.SLIME.slow;
+  }
+  return 1;
+}
+// ⚠ FIRE SPREADS TO BRAMBLE AND TO TALL GRASS, and that is the Fire Wand's whole point:
+// Steven asked for a wand that "lights things (bramble/grass) on fire", i.e. a weapon
+// that acts on the MAP. Bounded three ways, because an unbounded fire on a 500×500 map of
+// grass is a game-ending bug rather than a feature:
+//   1. PATCH.MAX caps how many fires can exist at once, full stop.
+//   2. A bramble that burns is CONSUMED — it cannot re-light, because it is gone.
+//   3. A grass clump that burns is put on a GRASS_RELIGHT cooldown, so a fire cannot
+//      ping-pong between two neighbouring clumps forever.
+// Each fire runs this exactly once (`p.spread`), SPREAD_AT seconds in, so the fire visibly
+// takes hold before it jumps.
+function spreadFire(p){
+  p.spread = true;
+  // 🌿 brambles first — they are the player's own structures and burning them is the
+  // tactically interesting half (yours or an enemy's, the fire does not care).
+  // ⚠ BURNING UP AND SPREADING ARE TWO DIFFERENT THINGS, and conflating them cost a bug.
+  // `addGroundPatch` refuses to start a fire within 0.7×r of an existing one — correct,
+  // and the guard that stops a fire re-igniting itself forever. But the first version
+  // made the bramble's destruction CONDITIONAL on that call succeeding, so a fence
+  // standing 1 m inside the flames (the overwhelmingly common case — you shot the fence)
+  // was refused a new patch and therefore never burned at all. Measured: bramble still
+  // standing after 2 s in a fire. The fence is consumed because it is IN a fire; whether
+  // that fire also seeds a new one is a separate question.
+  for(let i=kitBrambles.length-1;i>=0;i--){
+    const b = kitBrambles[i];
+    if(Math.hypot(b.pos.x-p.x, b.pos.z-p.z) > PATCH.SPREAD_R) continue;
+    addGroundPatch('FIRE', b.pos.x, b.pos.z);         // may be refused — that is fine
+    killObj(b.mesh); kitBrambles.splice(i, 1);        // consumed — the ONE removal path
+    if(Math.hypot(player.pos.x-b.pos.x, player.pos.z-b.pos.z) < 60)
+      showKillfeed('🔥 The bramble fence goes up in flames!');
+  }
+  // 🌾 …then tall grass. Same rule: a clump inside the flames is burning, so it takes the
+  // relight cooldown whether or not it managed to seed its own patch.
+  for(let i=0;i<tallGrassClumps.length;i++){
+    const c = tallGrassClumps[i];
+    if((c._burnT||0) > 0) continue;
+    if(Math.hypot(c.x-p.x, c.z-p.z) > PATCH.SPREAD_R) continue;
+    addGroundPatch('FIRE', c.x, c.z);
+    c._burnT = PATCH.GRASS_RELIGHT;
+  }
+}
+function updateGroundPatches(dt){
+  for(let i=0;i<tallGrassClumps.length;i++){
+    const c = tallGrassClumps[i];
+    if(c._burnT > 0) c._burnT -= dt;
+  }
+  for(let i=groundPatches.length-1;i>=0;i--){
+    const p = groundPatches[i];
+    p.t += dt;
+    if(p.t >= p.life){ killObj(p.mesh); groundPatches.splice(i,1); continue; }
+    // flicker + fade out over the last second, so a fire dying reads as a fire dying
+    const fade = Math.min(1, (p.life - p.t));
+    p.mesh.children.forEach((c, k)=>{
+      if(!c.material) return;
+      const base = (k===0) ? (p.kind==='FIRE'?0.42:0.55) : 0.8;
+      c.material.opacity = base * fade;
+      if(p.kind==='FIRE' && k>0) c.scale.y = 0.75 + Math.abs(Math.sin(p.t*7 + k))*0.5;
+    });
+    if(p.kind === 'FIRE'){
+      if(!p.spread && p.t >= PATCH.SPREAD_AT) spreadFire(p);
+      // ---- BURN whatever is standing in it ----
+      const dmg = PATCH.FIRE.dps * dt, R2 = p.r*p.r;
+      // ⚠ Same airborne rule the brambles use: a fire is ON THE GROUND, so a player on a
+      // roof or up a tree, and a bird in the air, are clear of it.
+      if(gameState==='playing' && player.health>0 && !playerOffGround()){
+        const dx = player.pos.x-p.x, dz = player.pos.z-p.z;
+        if(dx*dx + dz*dz < R2){
+          player.health -= dmg;
+          player._burnMsgT = (player._burnMsgT||0) - dt;
+          if(player._burnMsgT <= 0){ player._burnMsgT = 1.0;
+            showKillfeed('🔥 You are BURNING — get out of the fire!');
+            shakeTime = Math.max(shakeTime, 0.14); shakeAmt = 0.004; }
+        }
+      }
+      forEachCreature((e)=>{
+        if((e.pos.y - terrainY(e.pos.x, e.pos.z)) > 0.5 && !poolAt(e.pos.x, e.pos.z)) return;
+        const dx = e.pos.x-p.x, dz = e.pos.z-p.z;
+        if(dx*dx + dz*dz >= R2) return;
+        e.health -= dmg; e.flashTimer = 0.15;
+        if(e.health <= 0 && !e._burnNoted){ e._burnNoted = true;
+          showKillfeed('🔥 The fire kills the '+(e.label || e.species || 'animal')+'!'); }
+      });
+    }
+  }
+}
+function clearGroundPatches(){
+  groundPatches.forEach(p=>killObj(p.mesh));
+  groundPatches.length = 0;
+  for(let i=0;i<tallGrassClumps.length;i++) tallGrassClumps[i]._burnT = 0;
+}
+
+// =====================================================================
 //  🏠 ROOF  (2026-07-31) — a flat walkable platform placed over your feet
 // =====================================================================
 // Steven: "add roofs — when you activate it and click it, it spawns right under your
@@ -10966,6 +11426,29 @@ function roofPlacementBlocked(){
   if(player.swimming)  return 'Not while swimming';
   return null;
 }
+// ---- 🏠 THE CONSTRUCTOR, split out from the placer (2026-08-07) ----------------
+// Same split as buildWallAt, and for the same reason: the save rebuilds a house
+// through the player's own construction path. ⚠ `yBase` is the slab's UNDERSIDE (what
+// `roofPlacementPlan()` returns); a Box is centred, hence the half-thickness lift.
+// ⚠ The AABB must be computed AFTER the planks are added and the mesh is positioned —
+// `setFromObject` walks children, and a box measured before either would be the wrong
+// size in the wrong place, which is the box `wallPlacementPlan` snaps storeys to.
+function buildRoofAt(x, yBase, z, hp){
+  const m = new THREE.Mesh(new THREE.BoxGeometry(ROOF.SIZE, ROOF.THICK, ROOF.SIZE),
+              new THREE.MeshLambertMaterial({color:0x8a6a44}));
+  m.position.set(x, yBase + ROOF.THICK*0.5, z);
+  m.castShadow = true; m.receiveShadow = true; m.name = 'roof';
+  m.userData.roof = true; m.userData.maxHp = WALL_HP.wood;
+  m.userData.hp = (hp == null) ? WALL_HP.wood : clamp(hp, 1, WALL_HP.wood);
+  const plankM = new THREE.MeshLambertMaterial({color:0x6f5334});
+  for(let i=-1;i<=1;i++){
+    const pk = new THREE.Mesh(new THREE.BoxGeometry(ROOF.SIZE*0.98, ROOF.THICK*0.35, 0.1), plankM);
+    pk.position.set(0, ROOF.THICK*0.52, i*ROOF.SIZE*0.3); m.add(pk);
+  }
+  scene.add(m);
+  kitRoofs.push({ mesh:m, aabb:new THREE.Box3().setFromObject(m) });
+  return m;
+}
 function placeKitRoof(){
   // 👻 ONE SOLVER, TWO CALLERS — the ghost draws this same plan, so a green preview and
   // a successful place are the same computation rather than two that agree by habit.
@@ -10974,19 +11457,7 @@ function placeKitRoof(){
   if(kitRoofs.length >= ROOF.MAX){ showKillfeed('🏠 Roof limit ('+ROOF.MAX+') reached'); return false; }
   if(woodCount < ROOF.COST.wood){
     showKillfeed('🏠 Need '+ROOF.COST.wood+' wood (have '+woodCount+')'); return false; }
-  const y = plan.y + ROOF.THICK*0.5;     // plan.y is the slab's UNDERSIDE; a Box is centred
-  const m = new THREE.Mesh(new THREE.BoxGeometry(ROOF.SIZE, ROOF.THICK, ROOF.SIZE),
-              new THREE.MeshLambertMaterial({color:0x8a6a44}));
-  m.position.set(plan.x, y, plan.z);
-  m.castShadow = true; m.receiveShadow = true; m.name = 'roof';
-  m.userData.roof = true; m.userData.maxHp = WALL_HP.wood; m.userData.hp = WALL_HP.wood;
-  const plankM = new THREE.MeshLambertMaterial({color:0x6f5334});
-  for(let i=-1;i<=1;i++){
-    const pk = new THREE.Mesh(new THREE.BoxGeometry(ROOF.SIZE*0.98, ROOF.THICK*0.35, 0.1), plankM);
-    pk.position.set(0, ROOF.THICK*0.52, i*ROOF.SIZE*0.3); m.add(pk);
-  }
-  scene.add(m);
-  kitRoofs.push({ mesh:m, aabb:new THREE.Box3().setFromObject(m) });
+  buildRoofAt(plan.x, plan.y, plan.z);
   woodCount -= ROOF.COST.wood; updateWoodHUD();
   playSound('place');
   showKillfeed('🏠 Roof up — shelter under it, or climb on top');
@@ -11302,7 +11773,7 @@ function crocPickTarget(C){
     if(d < bd){ bd=d; best=e; bk=kind; }
   };
   const preach = (C.lungeCd<=0 || C.state==='LUNGE') ? crocInLandRange : crocInRange;
-  if(gameState==='playing' && crocGrab.graceT<=0 && preach(C, player.pos.x, player.pos.z)){
+  if(gameState==='playing' && !playerUnseen() && crocGrab.graceT<=0 && preach(C, player.pos.x, player.pos.z)){
     const d = Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z);
     if(d < bd){ bd=d; best=player; bk='player'; }
   }
@@ -12138,7 +12609,7 @@ function hippoFoe(kind){
 }
 function hippoPickTarget(H, radius){
   let best = null, bd = radius;
-  if(gameState==='playing' && player.health>0 && !playerOffGround()){
+  if(gameState==='playing' && player.health>0 && !playerOffGround() && !playerUnseen()){
     const d = Math.hypot(player.pos.x-H.pos.x, player.pos.z-H.pos.z);
     if(d < bd){ bd = d; best = { ent:player, kind:'player' }; }
   }
@@ -12508,6 +12979,29 @@ const BONE_KINDS = {
   cobra_green:   { label:'green cobra skin',                    icon:'🐍', colour:0x76d13a, form:'skin'  },
   serpent_spine: { label:'serpent spine',                       icon:'💀', colour:0xdbd0b2, form:'spine' },
   worm:          { label:'worm slime', plural:'worm slime',     icon:'🫧', colour:0xe58fb0, form:'slime' },
+  // --- 🦷 COBRA FANGS, one per colour morph (2026-08-07) ------------------------
+  // ⚠ THESE DID NOT EXIST AND STEVEN'S RECIPE TABLE ASSUMES THEY DO. He asked for a
+  // "red / green / blue / purple cobra fang" per item; the game only ever dropped cobra
+  // SKIN, in exactly two flavours (plain + green). So the fangs are new drops, and the
+  // colour names map onto the five shipped morphs like this:
+  //     red    → crimson      green → acid       purple → violet
+  //     blue   → midnight  ⚠ this is `black` in COBRA_COLORS, and Steven is right to
+  //                          call it blue: its own authoring note reads "the current
+  //                          dark blue", belly #020b46. The id is the odd one, not him.
+  // ⚠ THE GOLD FANG IS A WILDCARD, and that is a design call. Gold is the 5% rare and a
+  // 1500-HP boss; dropping a fifth fang that unlocks nothing would make killing the
+  // hardest thing in the game the least rewarding cobra kill available. So it SUBSTITUTES
+  // for any of the four — see craftMatHave/craftMatSpend. One trophy, four doors.
+  // ⚠ COLOURED DISCS, NOT 🦷 — and the reason is the shop card. `craftCostStr` renders a
+  // recipe as "1 <icon>", so five fangs all wearing 🦷 made the Fire Wand, the Dagger, the
+  // Poison Bottle and the Invisibility Cloak read as the SAME requirement, and collided
+  // with the lion tooth's 🦷 on top of that. The disc IS the identifying information here:
+  // which cobra you have to find is the entire difficulty of these four recipes.
+  cobra_fang_crimson:  { label:'red cobra fang',    icon:'🔴', colour:0xffd9d0, form:'fang' },
+  cobra_fang_acid:     { label:'green cobra fang',  icon:'🟢', colour:0xd6f5c0, form:'fang' },
+  cobra_fang_midnight: { label:'blue cobra fang',   icon:'🔵', colour:0xcfd8f5, form:'fang' },
+  cobra_fang_violet:   { label:'purple cobra fang', icon:'🟣', colour:0xe2cff5, form:'fang' },
+  cobra_fang_gold:     { label:'gold cobra fang',   icon:'🟡', colour:0xf5e2a8, form:'fang' },
   // --- prey: bones, as Steven asked. The grazers keep the skin-toned palette. ---
   giraffe:     { label:'giraffe bone',    icon:'💀', colour:0xe8dcc0, form:'bone' },  // cream/beige
   zebra:       { label:'zebra bone',      icon:'💀', colour:0xcfc3ae, form:'bone' },
@@ -12535,9 +13029,22 @@ function snakeBoneKey(S){
   if(v === 'cobra') return (S.colour && S.colour.id === 'acid') ? 'cobra_green' : 'cobra';
   return v === 'worm' ? 'worm' : 'python';
 }
+// 🦷 The fang a cobra of this morph leaves. Null for pythons and worms — neither has the
+// hollow front fangs the recipes are about, and neither has a morph table.
+function cobraFangKey(S){
+  if(!S.v || S.v.key !== 'cobra') return null;
+  const id = (S.colour && S.colour.id) || 'midnight';
+  const k = 'cobra_fang_' + id;
+  return BONE_KINDS[k] ? k : null;
+}
 function snakeLootKeys(S){
   const skin = snakeBoneKey(S);
-  return skin === 'worm' ? ['worm'] : [skin, 'serpent_spine'];
+  if(skin === 'worm') return ['worm'];
+  // ⚠ A cobra now leaves THREE things: skin, spine and its morph's fang. The skin keys
+  // are untouched on purpose — they are a shipped drop with a shipped test, and
+  // re-pointing them at the morph table would silently re-tune loot Steven already has.
+  const fang = cobraFangKey(S);
+  return fang ? [skin, 'serpent_spine', fang] : [skin, 'serpent_spine'];
 }
 // The remains themselves. Per-drop geometry + material so killObj frees the lot and no
 // two drops can share a resource that disposing one would yank from the other.
@@ -12929,6 +13436,10 @@ function nearestAnimalInFront(range, minDot){
 const MELEE_TOOL = {
   axe:    { icon:'🪓', name:'axe',    kill:'cleaved', hit:'chops'   },
   hammer: { icon:'🔨', name:'hammer', kill:'crushed', hit:'batters' },
+  // ⚒️ crafted melee (2026-08-07) — both ride dealKitMelee unchanged, so every animal's
+  // proper wound + retaliation hooks fire exactly as they do for the axe and the hammer.
+  club:   { icon:'🦴', name:'club',   kill:'shattered', hit:'clubs' },
+  dagger: { icon:'🗡️', name:'dagger', kill:'opened',    hit:'slashes' },
 };
 // Apply a heavy melee blow, reusing each animal's proper wound + retaliation hooks.
 // `tool` is a MELEE_TOOL entry so the message carries the RIGHT tool name + verb, and
@@ -12938,6 +13449,7 @@ const MELEE_TOOL = {
 // ANYTHING, not even the elephant or the rhino: hit a lion and it keeps mauling you.
 function dealKitMelee(hit, dmg, tool){
   const o = hit.o;
+  breakCloak();          // 🥷 THE choke point for every melee weapon — axe, hammer, club, dagger
   o.flashTimer = 0.25;
   // 🏷️ a named animal dies BY NAME — "You slew Bob the black cobra". Captured before
   // the branches so every one of them inherits it without a per-branch edit.
@@ -13209,8 +13721,145 @@ function updateImpactFlashes(dt){
 }
 
 // ---- Per-frame ability tick: cooldowns, buff timers, EQUIP mods, torch flicker, kit FX ----
+// =====================================================================
+//  ⚒️ THE CRAFTED ABILITIES  (2026-08-07)
+// =====================================================================
+// ⚠ EVERY ONE OF THESE REUSES AN EXISTING SEAM rather than growing a new one — that is
+// deliberate, and it is why eleven items did not cost eleven subsystems:
+//   club / dagger      → dealKitMelee + MELEE_TOOL (the axe and hammer's own path)
+//   wand / bottle / flask → thrownRocks[] with a `splat` flag (the spear's own array,
+//                        and therefore the spear's own disposal path)
+//   grabber            → nearestAnimalInFront (the melee aim scan)
+//   fire / slime       → groundPatches (one new system, shared by two items)
+//   poison             → applyCreatureVenom / applyVenom (the cobras' own venom)
+
+// ---- 🦴 CLUB and 🗡️ DAGGER: the same function twice, with different numbers ----
+function kitSwingMelee(reach, dmg, tool){
+  spawnAxeSwing();
+  const target = nearestAnimalInFront(reach, 0.30);
+  if(target){
+    breakCloak();                                   // 🥷 attacking gives you away
+    dealKitMelee(target, dmg, tool);
+    shakeTime = Math.max(shakeTime, 0.14); shakeAmt = 0.005;
+  }
+  playSound('place');
+  return true;                                      // a whiff still costs the cooldown
+}
+function kitClub(){   return kitSwingMelee(CRAFT.CLUB_REACH,   CRAFT.CLUB_DMG,   MELEE_TOOL.club); }
+function kitDagger(){ return kitSwingMelee(CRAFT.DAGGER_REACH, CRAFT.DAGGER_DMG, MELEE_TOOL.dagger); }
+
+// ---- 🔥 ☠️ 🫧 THE THROWN "SPLAT" WEAPONS ----
+// All three ride thrownRocks[] like the spear, flagged `splat` so updateThrownRocks hands
+// them to updateSplatProjectile instead of the per-species damage chain. They detonate on
+// contact with the GROUND or with anything alive — an area weapon has no reason to care
+// which species it touched, which is why they need none of that chain's twelve blocks.
+function throwSplat(kind, speed, colour, radius){
+  const dir = new THREE.Vector3(0,0,-1).applyEuler(camera.rotation).normalize();
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.22, 7, 6),
+              new THREE.MeshBasicMaterial({ color: colour }));
+  m.position.copy(camera.position).addScaledVector(dir, 0.9);
+  scene.add(m);
+  thrownRocks.push({ mesh:m, vel:dir.clone().multiplyScalar(speed), dist:0,
+                     splat:kind, splatR:radius });
+  breakCloak();
+  playSound('place');
+  return true;
+}
+function kitFireWand(){     return throwSplat('FIRE',   CRAFT.FIRE_SPEED,   0xff6a1a, 2.2); }
+function kitPoisonBottle(){ return throwSplat('POISON', CRAFT.POISON_SPEED, 0x9a4fd0, CRAFT.POISON_R); }
+function kitSlimeFlask(){   return throwSplat('SLIME',  CRAFT.POISON_SPEED, 0xe58fb0, 2.6); }
+
+// Ballistic flight + detonation. ⚠ It removes itself from thrownRocks and frees its mesh
+// on EVERY exit path (ground, body, out of range) — the same contract the spear has, so
+// no new disposal surface is introduced by three new projectiles.
+function updateSplatProjectile(r, dt, i){
+  r.mesh.position.addScaledVector(r.vel, dt);
+  r.dist += r.vel.length()*dt;
+  r.vel.y -= 9*dt;                                  // a lobbed gourd, not a flat bolt
+  const p = r.mesh.position;
+  let boom = p.y <= terrainY(p.x, p.z) + 0.15;      // hit the dirt
+  if(!boom){                                        // …or hit something alive
+    forEachCreature(e=>{ if(!boom && projHit(r, e)) boom = true; });
+  }
+  if(!boom && r.dist > 70) boom = true;             // …or ran out of throw
+  if(!boom) return;
+  detonateSplat(r.splat, p.x, p.z, r.splatR);
+  killObj(r.mesh); thrownRocks.splice(i, 1);
+}
+function detonateSplat(kind, x, z, radius){
+  if(kind === 'FIRE'){
+    addGroundPatch('FIRE', x, z);
+    // the bolt's own impact damage, separate from the fire it leaves behind
+    const R2 = radius*radius;
+    forEachCreature(e=>{
+      const dx = e.pos.x-x, dz = e.pos.z-z;
+      if(dx*dx + dz*dz > R2) return;
+      e.health -= CRAFT.FIRE_DMG; e.flashTimer = 0.25;
+      e.lastHitBy = player; e.lastHitKind = 'player';
+    });
+    showKillfeed('🔥 The fire takes hold!');
+  } else if(kind === 'SLIME'){
+    addGroundPatch('SLIME', x, z);
+    showKillfeed('🫧 Slick slime across the ground');
+  } else {
+    // ☠️ POISON — the cobras' own venom, applied wholesale. It never kills by itself
+    // (VENOM.FLOOR is 1 HP) but a poisoned animal is dead to the next thing that touches
+    // it, which is exactly what the cobra's venom already does to the other predators.
+    const R2 = radius*radius; let n = 0;
+    forEachCreature(e=>{
+      const dx = e.pos.x-x, dz = e.pos.z-z;
+      if(dx*dx + dz*dz > R2) return;
+      applyCreatureVenom(e); e.flashTimer = 0.25;
+      e.lastHitBy = player; e.lastHitKind = 'player';
+      n++;
+    });
+    // ⚠ IT POISONS YOU TOO if you stand in your own cloud — the same call the bramble
+    // made (it hurts the player as well) and for the same reason: an area weapon with no
+    // downside is a free win button.
+    if(gameState==='playing' && !playerOffGround() &&
+       Math.hypot(player.pos.x-x, player.pos.z-z) < radius) applyVenom();
+    showKillfeed('☠️ The bottle bursts — poison cloud'+(n?(' ('+n+' caught)'):''));
+  }
+}
+
+// ---- 🪝 CROC GRABBER: haul a creature to you ----
+// ⚠ ONE global hook, exactly like `crocGrab` — you have one line and it holds one thing,
+// so there is no list to leak and no way to chain-pull a herd.
+let crocHook = { ent:null, t:0 };
+function kitCrocGrabber(){
+  const target = nearestAnimalInFront(CRAFT.GRAB_RANGE, 0.985);   // tight cone — you AIM this
+  if(!target){ showKillfeed('🪝 Nothing in the line\'s reach'); return false; }
+  crocHook.ent = target.o; crocHook.t = CRAFT.GRAB_TIME;
+  breakCloak();
+  target.o.lastHitBy = player; target.o.lastHitKind = 'player';   // it knows who did it
+  showKillfeed('🪝 Hooked the '+(target.o.label || target.kind)+' — hauling it in!');
+  playSound('rustle');
+  return true;
+}
+function updateCrocHook(dt){
+  if(!crocHook.ent){ return; }
+  const e = crocHook.ent;
+  crocHook.t -= dt;
+  if(crocHook.t <= 0 || !(e.health > 0) || e.dying){ crocHook.ent = null; return; }
+  const dx = player.pos.x-e.pos.x, dz = player.pos.z-e.pos.z, d = Math.hypot(dx,dz);
+  if(d < 2.0){ crocHook.ent = null; return; }                    // it has arrived
+  const step = Math.min(CRAFT.GRAB_PULL*dt, d-1.8);
+  const nx = e.pos.x + dx/d*step, nz = e.pos.z + dz/d*step;
+  // ⚠ Dragged THROUGH the world, not over it: the same swept wall test every mover uses,
+  // so you cannot yank a lion through your own palisade.
+  if(!segCrossesWall(e.pos.x, e.pos.z, nx, nz, e.hitR || 1.0)){
+    e.pos.x = nx; e.pos.z = nz;
+    e.pos.y = terrainY(e.pos.x, e.pos.z);
+    if(e.mesh) e.mesh.position.copy(e.pos);
+  } else crocHook.ent = null;                                    // it snagged — line drops
+}
+
 function updateAbilities(dt){
   for(const k in abilityCd){ if(abilityCd[k]>0) abilityCd[k] = Math.max(0, abilityCd[k]-dt); }
+  if((player._cloakBreak||0) > 0) player._cloakBreak -= dt;   // 🥷 cloak re-forms
+  updateCrocHook(dt);
+  updateGroundPatches(dt);
+  updateRetaliationCloak(dt);
   if(buffs.adrenaline>0) buffs.adrenaline = Math.max(0, buffs.adrenaline-dt);
   if(buffs.smoke>0)      buffs.smoke      = Math.max(0, buffs.smoke-dt);
   if(buffs.eagleEye>0)   buffs.eagleEye   = Math.max(0, buffs.eagleEye-dt);
@@ -13463,19 +14112,74 @@ function equipToSlot(kind, index, id){
 // Craft-cost helpers. `craft` items cost gathered materials (teeth/tusks) instead of
 // being free — the game's first crafting sink. canCraft gates the button; the strings
 // name the cost in the catalogue and in the refusal message.
+//
+// ⚠ GENERALISED 2026-08-07. `craft` used to be exactly three hard-coded slots —
+// `{tooth, tusk, horn}` — spelled out as three explicit `if`s in FOUR places (the gate,
+// the cost string, the refusal message, the deduction). Steven's eleven new recipes are
+// keyed on eight NEW materials (five cobra fangs, quills, a python skin, worm slime…),
+// none of which has a legacy counter. Adding them the old way meant four more `if`s per
+// material, thirty-odd branches, and the certainty that one site would be missed — the
+// exact shape of the boomerang-strike-list and bramble-list bugs.
+//
+// So a recipe is now `{ <materialKey>: n }` where the key is EITHER one of the three
+// legacy slots or ANY `BONE_KINDS` key, and the four sites all go through the three
+// helpers below. The legacy `{ tusk:1 }` on the boomerang still means what it always
+// meant — those three names are checked first and route to their own counters — so no
+// shipped recipe changed.
+const LEGACY_MAT = {
+  tooth: { icon:'🦷', label:'lion tooth',    plural:'lion teeth',    get:()=>toothCount, add:n=>toothCount+=n },
+  tusk:  { icon:'🦴', label:'elephant tusk', plural:'elephant tusks',get:()=>tuskCount,  add:n=>tuskCount +=n },
+  horn:  { icon:'🦏', label:'rhino horn',    plural:'rhino horns',   get:()=>hornCount,  add:n=>hornCount +=n },
+};
+// ⚠ THE GOLD-FANG WILDCARD LIVES HERE, in ONE place, so "have" and "spend" can never
+// disagree about what counts. A gold cobra fang substitutes for any coloured one.
+const FANG_WILDCARD = 'cobra_fang_gold';
+function isCobraFang(key){ return key.indexOf('cobra_fang_') === 0 && key !== FANG_WILDCARD; }
+function craftMatHave(key){
+  const L = LEGACY_MAT[key];
+  if(L) return L.get();
+  const own = boneCounts[key] || 0;
+  return isCobraFang(key) ? own + (boneCounts[FANG_WILDCARD] || 0) : own;
+}
+// Spend `n` of `key`. Coloured fangs are spent FIRST and the gold wildcard is only
+// touched to cover a shortfall — spending the rare one while an ordinary one sits in
+// your pack would be the same "silently deleted the thing you were walking towards"
+// mistake the BONE.MAX eviction rule was rewritten to avoid.
+function craftMatSpend(key, n){
+  const L = LEGACY_MAT[key];
+  if(L){ L.add(-n); return; }
+  const own = Math.min(n, boneCounts[key] || 0);
+  if(own){ boneCounts[key] -= own; n -= own; }
+  if(n > 0 && isCobraFang(key)) boneCounts[FANG_WILDCARD] = (boneCounts[FANG_WILDCARD]||0) - n;
+}
+function craftMatIcon(key){
+  const L = LEGACY_MAT[key]; if(L) return L.icon;
+  const k = BONE_KINDS[key]; return (k && k.icon) || '❓';
+}
+function craftMatName(key, n){
+  const L = LEGACY_MAT[key];
+  if(L) return n === 1 ? L.label : L.plural;
+  const k = BONE_KINDS[key];
+  return k ? bonePlural(k, n) : key;
+}
 function canCraft(it){
   if(!it.craft) return true;
-  if(it.craft.tooth && toothCount < it.craft.tooth) return false;
-  if(it.craft.tusk  && tuskCount  < it.craft.tusk ) return false;
-  if(it.craft.horn  && hornCount  < it.craft.horn ) return false;
+  for(const key in it.craft) if(craftMatHave(key) < it.craft[key]) return false;
   return true;
 }
 function craftCostStr(it){
   const p=[];
-  if(it.craft.tooth) p.push(it.craft.tooth+' 🦷');
-  if(it.craft.tusk)  p.push(it.craft.tusk+' 🦴');
-  if(it.craft.horn)  p.push(it.craft.horn+' 🦏');
+  for(const key in it.craft) p.push(it.craft[key]+' '+craftMatIcon(key));
   return p.join(' + ');
+}
+// "1 green cobra fang (have 0)" — the refusal line, built from the same table.
+function craftShortfallStr(it){
+  const need=[];
+  for(const key in it.craft){
+    const want = it.craft[key], have = craftMatHave(key);
+    if(have < want) need.push(want+' '+craftMatName(key, want)+' (have '+have+')');
+  }
+  return need.join(' + ');
 }
 function unlockItem(id){
   if(progress.unlocked.has(id)) return;
@@ -13489,16 +14193,10 @@ function unlockItem(id){
   }
   if(it.craft){                                   // craftable — must pay materials TOO
     if(!canCraft(it)){
-      const need=[];
-      if(it.craft.tooth && toothCount<it.craft.tooth) need.push(it.craft.tooth+' lion tooth (have '+toothCount+')');
-      if(it.craft.tusk  && tuskCount <it.craft.tusk ) need.push(it.craft.tusk +' elephant tusk (have '+tuskCount +')');
-      if(it.craft.horn  && hornCount <it.craft.horn ) need.push(it.craft.horn +' rhino horn (have '+hornCount +')');
-      flashShopMsg('🔒 Craft '+it.name+' needs '+need.join(' + '));
+      flashShopMsg('🔒 Craft '+it.name+' needs '+craftShortfallStr(it));
       return;
     }
-    if(it.craft.tooth) toothCount -= it.craft.tooth;
-    if(it.craft.tusk)  tuskCount  -= it.craft.tusk;
-    if(it.craft.horn)  hornCount  -= it.craft.horn;
+    for(const key in it.craft) craftMatSpend(key, it.craft[key]);
     showKillfeed(it.icon+' Crafted the '+it.name+'!');
   }
   if(price > 0){
@@ -14232,6 +14930,8 @@ function resetGame(){
   [..._dustPuffs].forEach(d=>killObj(d.mesh));
   if(grapple.line){ killObj(grapple.line); }
   [...fallingTrees].forEach(f=>killObj(f.mesh)); fallingTrees.length=0; treesFelledToday=0;
+  clearGroundPatches();                                      // 🔥🫧 dispose any burning / slick ground
+  crocHook.ent = null;                                       // 🪝 drop anything the line was hauling
   clearVenomSpits();                                         // dispose any venom blobs still in flight from a canopy cobra
   clearFireTorch();                                          // dispose any lit Fire Torch ability FX (light + flame mesh)
   clearKitFX();                                              // dispose transient axe swings + drop kit-wall refs (wall meshes freed below)
