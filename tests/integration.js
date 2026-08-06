@@ -1569,8 +1569,20 @@ test('crocodile: every croc bursts out, hunts to the land ring, and walks home',
   // on every croc: they were chasing zebras that happened to be closer than the parked player, and
   // the numbers described a hunt the test never set up. Everything else is stashed off-map for the
   // duration; only updateCrocodiles runs, so nothing else moves or notices.
-  const others = [].concat(preyMeshes, lionMeshes, dogMeshes, cheetahMeshes, snakeMeshes, secretaryMeshes)
-                   .map(e=>({ e, x:e.pos.x, z:e.pos.z }));
+  // ⚠ …AND THIS LIST IS BUILT FROM THE REGISTRY, NOT BY HAND — it used to be a literal
+  // `[].concat(preyMeshes, lionMeshes, dogMeshes, cheetahMeshes, snakeMeshes,
+  // secretaryMeshes)`, and on 2026-08-07 it silently stopped being complete: crocs gained
+  // GORILLAS as a valid target, gorillas were not in that list, and a croc that found one
+  // near its pond chased it instead of the player. One row in three then read
+  // `lunged:false, chasedPlayer:false` and the whole test failed intermittently — which
+  // looks like a crocodile regression and is actually a stale list.
+  // This is the SAME BUG SHAPE the session's product fixes were about, in the test file.
+  // Build it from `allCreatureLists()` and a new species can never be forgotten again.
+  const others = [];
+  allCreatureLists().forEach(([list])=>{
+    if(!list || list === crocMeshes) return;      // the crocs are the subject, not a distraction
+    list.forEach(e=>{ if(e) others.push({ e, x:e.pos.x, z:e.pos.z }); });
+  });
   others.forEach(o=>{ o.e.pos.x += 5000; });
   const restoreOthers = ()=>others.forEach(o=>{ o.e.pos.x = o.x; o.e.pos.z = o.z; });
 
@@ -2043,13 +2055,19 @@ test('hippo: floats, swims faster than it walks, charges when crowded, bolts whe
   dn.isDay = false;
   const H2 = hippoMeshes[0], w2 = H2.pool;
   H2.state='ROAM'; H2.calmT=99; H2.dest=null; H2.health=H2.maxHealth; H2._prevHealth=H2.health;
+  // ⚠ ROAM picks a RANDOM destination in the ring every ~9 s, so how far it actually gets
+  // in a fixed window is luck. A 100 s window scored 36.8 m against a 41.4 m bar and failed
+  // a correct build. Run long enough that the random walk has to leave the shore (300 s of
+  // game time), and keep the bar at what the DAY leash would allow — the claim being tested
+  // is "at night it goes further than grazing range", not "it reaches exactly X".
   let maxD = 0;
-  for(let i=0;i<6000;i++){ updateHippos(DT);
+  for(let i=0;i<18000;i++){ updateHippos(DT);
     maxD = Math.max(maxD, Math.hypot(H2.pos.x-w2.x, H2.pos.z-w2.z)); }
-  detail.nightMaxDist = r2(maxD);
-  detail.nightLeash   = r2(w2.r + HIPPO.NIGHT_RANGE);
-  detail.leftTheWater = maxD > w2.r + HIPPO.GRAZE_RANGE;
-  detail.leashHeld    = maxD <= w2.r + HIPPO.NIGHT_RANGE + 0.5;
+  detail.nightMaxDist  = r2(maxD);
+  detail.dayLeash      = r2(w2.r + HIPPO.GRAZE_RANGE);
+  detail.nightLeash    = r2(w2.r + HIPPO.NIGHT_RANGE);
+  detail.leftTheWater  = maxD > w2.r + HIPPO.GRAZE_RANGE;
+  detail.leashHeld     = maxD <= w2.r + HIPPO.NIGHT_RANGE + 0.5;
 
   // ---- 6. it shares the pond: NO croc was harmed by any of the above ----
   detail.crocsAlive = crocMeshes.length;
