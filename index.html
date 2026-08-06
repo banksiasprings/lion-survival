@@ -541,11 +541,14 @@ const KIT_GATE_MAX = 20;    // gates are a separate ability with a separate pool
 // 4 · 🏹 Rhino Crossbow 80, described in its own note as "super expensive" and a day-13
 // goal · 🪃 Boomerang 40 · 🪽 double jump 24. Steven's brief: "cheaper than crossbow (80)
 // for weak items, more expensive for powerful ones."
-//   BUT — he also flagged the warthog bounty (100 a kill) as generous, and it is: it makes
-// the entire old table reachable on day 1-2 by anyone who hunts. So these are priced
-// against a player who HUNTS, not one who only survives, and the material gate does the
-// real gating anyway. Every one of these costs a kill that is genuinely hard to get:
-// a gorilla, a colour-specific cobra, a cheetah.
+//   BUT — kill bounties are the second income stream, so these are priced against a player
+// who HUNTS, not one who only survives. ⚠ That calculation changed the same day: the 100
+// was on the WARTHOG when these prices were set (a 30-HP, one-spear, herd-spawning animal
+// — i.e. a farm), and Steven moved it to the GIRAFFE, which takes three spears and outruns
+// a sprint. The prices are unchanged and deliberately so: the bounty is now a real payday
+// rather than a tap, so the tier it unlocks reads as earned instead of automatic.
+// The material gate does the real gating anyway — every one of these costs a kill that is
+// genuinely hard to get: a gorilla, a colour-specific cobra, a cheetah.
 //   The three above the crossbow's 80 are there deliberately — a permanent +70% move
 // speed and near-total invisibility are both stronger than anything the shop sold before.
 const CRAFT = {
@@ -10056,14 +10059,31 @@ function grantDailyCoins(daySurvived){
 
 // ---- 🪙 KILL BOUNTIES — the second way to earn (2026-08-06) ----------
 // Until now the ONLY income was surviving a day. This is the first kill-based
-// income in the game, so it is a TABLE rather than a warthog special-case:
+// income in the game, so it is a TABLE rather than a per-species special-case:
 // pricing the next animal is one line here, not another branch at four call
 // sites. Keyed on `species`, i.e. the SPECIES[] table — prey only for now.
-// Calibration: 100 is deliberately enormous next to the daily drip (ten days
-// survived = 55) — a warthog gores back for 14, so it is a real fight, and one
-// hog buys the crossbow's 80. If that reads as too generous, this is the knob.
+//
+// ⚠ MOVED FROM WARTHOG TO GIRAFFE (2026-08-07). The 100 was on the warthog for one
+// day and Steven pulled it: it broke the economy exactly as the shipping note
+// predicted it might (open_defects #6). A warthog is 30 HP, dies to ONE spear, spawns
+// in herds of 1-3, is restocked by the ecosystem, and is the small buck a solo lion
+// already hunts — so the entire COIN_PRICES table, crossbow included, was reachable on
+// day 1-2 by anyone who bothered. That is a farm, not a reward.
+//
+// A giraffe is the opposite trade, and the numbers say so even though the *reason*
+// needs restating (see below):
+//   • 40 HP and a species-specific spear rule — `maxHealth/3`, so **3 spears**, where a
+//     warthog takes **1**. Only the kudu (2), elephant (15) and it are special-cased.
+//   • flee speed **22**, against a player sprint of **16** — you cannot run one down.
+//     A warthog flees at 11 and you simply catch it.
+//   • herds of 2-4 of the tallest thing on the map, so the approach is the hard part.
+// ⚠ **STEVEN SAID "kick defence" AND THERE ISN'T ONE** — flagged, not quietly adopted.
+// `counter` is the gore-back field and the WARTHOG is the only prey in the game that
+// has it (14). A giraffe does not fight back at all. Its difficulty is entirely that it
+// is fast, tall and takes three times the punishment; if he wants a real kick, that is a
+// `counter` value on the giraffe row of SPECIES[] and a separate ask.
 const KILL_BOUNTY = {
-  warthog: 100,        // Steven, 2026-08-06
+  giraffe: 100,        // Steven, 2026-08-07 — moved off the warthog, which now pays 0
 };
 // Paid for the KILLING BLOW ONLY, and only to the player: every call site is a
 // direct player attack (pounce / thrown rock, spear, bolt / boomerang / melee),

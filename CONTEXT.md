@@ -3684,3 +3684,51 @@ the player swam instead of jumping, and it failed with numbers that look like a 
 | frame budget | `updateHippos` **56.5 µs** at 6 hippos — 0.34% of 16 667 µs |
 - No screenshot: the pane's compositor is still wedged black. Verified structurally and via the offline
   projector, per the standing rule.
+
+### 🪙 THE BOUNTY MOVED: warthog → giraffe (2026-08-07b)
+Steven, hours after the batch above: *"move the 100-coin bounty from warthog to giraffe… the warthog
+reward breaks the economy (day-1 unlocks)."*
+
+**This closes `open_defects.md` #6 by his own decision** — that entry was filed on 2026-08-06 saying the
+100 was probably too generous and flagging the single number in `KILL_BOUNTY` as the knob. It was. The
+entry is deleted, per the ledger's own close rule.
+
+The table is now `{ giraffe: 100 }` and **`warthog` is absent, not zero** — absent falls through
+`KILL_BOUNTY[o.species] || 0`, so a warthog is an ordinary prey animal again with no special-casing
+anywhere. Nothing else moved: same four call sites, same killing-blow-only rule, same `_bountyPaid`
+guard, same `saveProgress()` contract.
+
+#### Why a giraffe can hold a bounty a warthog could not — measured, not asserted
+| | warthog | giraffe |
+|---|---|---|
+| HP | 30 | 40 |
+| **spears to kill** | **1** (full `maxHealth`) | **3** (`maxHealth/3`, a species special-case) |
+| flee speed | 11 — **slower than a walk (10)**, you catch it | **22 — faster than a sprint (16)**, you cannot |
+| herd | 1–3 | 2–4 |
+- The spear rule is the load-bearing one: `updateThrownRocks` special-cases exactly three species
+  (`kudu` /2, `giraffe` /3, `elephant` /15) and everything else dies to one throw. A hog was a
+  one-button payday; a giraffe is three hits on something that outruns you.
+- ⚠ **STEVEN SAID "kick defence" AND THERE ISN'T ONE — flagged, not quietly adopted.** `counter` is the
+  gore-back field and the **warthog is the only prey in the game that has it** (14). A giraffe does not
+  retaliate at all. Its difficulty is entirely speed, height and the ×3 spear rule. If he wants a real
+  kick that is a `counter` value on the giraffe row of `SPECIES[]` — a separate ask, not assumed here.
+- **Prices were NOT retuned.** The crafted tier was priced hours earlier against "a player who hunts",
+  with the warthog tap in mind. With the tap gone the same numbers read as *earned* rather than
+  automatic, which is the intended shape — flagged so a future session knows it was considered, not
+  overlooked.
+
+#### The test now pins BOTH halves
+Renamed to `bounty: only YOUR killing blow on a giraffe pays 100 — and a warthog now pays 0`. Asserting
+only the new species would let the old one quietly keep paying, so:
+| case | paid |
+|---|---|
+| giraffe × melee 67 / boomerang / **3 spears** / pounce | **100** each, 400 exact |
+| **warthog × melee 67, warthog × boomerang** | **0** — the moved-off half |
+| cheetah bite · wild-dog pack · no attacker at all | 0 |
+| the reap (`updatePrey` turning 9 corpses into carcasses) | 0 |
+- Also pins `KILL_BOUNTY.warthog === undefined`, `KILL_BOUNTY.giraffe === 100`, and
+  **`spearsToDownAGiraffe === 3`** — if a future edit made a giraffe a one-spear kill the bounty would
+  silently become farmable again, and that is the line that would notice.
+- ⚠ Its `emptySpot()` helper was a hand-written species list (no crocs, hippos or porcupines) — now
+  built from `allCreatureLists()`, for the reason the rest of this session documents at length.
+- **Suite 31/31**, five consecutive runs.

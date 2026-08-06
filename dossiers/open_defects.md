@@ -77,26 +77,16 @@ which reads as "this animal is immune", the exact bug those tests guard. Adding 
 ## 5. A bramble kill pays no bounty
 *Found 2026-08-06 (warthog bounty). Design. Needs Steven's decision.*
 
-`grantKillBounty` is wired to the four **direct** player→prey attacks. A warthog that bleeds
-out on a bramble fence you placed pays **0** — as does a hog killed by any other trap-like
-thing the player set up.
+`grantKillBounty` is wired to the four **direct** player→prey attacks. A **giraffe** that
+bleeds out on a bramble fence you placed pays **0** — as does one killed by any other
+trap-like thing the player set up. *(Written when the bounty was on the warthog; the
+species moved 2026-08-07, the attribution question did not.)*
 
 - **Fix:** one `grantKillBounty(e)` call in `updateBrambles`' non-player branch.
 - **Why not taken:** it follows the game's own attribution convention — every direct attack
   tags `lastHitBy = player`, and `updateBrambles` deliberately tags nobody, so a bramble
-  death has no owner to pay. Trap-farming hogs behind a fence ring is also a very different
+  death has no owner to pay. Trap-farming behind a fence ring is also a very different
   economy from hunting them. **His call.**
-
-## 6. 🪙100 a warthog may be too generous for the shipped price table
-*Found 2026-08-06 (warthog bounty). Balance. Shipped as asked.*
-
-Ten days survived banks 55 coins. One warthog pays 100, and warthogs are the small buck a
-solo lion already hunts, spawn in herds of 1-3, and are restocked by the ecosystem. So the
-entire `COIN_PRICES` table — up to the 🏹 crossbow at 80, priced as a day-13 goal — is
-reachable on day 1-2 by anyone who hunts.
-
-- **Fix:** the single number in `KILL_BOUNTY`.
-- **Why not taken:** it is exactly the number Steven asked for. Flagged, not second-guessed.
 
 ## 7. A free-standing gate is AMBER, not red — a stated departure from the brief
 *Found 2026-08-07 (placement previews). Design. Needs Steven's decision.*

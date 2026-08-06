@@ -316,6 +316,16 @@ survive closing the app. Cheap first buys are the **Healing Herb (4)**, **Smoke 
 (6)**; the **Rhino Crossbow is 80 coins AND a rhino horn**. The 🦷/🦴/🦏 craft materials are separate and still
 reset every run — coins are the thing that lasts.
 
+**🦒 …AND KILLING A GIRAFFE PAYS 100 COINS.** The second and only other way to earn. It must be **your
+own killing blow** — melee, thrown spear, bolt, boomerang or pounce. A giraffe that a lion finishes, that
+a crocodile drags under, that starves, drowns or bleeds out on your bramble fence pays **nothing**, and
+chipping one that something else then kills pays nothing either.
+- ⚠ **This was on the WARTHOG for one day (2026-08-06 → 2026-08-07) and moved.** A hog is 30 HP, dies to
+  **one** spear, flees at 11 (slower than you walk) and spawns in herds — so it was a farm that unlocked
+  the whole shop by day 2. A giraffe is **three spears** (its own special case in the damage table) and
+  flees at **22, faster than your sprint of 16** — you cannot simply run one down. Warthogs now pay 0.
+- One giraffe is worth more than surviving your first ten days (55). It is meant to be a payday.
+
 Your whole toolset. **(The old bottom tool hotbar was removed 2026-07-16 — the kit on the left replaced it;
 the bottom of the screen now shows only your health/stamina/hunger bars.)** Use the active ability with
 **LMB** or **`Z`**. Open the **🛒 SHOP** from the menu, or press **Tab** in-game (pauses) to manage your **loadout**.

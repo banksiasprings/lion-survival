@@ -1683,21 +1683,38 @@ test('crocodile: every croc bursts out, hunts to the land ring, and walks home',
 // then the whole balance is asserted at once. A build that paid on any hog death,
 // or paid twice for a corpse still sitting in preyMeshes, passes a one-weapon smoke
 // test and fails this.
-test('bounty: only YOUR killing blow on a warthog pays 100 coins', ()=>{
+// ⚠ THE BOUNTY MOVED FROM WARTHOG TO GIRAFFE (2026-08-07). It was on the warthog for one
+// day; Steven pulled it because it broke the economy exactly as its own shipping note
+// predicted (open_defects #6) — a 30-HP hog that dies to ONE spear, spawns in 1-3s and is
+// restocked by the ecosystem made the whole price table reachable on day 1-2.
+// So this test now pins BOTH halves of that decision, because only asserting the new one
+// would let the old one quietly keep paying: the giraffe pays 100 on every player weapon,
+// and **the warthog pays exactly 0 to the same blow**.
+test('bounty: only YOUR killing blow on a giraffe pays 100 — and a warthog now pays 0', ()=>{
   pinPlayer();
   const detail = {}, spawned = [];
-  const BOUNTY = KILL_BOUNTY.warthog;
+  const BOUNTY = KILL_BOUNTY.giraffe;
   const coinsBefore = progress.coins;          // restored at the end — the suite must not mint currency
-  const hog = (x, z)=>{ const H = makePrey('warthog', x, z, 'bounty-test'); spawned.push(H); return H; };
+  const tall = (x, z)=>{ const G = makePrey('giraffe', x, z, 'bounty-test'); spawned.push(G); return G; };
 
-  // Ground with no other animal inside `r`, so a hog put here is unambiguously the
+  // Ground with no other animal inside `r`, so the quarry put here is unambiguously the
   // one the pounce scan and the projectile find.
+  // ⚠ The candidate list is built from the REGISTRY, not by hand — the hand-written
+  // version here omitted crocs, hippos and porcupines, and a bystander inside a
+  // projectile's hit cylinder absorbs the shot and scores the real target 0.
   const emptySpot = (r)=>{
-    const lists = [preyMeshes, lionMeshes, dogMeshes, gorillaMeshes, rhinoMeshes, cheetahMeshes];
     for(let k=0;k<400;k++){
       const x = rand(-MAPR+30, MAPR-30), z = rand(-MAPR+30, MAPR-30);
       if(waterSpeedMul(x, z) !== 1) continue;                       // dry land only
-      if(lists.every(L => !L || L.every(e => Math.hypot(e.pos.x-x, e.pos.z-z) > r))) return { x, z };
+      let ok = true;
+      allCreatureLists().forEach(([L])=>{
+        if(!ok || !L) return;
+        for(let i=0;i<L.length;i++){
+          const e = L[i];
+          if(e && Math.hypot(e.pos.x-x, e.pos.z-z) <= r){ ok = false; return; }
+        }
+      });
+      if(ok) return { x, z };
     }
     return null;
   };
@@ -1710,41 +1727,51 @@ test('bounty: only YOUR killing blow on a warthog pays 100 coins', ()=>{
     cases[name] = { paid: progress.coins - before, died: !!H && H.health <= 0 };
   };
 
-  // ---- 1. THE PLAYER'S OWN KILLS — one hog per weapon, real damage numbers ----
-  blow('melee_hammer', ()=>{ const H = hog(player.pos.x + 3, player.pos.z);
-    dealKitMelee({ kind:'prey', o:H }, 67, MELEE_TOOL.hammer); return H; });
-  blow('boomerang', ()=>{ const H = hog(player.pos.x - 3, player.pos.z);
-    boomerangStrike('prey', H); return H; });
+  // ---- 1. THE PLAYER'S OWN KILLS — one giraffe per weapon, real damage numbers ----
+  blow('melee_hammer', ()=>{ const G = tall(player.pos.x + 3, player.pos.z);
+    dealKitMelee({ kind:'prey', o:G }, 67, MELEE_TOOL.hammer); return G; });
+  blow('boomerang', ()=>{ const G = tall(player.pos.x - 3, player.pos.z);
+    boomerangStrike('prey', G); return G; });
 
   // The spear goes through the REAL updateThrownRocks path (projHit, damage table,
   // kill line) — cleared first so no stray projectile from an earlier test is in flight.
+  // ⚠ A GIRAFFE TAKES THREE SPEARS, and that is the whole point of moving the bounty on
+  // to it: `updateThrownRocks` special-cases the species at `maxHealth/3`, where a warthog
+  // takes the full `maxHealth` from one throw. So this case throws until it drops and
+  // asserts the count — if a future edit made a giraffe a one-spear kill, the bounty would
+  // silently become farmable again and this is the line that would notice.
   thrownRocks.length = 0;
+  let spearsNeeded = 0;
   blow('thrown_spear', ()=>{
     const s = emptySpot(20); if(!s) return null;
-    const H = hog(s.x, s.z);
-    const m = new THREE.Mesh(new THREE.SphereGeometry(0.1,4,3), new THREE.MeshBasicMaterial());
-    m.position.set(H.pos.x, H.pos.y + 0.5, H.pos.z); scene.add(m);
-    thrownRocks.push({ mesh:m, vel:new THREE.Vector3(0,0,0.01), dist:0, mult:1, spear:true });
-    updateThrownRocks(1/60);
-    return H;
+    const G = tall(s.x, s.z);
+    for(let n=0; n<6 && G.health > 0; n++){
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.1,4,3), new THREE.MeshBasicMaterial());
+      m.position.set(G.pos.x, G.pos.y + 0.5, G.pos.z); scene.add(m);
+      thrownRocks.push({ mesh:m, vel:new THREE.Vector3(0,0,0.01), dist:0, mult:1, spear:true });
+      updateThrownRocks(1/60);
+      spearsNeeded++;
+    }
+    return G;
   });
   thrownRocks.length = 0;
+  detail.spearsToDownAGiraffe = spearsNeeded;
 
-  // Pounce is the warthog's signature interaction (it gores back for `counter`), and the
-  // bounty sits OUTSIDE that branch — so a hog killed by the same lunge that would have
-  // been gored still has to pay. Needs the necklace gate, an empty patch, and a camera
-  // actually looking at it.
+  // The pounce path stays in the set because it is the one weapon whose bounty call sits
+  // outside a conditional branch (the warthog's gore-back), so it is the call site most
+  // likely to be broken by an edit. Needs the necklace gate, an empty patch, and a camera
+  // actually looking at the animal.
   const sp = { x:player.pos.x, z:player.pos.z }, ownedNecklace = hasNecklace();
   blow('pounce', ()=>{
     const s = emptySpot(14); if(!s) return null;
     if(!ownedNecklace) progress.accessories.push('lion_necklace');
     player.pos.set(s.x, terrainY(s.x, s.z), s.z); pinPlayer();
-    const H = hog(s.x, s.z + 2.5);
+    const G = tall(s.x, s.z + 2.5);
     camera.position.set(player.pos.x, player.pos.y + 1.7, player.pos.z);
-    camera.lookAt(H.pos.x, H.pos.y + 0.5, H.pos.z);
+    camera.lookAt(G.pos.x, G.pos.y + 0.5, G.pos.z);
     player._pounceCd = 0; player._hidden = false; player.crouching = false;
     pouncePrey();
-    return H;
+    return G;
   });
   if(!ownedNecklace){ const i = progress.accessories.indexOf('lion_necklace'); if(i >= 0) progress.accessories.splice(i,1); }
   player.pos.set(sp.x, terrainY(sp.x, sp.z), sp.z); player.knockback.set(0,0,0); pinPlayer();
@@ -1754,18 +1781,27 @@ test('bounty: only YOUR killing blow on a warthog pays 100 coins', ()=>{
   const C = cheetahMeshes[0], D = dogMeshes[0];
   if(C){
     const st = { t:C.target, k:C.targetKind };
-    blow('cheetah_kill', ()=>{ const H = hog(player.pos.x + 6, player.pos.z);
-      C.target = H; C.targetKind = 'prey'; cheetahBite(C); return H; });
+    blow('cheetah_kill', ()=>{ const G = tall(player.pos.x + 6, player.pos.z);
+      C.target = G; C.targetKind = 'prey'; cheetahBite(C); return G; });
     C.target = st.t; C.targetKind = st.k;
   }
   if(D){
     const st = D._preyTarget;
-    blow('wilddog_kill', ()=>{ const H = hog(player.pos.x - 6, player.pos.z);
-      D._preyTarget = H; dogBite(D,'prey'); dogBite(D,'prey'); return H; });   // 22 a bite — the pack needs two
+    blow('wilddog_kill', ()=>{ const G = tall(player.pos.x - 6, player.pos.z);
+      D._preyTarget = G; dogBite(D,'prey'); dogBite(D,'prey'); return G; });   // 22 a bite — the pack needs two
     D._preyTarget = st;
   }
   // …and a death with no attacker at all (fell off a cliff / drowned / starved).
-  blow('no_attacker', ()=>{ const H = hog(player.pos.x, player.pos.z + 6); H.health = 0; return H; });
+  blow('no_attacker', ()=>{ const G = tall(player.pos.x, player.pos.z + 6); G.health = 0; return G; });
+
+  // ---- 2b. ⚠ THE WARTHOG MUST NOW PAY NOTHING ----
+  // The half of Steven's decision that is easy to leave untested. Same weapons, same
+  // delta measurement, a species that used to pay 100 — every one must read 0.
+  const hog = (x, z)=>{ const H = makePrey('warthog', x, z, 'bounty-test'); spawned.push(H); return H; };
+  blow('warthog_melee', ()=>{ const H = hog(player.pos.x + 9, player.pos.z);
+    dealKitMelee({ kind:'prey', o:H }, 67, MELEE_TOOL.hammer); return H; });
+  blow('warthog_boomerang', ()=>{ const H = hog(player.pos.x - 9, player.pos.z);
+    boomerangStrike('prey', H); return H; });
 
   // ---- 3. THE REAP MUST NOT PAY AGAIN ----
   // Every corpse above is still sitting in preyMeshes. updatePrey turns them into
@@ -1778,19 +1814,29 @@ test('bounty: only YOUR killing blow on a warthog pays 100 coins', ()=>{
   // ---- assertions ----
   const mine   = ['melee_hammer','boomerang','thrown_spear','pounce'];
   const theirs = ['cheetah_kill','wilddog_kill','no_attacker'].filter(k => cases[k]);
+  const hogs   = ['warthog_melee','warthog_boomerang'];
   detail.bounty     = BOUNTY;
   detail.cases      = cases;
   detail.playerKillsPaid   = mine.map(k => cases[k] && cases[k].paid);
   detail.nonPlayerKillsPaid= theirs.map(k => cases[k] && cases[k].paid);
-  detail.everyKillLanded   = mine.concat(theirs).every(k => cases[k] && cases[k].died);
+  detail.warthogKillsPaid  = hogs.map(k => cases[k] && cases[k].paid);
+  detail.everyKillLanded   = mine.concat(theirs, hogs).every(k => cases[k] && cases[k].died);
   detail.eachPlayerKillPaidExactly = mine.every(k => cases[k] && cases[k].paid === BOUNTY);
   detail.noNonPlayerKillPaid       = theirs.every(k => cases[k].paid === 0);
+  // ⚠ the moved-off half: a warthog killed by the player's own blow pays exactly 0
+  detail.warthogPaysNothing        = hogs.every(k => cases[k].paid === 0);
+  detail.warthogOffTheTable        = KILL_BOUNTY.warthog === undefined;
+  detail.giraffeIsTheEarner        = KILL_BOUNTY.giraffe === 100;
+  // …and a giraffe must genuinely be 3 spears, not 1 — the reason it can hold the bounty
+  detail.giraffeTakesThreeSpears   = spearsNeeded === 3;
   detail.totalPaid  = progress.coins - coinsBefore;
   detail.expectTotal= mine.length * BOUNTY;
 
   const pass = detail.everyKillLanded && detail.eachPlayerKillPaidExactly &&
                detail.noNonPlayerKillPaid && detail.reapPaid === 0 &&
-               detail.allReaped && detail.totalPaid === detail.expectTotal;
+               detail.allReaped && detail.totalPaid === detail.expectTotal &&
+               detail.warthogPaysNothing && detail.warthogOffTheTable &&
+               detail.giraffeIsTheEarner && detail.giraffeTakesThreeSpears;
 
   progress.coins = coinsBefore; saveProgress();    // leave the player's purse as we found it
   pinPlayer();
