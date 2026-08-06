@@ -10082,8 +10082,24 @@ function grantDailyCoins(daySurvived){
 // has it (14). A giraffe does not fight back at all. Its difficulty is entirely that it
 // is fast, tall and takes three times the punishment; if he wants a real kick, that is a
 // `counter` value on the giraffe row of SPECIES[] and a separate ask.
+//
+// ⚠ 100 → 1000 (2026-08-07c). Steven: he wants the trophy to "actually change your session,
+// not just top up your wallet". It does — and by more than he estimated, which is worth
+// stating plainly rather than discovering later:
+//   crafted tier (11 items)  518
+//   everything else          364
+//   ⇒ THE WHOLE SHOP         882   ← one giraffe (1000) buys ALL OF IT, with 118 to spare
+// For scale, banking 882 off the daily drip alone takes **42 days survived**.
+//
+// ⚠ So COINS STOP BEING A GATE, and that is the actual design change here — not a tuning
+// tweak. What still gates the crafted tier is MATERIALS: a gorilla fang ×2, four
+// colour-specific cobra fangs, a croc tooth, 6 porcupine quills, a wild dog fang, a python
+// skin, a cheetah claw, worm slime. Those cannot be bought at any price. The game shifts
+// from "save up" to "go and hunt the specific animal", which is a coherent shape and
+// arguably the better one — but it is a shape change, not a number change.
+// If it reads as too much, this is still the single knob.
 const KILL_BOUNTY = {
-  giraffe: 100,        // Steven, 2026-08-07 — moved off the warthog, which now pays 0
+  giraffe: 1000,       // Steven, 2026-08-07c — was 100; moved off the warthog earlier that day
 };
 // Paid for the KILLING BLOW ONLY, and only to the player: every call site is a
 // direct player attack (pounce / thrown rock, spear, bolt / boomerang / melee),

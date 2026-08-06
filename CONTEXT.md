@@ -3739,3 +3739,56 @@ only the new species would let the old one quietly keep paying, so:
 - ⚠ Its `emptySpot()` helper was a hand-written species list (no crocs, hippos or porcupines) — now
   built from `allCreatureLists()`, for the reason the rest of this session documents at length.
 - **Suite 31/31**, five consecutive runs.
+
+### 🪙 …AND THE GIRAFFE BOUNTY IS NOW 1000 (2026-08-07c)
+Steven: *"bump the giraffe bounty from 100 → 1000… I want the trophy to actually change your session,
+not just top up your wallet."* Shipped. One line in `KILL_BOUNTY`; every rule around it is untouched
+(killing blow only, the four player→prey call sites, `_bountyPaid`, `saveProgress()`).
+
+#### ⚠ IT IS BIGGER THAN THE ESTIMATE IN THE BRIEF — measured, and stated rather than left to be found
+He expected 1000 to "roughly unlock the crafted tier". Summed from the live tables:
+| | coins |
+|---|---|
+| the 11 crafted items | **518** |
+| everything else in the shop | **364** |
+| **the entire shop** | **882** |
+**One giraffe (1000) buys ALL OF IT, with 118 left over.** For scale, banking 882 off the daily drip
+alone takes **42 days survived**. So this is not "most of the crafted tier" — it is the whole game's
+catalogue, from a single kill.
+
+#### The real consequence: COINS STOP BEING A GATE, and that is a shape change, not a tuning tweak
+What still gates the crafted tier is **materials**, and those cannot be bought at any price:
+2 gorilla fangs · four **colour-specific** cobra fangs (23.75% each at spawn) · a crocodile tooth ·
+6 porcupine quills · a wild dog fang · a python skin · a cheetah claw · worm slime.
+- So the game moves from **"survive and save up"** to **"go and hunt the specific animal"**. That is a
+  coherent design — arguably the better one for a survival game, and it makes the 24-species loot table
+  the actual progression system rather than a wallet top-up.
+- ⚠ But it also means the **`COIN_PRICES` spread now does almost no work**. The careful ladder from 18
+  (Slime Flask) to 90 (Invisibility Cloak) only orders purchases for a player who has *not yet* killed a
+  giraffe; after the first one, price is irrelevant and only materials matter. Flagged, not re-tuned —
+  re-pricing against a 1000-coin payday is a separate call and would be guesswork without him.
+- The daily drip (`grantDailyCoins`) is now essentially vestigial: 42 days to match one giraffe.
+- **The knob is still the single number in `KILL_BOUNTY`.**
+
+#### Test
+Renamed to `bounty: only YOUR killing blow on a giraffe pays 1000 — and a warthog now pays 0`.
+The per-case assertions read `BOUNTY` off `KILL_BOUNTY.giraffe`, so they followed the change on their
+own; `giraffeIsTheEarner` pins the **literal 1000** on purpose, so a silent re-tune of the most
+economy-shaping constant in the game cannot pass unnoticed.
+| case | paid |
+|---|---|
+| giraffe × melee 67 / boomerang / **3 spears** / pounce | **1000** each — **4000 exact** |
+| warthog × melee, warthog × boomerang | 0 |
+| cheetah bite · wild-dog pack · no attacker · the reap | 0 |
+- **`spearsToDownAGiraffe === 3` is unchanged and is now the load-bearing pin.** At 1000 a coin, a
+  giraffe that ever became a one-spear kill would be a catastrophic farm rather than a merely generous
+  one — this is the assertion standing between the two.
+- **Suite 31/31**, five consecutive runs.
+
+#### ⚠ …and a fourth world-geometry flake, found while verifying this
+The hippo test read `hippoMeshes[0]` for its night-roam measurement. Ponds are placed at random, one can
+sit hard against the map edge, and **both the ROAM destination and `hippoStep` clamp to the boundary** —
+so a hippo whose pond is 50 m from the rim physically cannot demonstrate a 70 m range however correct
+the code is. Failed twice on a load whose first pond sat at z = -192 (MAPR 244) and passed on the next
+layout. It now picks the hippo with the **most clearance to the boundary**, and records that clearance in
+the detail. Fourth instance today of the same lesson: *control for world geometry the test does not own.*

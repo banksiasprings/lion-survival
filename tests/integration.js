@@ -1688,9 +1688,13 @@ test('crocodile: every croc bursts out, hunts to the land ring, and walks home',
 // predicted (open_defects #6) — a 30-HP hog that dies to ONE spear, spawns in 1-3s and is
 // restocked by the ecosystem made the whole price table reachable on day 1-2.
 // So this test now pins BOTH halves of that decision, because only asserting the new one
-// would let the old one quietly keep paying: the giraffe pays 100 on every player weapon,
-// and **the warthog pays exactly 0 to the same blow**.
-test('bounty: only YOUR killing blow on a giraffe pays 100 — and a warthog now pays 0', ()=>{
+// would let the old one quietly keep paying: the giraffe pays the full bounty on every
+// player weapon, and **the warthog pays exactly 0 to the same blow**.
+// ⚠ The bounty rose 100 → 1000 on 2026-08-07c. The per-case assertions read `BOUNTY` off
+// `KILL_BOUNTY.giraffe` rather than hard-coding a number, so they followed on their own —
+// but `giraffeIsTheEarner` pins the literal on purpose, so a silent re-tune of the single
+// most economy-shaping constant in the game cannot pass unnoticed.
+test('bounty: only YOUR killing blow on a giraffe pays 1000 — and a warthog now pays 0', ()=>{
   pinPlayer();
   const detail = {}, spawned = [];
   const BOUNTY = KILL_BOUNTY.giraffe;
@@ -1826,7 +1830,7 @@ test('bounty: only YOUR killing blow on a giraffe pays 100 — and a warthog now
   // ⚠ the moved-off half: a warthog killed by the player's own blow pays exactly 0
   detail.warthogPaysNothing        = hogs.every(k => cases[k].paid === 0);
   detail.warthogOffTheTable        = KILL_BOUNTY.warthog === undefined;
-  detail.giraffeIsTheEarner        = KILL_BOUNTY.giraffe === 100;
+  detail.giraffeIsTheEarner        = KILL_BOUNTY.giraffe === 1000;
   // …and a giraffe must genuinely be 3 spears, not 1 — the reason it can hold the bounty
   detail.giraffeTakesThreeSpears   = spearsNeeded === 3;
   detail.totalPaid  = progress.coins - coinsBefore;
@@ -2099,7 +2103,20 @@ test('hippo: floats, swims faster than it walks, charges when crowded, bolts whe
   // ---- 5. NIGHT: it leaves the water, and the 70 m leash HOLDS ----
   player.pos.set(-MAPR+10, 0, -MAPR+10); pinPlayer();
   dn.isDay = false;
-  const H2 = hippoMeshes[0], w2 = H2.pool;
+  // ⚠ PICK THE HIPPO WITH ROOM TO ROAM, not hippoMeshes[0]. Ponds are placed at random and
+  // one can sit hard against the map edge — and both the ROAM destination and `hippoStep`
+  // clamp to the boundary, so a hippo whose pond is 50 m from the rim physically cannot
+  // demonstrate a 70 m range however correct the code is. Measured: this failed twice on a
+  // load whose first pond was at z = -192 with MAPR 244, and passed on the next layout.
+  // The claim under test is "at night it ranges past grazing distance"; give it a pond
+  // that can express that. (Same lesson as dryPatchNear — control for world geometry the
+  // test does not own.)
+  const roomiest = hippoMeshes.slice().sort((a, b)=>{
+    const room = H => MAPR - Math.max(Math.abs(H.pool.x), Math.abs(H.pool.z)) - H.pool.r;
+    return room(b) - room(a);
+  })[0];
+  const H2 = roomiest, w2 = H2.pool;
+  detail.roamPondClearance = r2(MAPR - Math.max(Math.abs(w2.x), Math.abs(w2.z)) - w2.r);
   H2.state='ROAM'; H2.calmT=99; H2.dest=null; H2.health=H2.maxHealth; H2._prevHealth=H2.health;
   // ⚠ ROAM picks a RANDOM destination in the ring every ~9 s, so how far it actually gets
   // in a fixed window is luck. A 100 s window scored 36.8 m against a 41.4 m bar and failed
