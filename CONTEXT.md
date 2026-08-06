@@ -3427,6 +3427,11 @@ just the deck above — a textbook false green, and the number was wrong by 0.8)
 
 
 ## 🪙 WARTHOG BOUNTY — kills become income (2026-08-06)
+> ⚠ **SUPERSEDED 2026-08-07 — the bounty moved to the GIRAFFE and the warthog now pays 0.**
+> Everything below is the historical record of the day it shipped on the warthog, kept because the
+> attribution design, the `_bountyPaid` reasoning and the four call sites are all still current. Only
+> the species changed. See *"🪙 THE BOUNTY MOVED: warthog → giraffe"* at the end of this file.
+
 Steven: *"killing a warthog awards 100 coins."*
 
 ### This is a NEW mechanic, not a wiring job
@@ -3623,9 +3628,11 @@ Before today: 24 species of drop, **three** recipes. The rest was a tally you co
 
 #### Prices, and the reasoning Steven asked for
 Anchors: daily drip 1×day (ten days = 55) · cheapest buy 4 · 🏹 crossbow **80** ("super expensive", a day-13
-goal) · 🪃 boomerang 40 · 🪽 double jump 24. **But** the warthog bounty (100/kill, flagged generous on
-2026-08-06) already makes the old table reachable on day 1-2 by anyone who hunts — so these are priced
+goal) · 🪃 boomerang 40 · 🪽 double jump 24. **But** the kill bounty (100/kill) means these are priced
 against a player who **hunts**, and the material gate does the real gating anyway.
+⚠ **That calculation shifted the same day:** the 100 was on the WARTHOG when these prices were set — a
+one-spear, herd-spawning animal, i.e. a tap — and Steven moved it to the GIRAFFE hours later. Prices are
+unchanged and deliberately so; with the tap gone the same numbers read as *earned* rather than automatic.
 
 | 🫧 18 | 🐍 22 | 🐕 28 | 🪝 30 | 🦔 35 | 🦴 45 | ☠️ 50 | 🗡️ 55 | 🔥 70 | 👟 75 | 🥷 90 |
 |---|---|---|---|---|---|---|---|---|---|---|
