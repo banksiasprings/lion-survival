@@ -1,6 +1,6 @@
 # Lion Survival — Bestiary & Rules (canonical reference)
 
-*The plain-English "how the world works" doc. Kept current — last updated 2026-07-28.*
+*The plain-English "how the world works" doc. Kept current — last updated 2026-08-07.*
 *Exact numbers live in `index.html`: `SPECIES`, `GOR`, `RHINO`, `ELE`, `PLAYER` configs.*
 
 ---
@@ -94,7 +94,12 @@ business. That makes water a place you *choose* to enter.
 Through the day it **basks on the mud at the rim**, **lies dead-still on the bottom** (no movement at all —
 that's the ambush), and **cruises just under the surface** with only its eye-ridge showing. Day favours
 basking, night favours lurking. It attacks **everything** that comes into its water: you, prey drinking,
-lions, dogs, cheetahs, snakes. **Rhinos and gorillas it leaves alone** — too big to hold.
+lions, dogs, cheetahs, snakes — **and gorillas, as of 2026-08-07** (they were skipped entirely before
+that, so a gorilla could stand in the shallows and no croc would look at it). A croc seizes for **55** on a
+7 s cooldown and a gorilla carries **160**, so it is a real three-grab fight rather than a free meal, and a
+gorilla up a tree is left alone like every other targeting scan in the game. **Rhinos it still leaves
+alone** — at 2+ tonnes they genuinely do shrug a croc off, and that was the case the old rule was about.
+**Hippos it also leaves alone: they share the water.**
 
 **Fighting one:** hammer **67**, spear **80** — about **8 spears** to kill. (Until 2026-07-31 no weapon
 could touch a croc at all, and the same fault made the **cheetah** invulnerable since it was added. Both fixed.)
@@ -132,6 +137,37 @@ casual tapping will never get there; a proper mash frees you in about a second. 
 grace** to get out of the water. Killing the croc also makes it let go.
 Cobra venom sticks to a croc **basking on the bank** but can't reach one **under the water**.
 ⚠ Clear a pond of crocs and it's yours — **until dawn, when a new one moves in.**
+
+### 🦛 Hippopotamus — the pond's OTHER apex *(300 HP)*
+**Every pond has 1–2 hippos as well as its crocodiles, and the two ignore each other.** A hippo is the
+toughest thing that walks: more than the rhino (220), well under the croc (600) — but it hits harder than
+anything else in the game.
+
+**By day it is harmless if you let it be.** It wallows in its own water and comes out to **graze the shore
+grass**, drifting back in for a soak every so often. It has no interest in you at all.
+
+**Two things set it off, and they point opposite ways:**
+- **Crowd it (within ~9 m) and it CHARGES** — mouth gaping wide, tusks first, **48 damage** a thrust plus a
+  stun and a hard knockback. That is the biggest single hit any animal lands. It charges at **13.5**, which
+  is faster than you WALK (10) and slower than you SPRINT (16): strolling away fails, running away works.
+- **Actually hurt it and it BOLTS for the water** instead, whatever it was doing — even mid-charge. So
+  shooting a hippo drives it off rather than pulling it onto you, and once it is back in its pond it needs a
+  few seconds before anything can provoke it again.
+
+**⚠ NEVER FOLLOW ONE INTO THE WATER.** A hippo is the **one animal water does not slow down** — everything
+else in the game (you included) moves at a third speed in a pond, and a hippo actually moves *faster* in
+there (6.0) than it does on the bank (4.2). It also floats at the surface with only its eyes, ears and
+nostrils and a hump of back showing, so a hippo in its pond is much harder to see than one on land.
+
+**At night it leaves.** It wanders **up to 70 m out from its pond** (Steven's number — measured from the
+water's edge, so a big pond's hippo ranges ~95 m from the centre) and **starts fights out there**, taking on
+lions, wild dogs, cheetahs, gorillas, porcupines and serpents as well as you. A pond that is safe at noon is
+the centre of a 70 m danger zone after dark.
+
+**On the radar** it is the **biggest dot there is** — bigger than the rhino or the gorilla, because it
+outweighs them — slate-mauve while it minds its own business, **blazing magenta the instant it charges**.
+
+**Drops a 🦛 hippo tusk.** Nothing spends it yet; it is a trophy with a recipe slot held open for later.
 
 ### 🗺️ Reading the radar
 - 🐊 **Crocodile** — a **sand-brown dot** sitting on the blue pond. It flares **orange-red** the instant it
@@ -187,6 +223,24 @@ flees the moment it drops below **37.5**, so one boomerang or two bolts is usual
 rather than kill it.
 
 Drops a **porcupine quill**. Two arrive with each dawn wave, up to six on the map.
+
+### 🌿 Brambles bite EVERY creature now — and how hard depends on the animal
+Until 2026-08-07 a **crocodile walked through a thorn fence for nothing at all** — the damage pass was a
+hand-written list of species and the croc had simply never been added to it. Every creature in the game is
+covered now, automatically, including any added later.
+
+**Damage is per animal, not one flat number.** Thick hide and armour shrug thorns off; a soft body dragged
+through them suffers:
+
+| animal | per fence |
+|---|---|
+| snakes (the whole length is scraped) | **30** |
+| you, and most animals | **20** |
+| crocodile · hippo (scutes / 4 cm hide) | **10** |
+| rhino · elephant | **8** |
+| porcupine (it *wears* spikes) | **6** |
+
+A line of five fences is still five separate bites, as it has been since 2026-08-04.
 
 ### 🎒 Everything that dies leaves LOOT — pick it up
 *(Revised 2026-08-05. Every creature used to leave a coloured "bone"; now each one leaves the part that
@@ -273,6 +327,34 @@ Unlocks are **free** (no currency yet) and — like the equipped loadout — **p
   ability is *active* (slot 1 by default). You can equip/unequip freely, even mid-run — unequipping a lit
   Fire Torch puts it out.
 - **[LMB]** or **[Z]** uses the active ability · **[1]–[5]** jump to a slot · **[R]** cycles to the next ability · **[Tab]** opens the loadout.
+
+### ⚒️ THE CRAFTED TIER (2026-08-07) — eleven items, each costing a TROPHY as well as gold
+Loot used to be a tally you could look at. Now it buys things. Every recipe below needs the named material
+**in your pack** *and* the coins — and the material is usually the hard part, because it means killing a
+specific animal.
+
+| item | costs | what it does |
+|---|---|---|
+| 🫧 **Slime Flask** | 1 worm slime + **18** | Throw it: a slick patch that halves the speed of anything crossing — **you included**. No damage. For breaking a chase. |
+| 🐍 **Sand-Python Coil** | 1 python skin + **22** | *Accessory.* Crouching no longer slows you (you creep at full walking pace) and your crouched footsteps make **no sound at all**. |
+| 🐕 **Endurance Charm** | 1 wild dog fang + **28** | *Accessory.* Stamina drains at **45%** and regenerates **2.3×** as fast. |
+| 🪝 **Croc Grabber** | 1 crocodile tooth + **30** | Hook what you are looking at within 26 m and **haul it to you** — pull a warthog out of a herd, or drag a crocodile onto dry land where it is slow. |
+| 🦔 **Retaliation Cloak** | 6 porcupine quills + **35** | *Accessory.* Anything that damages you takes **10 back and is stunned**. Passive — it works while you build, eat or run. |
+| 🦴 **Gorilla Club** | 2 gorilla fangs + **45** | **95 damage**, the heaviest melee there is — but only **3.4 m** of reach, half a hammer's. You have to be inside a lion's own strike range. |
+| ☠️ **Poison Bottle** | 1 **purple** cobra fang + **50** | Throw it: a 5 m cloud that **poisons everything in it** with the cobras' own venom. ⚠ Including you, if you stand in it. |
+| 🗡️ **Cobra Dagger** | 1 **blue** cobra fang + **55** | Only 25 a hit and the shortest reach in the game — but ~3 hits a second, which is the **highest sustained damage** you can put out. |
+| 🔥 **Fire Wand** | 1 **red** cobra fang + **70** | Spits flame. Whatever it lands on **catches** — bramble fences burn away, tall grass burns, the fire **spreads to what is next to it**, and anything standing in it cooks. The only item that changes the map. |
+| 👟 **Night Shoes** | 1 cheetah claw + **75** | *Accessory.* **+70% movement speed**, walking and sprinting. The biggest raw stat in the shop (Swift Boots are +15%). |
+| 🥷 **Invisibility Cloak** | 1 **green** cobra fang + **90** | *Accessory.* **While crouched**, 90% harder to see and **nothing on the savannah will pick you as a target at all** — not the pride, not the gorilla, not a croc. Stand up, or attack, and it breaks for 3 seconds. The dearest item in the game. |
+
+**🦷 THE FOUR COBRA FANGS ARE COLOUR-SPECIFIC**, and that is the real cost of those four recipes: you need
+the **red (crimson)**, **green (acid)**, **blue (the dark-blue "black" morph)** or **purple (violet)** cobra
+specifically. They are 23.75% each at spawn, so you hunt for the one you want.
+**The 🟡 GOLD cobra's fang is a WILDCARD** — it stands in for any of the four. Gold is the 5% rare and a
+1500-HP boss, so its fang opens whichever door you have not opened yet. If you hold both, the coloured one
+is always spent first.
+
+**⚠ Hippo tusks drop but nothing spends them yet** — a trophy with a recipe slot held open.
 - Tap any slot in the loadout screen to open a **quick-equip picker** (choose an item or "Empty this slot");
   each catalogue card has **Unlock/Equip/Unequip**. Slots never auto-fill against your choice.
 

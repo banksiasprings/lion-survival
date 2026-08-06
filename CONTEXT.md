@@ -3499,3 +3499,188 @@ asserted as one balance.
 - Total 400 = 4 × 100, exact.
 - Each case is a **delta around one synchronous blow** with no world update inside the measurement, so a
   live ecosystem cannot perturb it — the flake that has bitten the bones test twice.
+
+
+## 🌿🐊👻⚒️🦛 The big batch — brambles, crocs, ghosts, eleven crafted items, and a hippo (2026-08-07)
+Six asks in one brief. Three of them turned out to be **the same bug wearing different hats**, which is the
+most useful thing this session found.
+
+### 🐛 THE RECURRING BUG: a per-feature species list that stops being complete
+Steven: *"crocodiles pass through bramble fences with zero damage."* They did. `updateBrambles` ended in a
+hand-written list of **nine species arrays** and `crocMeshes` was not one of them — the array is declared
+~250 lines *below* the bramble module, the module predates the crocodile, and nothing linked the two.
+- This is the **third** instance of the identical shape in this repo: the boomerang's strike list had no
+  cheetah and no crocodile (2026-08-04), and the projectile blocks that made both invulnerable for weeks
+  (2026-07-31). Each was fixed by adding the missing species. That fix lasts exactly until the next animal.
+- **The fix is `allCreatureLists()` / `forEachCreature()`** — ONE registry, thirteen lists, and a creature
+  joins every creature-wide rule by existing. It is a **function, not a const array**: several of the arrays
+  it names are `let`-declared further down the file, so a top-level const is a TDZ crash at load (the same
+  trap `KIT_WALL_MAX` and `venomDuration()` both hit).
+- ⚠ **Fliers are IN the list and excluded by the airborne test, not by being left out of it.** Absence must
+  never be the mechanism.
+
+### 🌿 Per-template bramble damage — `BRAMBLE_DMG`
+Steven asked for damage "per creature template", so what a thorn fence is worth is a property of the animal.
+One table, keyed on `species` first and the registry kind second; anything absent takes the flat 20, so a new
+animal is *ordinary* rather than *immune*.
+| snake | default | croc · hippo | rhino · elephant | porcupine |
+|---|---|---|---|---|
+| **30** (whole length scraped) | **20** | **10** (scutes / 4 cm hide) | **8** | **6** (it wears spikes) |
+- ⚠ **A swimmer is not airborne.** The prick pass called anything >0.5 above `terrainY` airborne — but a
+  croc or hippo floating in a pond sits metres above the *dug bed* that `terrainY` reports inside a bowl, so
+  every swimming animal read as flying and a bramble in the shallows was free to cross. Over water the height
+  test is dropped.
+
+### 🐊 Crocodiles can take gorillas
+`crocPickTarget` skipped `gorillaMeshes` outright, with a note arguing a 2-tonne animal shrugs a croc off.
+**A gorilla is ~160 kg.** It is a target now; a **perched or sleeping** one is excluded, the same way every
+other targeting scan in the game excludes a treed animal (without it a croc locks onto a gorilla 8 m up a
+canopy and grinds against the trunk forever). **Rhino stays out** — that IS the case the old note was about.
+- **Balance, measured:** croc seizes for **55** on a 7 s cooldown, gorilla carries **160** → a genuine
+  three-grab fight, not a free meal. Shipped without tuning either number.
+
+### 👻 Placement previews for all four placeables
+The wall ghost's **architecture generalised, not copied**: every placeable has exactly one
+`*PlacementPlan()` that the ghost *and* the placer read, so a preview still cannot promise a spot the placer
+would refuse. Four ghosts, one visible at a time, `userData.keep` on both geometries and both materials.
+- **Walls gained the occupied-space rule** Steven asked for. ⚠ **The test is overlap AREA, not per-axis
+  penetration**, and no per-axis threshold works: two walls on the same footprint overlap by only **0.30** on
+  the thin axis, which is *less* than two walls meeting at a right-angled corner overlap on both. Area
+  separates them 3× either way — same spot **0.750 m²**, corner join **0.090**, side-by-side ≈ **0**.
+- ⚠ **ROOFS DELIBERATELY HAVE NO SUCH RULE, and a red test is why.** Applying it there instantly refused 2
+  of 5 roofs in the shipped roof-corridor test, which lays them at `ROOF.SIZE × 0.9` so each *overlaps its
+  neighbour by 1.94 m² on purpose*. **Overlapping roofs are the feature** — it is how you roof a corridor
+  without a seam, and CONTEXT already documented "two roofs side by side make one wide floor".
+- ⚠ **A free-standing gate is AMBER, not red — a stated departure from the brief.** Steven listed "gate not
+  touching a wall" among the RED cases. Hard-refusing it makes the **first gate of any compound impossible
+  to place**, and kills "gate first, then wall out from it". So the preview says it and the placer allows it.
+  Promoting amber to a refusal is one line: return the reason as `blocked` instead of `warn`.
+- **Commit on release, cancel on right-click or Escape** — for the five build tools only. Everything else
+  still fires on the press, because a spear you must release to throw would feel broken. `_buildAim` is
+  cleared on commit, right-click, Escape, tool switch **and pointer-lock loss** (the mouseup that would have
+  committed may never arrive).
+
+### 🦛 The hippopotamus
+Shares the ponds with the crocodiles, as asked. **300 HP** — above the rhino (220), well under the croc
+(600); "legit dangerous" is carried by **GORE_DMG 48**, the biggest single hit in the game.
+- ⚠ **The two triggers point OPPOSITE ways, and that is the animal.** Crowd it → **CHARGE**, tusks first.
+  Actually hurt it → **RETREAT** to water, even mid-charge. It sounds contradictory and is exactly how a real
+  hippo behaves. RETREAT is an **HP-drop watchdog** (the lions'/porcupine's pattern), so every damage path
+  present and future wakes it without being told.
+- ⚠ **IT IS THE ONE ANIMAL WATER DOES NOT SLOW.** Every other mover multiplies by `waterSpeedMul`;
+  `hippoStep` deliberately does not and swaps in `SPEED_SWIM` instead. **That single omission IS "swims when
+  in water"** — measured 6.0 in the pond vs 4.2 on the bank. A future refactor that "fixes" this to match
+  everything else silently deletes the mechanic.
+- **Charge 13.5** — faster than a WALK (10), slower than a SPRINT (16). Strolling away fails, running works.
+- **Night range 70 m from the RIM** (Steven's number), so ~95 m from a big pond's centre. It starts fights
+  out there with lions, dogs, cheetahs, gorillas, porcupines and serpents.
+
+#### Three bugs the hippo cost, all worth the words
+1. **Buoyancy only ran while it walked.** It lived inside `hippoStep`, so a hippo that spawned on the pond
+   bed and went straight into a state with nothing to walk to just sat there **3.66 m under its own water**.
+   Height is a property of *where it is*, not of whether it moved. Now `hippoFloat()`, every frame.
+2. **`hippoInWater` was copied from the croc and was a pure HEIGHT test.** Safe for a croc, which is leashed
+   to its rim + 3 m; wrong for an animal that roams 70 m inland, where any low hollow sits below the pond's
+   water line. Measured: a wounded hippo **38.7 m from its pond reported itself swimming**. It asks `poolAt`
+   which pool it is standing in first.
+3. ⚠ **IT FLOATED FAR TOO HIGH, AND ONLY THE OFFLINE RENDER SHOWED IT.** `FLOAT_DEPTH` was 0.86; against
+   makeHippo()'s own geometry (barrel 0.18–1.86, skull top 1.48, eyes 1.52, nostrils 1.34) that left the
+   whole head and most of the body in the air — it read as a hippo **WADING**, the one thing "swims" must not
+   look like. **1.30** puts the line just over the muzzle: nostrils, eyes and ears clear it, a hump of back
+   stays proud. Not visible from inside a headless canvas, which is why it would have shipped wrong.
+   `dossiers/render_hippo.py` → `hippo_render.png`. **Do not retune it without re-rendering.**
+   - ⚠ …and the render only worked once the **water plane was TILED**. `render()` is a painter's algorithm:
+     one 8×8 slab the animal stands *through* has a single mean depth and is drawn wholly in front or wholly
+     behind. The first sheet showed a hippo identical in water and on land — i.e. it verified nothing.
+- **Crocodiles are NOT hippo foes.** The first build had them in the list and every hippo went to CHARGE on
+  frame one (1–2 crocs spawn in the same pool, well inside PROVOKE_R) — and it was a **one-sided war**, since
+  `crocPickTarget` does not consider hippos, so the crocs got tusked to death in their own ponds.
+- **Cost:** 29 meshes each, `updateHippos` **56.5 µs at 6 hippos = 0.34% of the frame budget** (vs
+  `updateLions` 80.7 µs). Disposal **0 geometries / 0 textures** over 3 spawn→kill cycles.
+- Drops a **🦛 hippo tusk**: a trophy with **no recipe yet**, which is Steven's own call ("gets its own
+  recipe slot for future").
+
+### ⚒️ Eleven crafted items — loot finally becomes currency
+Before today: 24 species of drop, **three** recipes. The rest was a tally you could look at.
+- ⚠ **The recipes needed materials that did not exist.** Steven's table is keyed on "red / green / blue /
+  purple cobra fang" and a cobra only ever dropped **skin**, in two flavours. Five fangs added, one per
+  morph. His colour names map onto the shipped table exactly once you notice **`midnight` is the one whose
+  own authoring note calls it "the current dark blue"** — the id is the odd one, not him.
+- ⚠ **The gold fang is a WILDCARD** (design call). Gold is the 5% rare *and* a 1500-HP boss; a fifth fang
+  that unlocked nothing would make the hardest kill in the game the least rewarding cobra. It substitutes
+  for any of the four, and the **coloured one is always spent first** — spending the rare one while an
+  ordinary one sits in your pack is the same "silently deleted the thing you were walking towards" mistake
+  the `BONE.MAX` eviction rule was rewritten to avoid.
+- ⚠ **Three material names were interpreted, not invented:** gorilla "bones" → **fangs** (a gorilla has never
+  dropped a bone), cheetah "tooth" → **claw**, python "scale" → **skin**, wild dog "tooth" → **fang**.
+- **The craft system was generalised.** `craft` was three hard-coded slots spelled out as explicit `if`s in
+  **four** places. Eleven recipes on eight new materials meant thirty more branches and a certainty one site
+  would be missed — the same shape as everything above. It takes any `BONE_KINDS` key now, through three
+  helpers, and the legacy `{tusk:1}` recipes still mean exactly what they meant.
+- ⚠ **Cobra fangs render as 🔴🟢🔵🟣🟡, not 🦷.** `craftCostStr` renders "1 <icon>", so five fangs wearing
+  🦷 made four different recipes read as the same requirement — and collided with the lion tooth. *Which*
+  cobra you must find is the entire difficulty of those recipes; the disc is the information.
+
+#### Prices, and the reasoning Steven asked for
+Anchors: daily drip 1×day (ten days = 55) · cheapest buy 4 · 🏹 crossbow **80** ("super expensive", a day-13
+goal) · 🪃 boomerang 40 · 🪽 double jump 24. **But** the warthog bounty (100/kill, flagged generous on
+2026-08-06) already makes the old table reachable on day 1-2 by anyone who hunts — so these are priced
+against a player who **hunts**, and the material gate does the real gating anyway.
+
+| 🫧 18 | 🐍 22 | 🐕 28 | 🪝 30 | 🦔 35 | 🦴 45 | ☠️ 50 | 🗡️ 55 | 🔥 70 | 👟 75 | 🥷 90 |
+|---|---|---|---|---|---|---|---|---|---|---|
+
+- **🦴 Gorilla Club 45** — 95 dmg on a 0.9 s cooldown is ~105 dps vs the boomerang's 100 every 20 s. The
+  **3.4 m reach** (half a hammer's) is what stops it being strictly better, not the price.
+- **🔥 Fire Wand 70** — just under the crossbow: the only item that changes the **map** rather than a health bar.
+- **👟 Night Shoes 75** — ⚠ +70% vs Swift Boots' +15% for 14. Five times the effect for five times the price
+  *plus* a cheetah kill. **Flagged: the biggest raw stat in the shop.** Steven's number, shipped as asked.
+- **🥷 Invisibility Cloak 90** — ⚠ **dearest thing in the game**, above the crossbow. "Nothing aggros you" is
+  a hard off-switch for the entire predator roster. If anything here is mispriced low it is this.
+
+#### Mechanics — every one reuses an existing seam
+Eleven items did not cost eleven subsystems: club/dagger → `dealKitMelee` + `MELEE_TOOL`; wand/bottle/flask →
+`thrownRocks[]` with a `splat` flag (and therefore the spear's disposal path); grabber → `nearestAnimalInFront`;
+poison → the cobras' own `applyCreatureVenom`. **Only fire needed something new** — `groundPatches` — and the
+Slime Flask shares it.
+- ⚠ **Slime reached all twelve movers for free** because `brambleSpeedMul` has **twelve call sites**, one in
+  every step function. It is now `hazardSpeedMul` (bramble × slime) with the old name kept as its alias, so
+  the twelve sites did not churn. A hazard added there reaches every animal in the game.
+- ⚠ **Fire spread is bounded three ways** — `PATCH.MAX` 20, a burnt bramble is *consumed*, and a burnt grass
+  clump takes a 40 s relight cooldown. An unbounded fire on 500×500 of grass is a game-ending bug.
+- ⚠ **…and one of those bounds ate the feature.** "Don't re-ignite within 0.7×r" also stopped a fence
+  standing *inside* the flames from burning at all — i.e. the common case, where you shot the fence.
+  **Burning up and spreading are different questions.** Measured: fence still standing after 2 s in a fire.
+- ⚠ **The Invisibility Cloak is TWO mechanisms because the game has two kinds of detection.** "90% harder"
+  is a number and rides `stealth.visMul`, which every range-based sense already multiplies through. "Nothing
+  aggros" is **not** a number — it is `playerUnseen()` gating every target-picking scan, **plus one gate on
+  the lion's final `detR`**, because sight, sound and scent are separate senses there and a lion that *heard*
+  you would still have come. Attacking breaks it for 3 s; `breakCloak()` sits in `dealKitMelee` (the choke
+  point for every melee weapon), the throws, the pounce and the crossbow.
+- **The Retaliation Cloak is an HP-drop watchdog**, third user of that pattern. There is no single "player
+  took damage" function — a lion maul, a croc roll, venom, brambles and a fall all decrement `player.health`
+  in their own modules — but every direct attacker already sets `player.lastHitBy`. Rate-limited to one
+  spike per blow (a death roll drops your HP on consecutive frames), and it ignores damage with no attacker.
+
+### ⚠ THE BASELINE WAS NOT 25/25 — it was 24/25, and the reason is a repeat offender
+The storey tests hard-coded their build site at `(60,60)` with the comment *"well clear of the ponds"*. It is
+not: `chooseWaterHoles()` places three pools of radius 20–29 **at random, once per page load**, and
+`resetGame()` deliberately does not re-roll them. So the site is a **per-page-load coin flip**. This load put
+a 28 m pond 18 m away — `terrainY(60,60) = -3.32`, `waterSpeedMul = 1/3` — the tower was built underwater,
+the player swam instead of jumping, and it failed with numbers that look like a collision regression.
+- **Third time this suite has been caught testing underwater** (see 974c06e, the mobile double-tap check).
+- The site is chosen against the actual world now (`pickBuildSite()`), spiralling out from (60,60) so a dry
+  world still builds where it always did.
+
+### Verified — suite 25 → 31, all green (3 consecutive runs, 0 console errors)
+| pin | result |
+|---|---|
+| **bramble coverage** | one member of **every** registry list driven through a real fence: **0 free crossers**, every amount matching its template, croc **10** (was 0) |
+| **ghosts** | all four placeables: ghost position == placed position to **<0.01**; one ghost visible at a time; red refuses and charges **0**; a corner join still reads legal |
+| **hippo** | every hippo floats at the water line and **rose off the bed**; swims **6.0** vs walks **4.2**; **all 5** retreated to water when hurt; charged when crowded on **0** damage; gore **48**; night max **58.9 m** inside a 93.6 leash; **0 crocs harmed** |
+| **craft** | all **11** recipes refuse without their material and consume it with it; gold covers all four colours and is spent last; gold is **not** universal; legacy recipes unchanged |
+| **fire** | lit **one** fence of four → **all four** consumed; cap held; burn **14/s**; burned out to **0** patches; **0 geometries / 0 textures** leaked; slime reaches the animal path |
+| **cloak** | **4/4** predators refuse to pick a crouched player and **4/4** pick an uncloaked one; **0 of 5** lions chase cloaked, **5 of 5** uncloaked; breaks on attack, re-forms, ends on standing up |
+| frame budget | `updateHippos` **56.5 µs** at 6 hippos — 0.34% of 16 667 µs |
+- No screenshot: the pane's compositor is still wedged black. Verified structurally and via the offline
+  projector, per the standing rule.

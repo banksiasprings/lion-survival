@@ -42,11 +42,19 @@ storeys**, roofs at 30. Nothing warns before the existing generic cap message.
   raised twice already (10 → 50 → 100) with a measured perf curve behind it.
 
 ## 4. `bones: killing several species leaves several distinct named drops` is isolation-flaky
-*Pre-existing, re-confirmed 2026-08-06. Test-only.*
+*Pre-existing, re-confirmed 2026-08-06 and again 2026-08-07. Test-only.*
 
 Passes on a fresh `resetGame()`, fails when run twice without one, and fails standalone
-without a reset. **Unrelated to any feature work** — re-confirmed independent of the
-multi-storey change. The suite protocol is: call `resetGame()` before `runSavannahTests()`.
+without a reset. **Unrelated to any feature work.** The suite protocol is: call
+`resetGame()` before `runSavannahTests()`.
+
+⚠ **2026-08-07 — the same root cause bit a second test and it is worth naming.** The new
+cloak test probed only **2 of its 4 predators** on its first run, because earlier tests in
+the suite kill cheetahs and porcupines and never restock them: its coverage silently
+halved depending on run order. It now **spawns what is missing** rather than skipping it,
+and asserts it probed all four. *A test that quietly tests less is the same failure as a
+test that passes wrongly.* This entry stays open because the bones test still relies on
+run order rather than owning its own setup.
 
 - **Fix:** give the test its own ecosystem setup/teardown rather than relying on run order.
 
@@ -73,3 +81,50 @@ reachable on day 1-2 by anyone who hunts.
 
 - **Fix:** the single number in `KILL_BOUNTY`.
 - **Why not taken:** it is exactly the number Steven asked for. Flagged, not second-guessed.
+
+## 7. A free-standing gate is AMBER, not red — a stated departure from the brief
+*Found 2026-08-07 (placement previews). Design. Needs Steven's decision.*
+
+His brief listed "gate not touching a wall" among the **red / invalid** preview states.
+Shipped as **amber**: the ghost says it, the placer still allows it.
+
+- **Why not taken:** a hard refusal makes the **first gate of any compound impossible to
+  place** — you would have to build a wall before you could ever build a gate — and it
+  kills the natural "drop the gate, then wall out from it" build order.
+- **Fix:** one line in `gatePlacementPlan()` — return the reason as `blocked` instead of
+  `warn`. **His call.**
+
+## 8. 👟 Night Shoes are the biggest raw stat in the shop
+*Found 2026-08-07 (crafted tier). Balance. Shipped as asked.*
+
++70% movement, walking and sprinting, for 75 coins and a cheetah claw. The Swift Boots
+are +15% for 14 coins — so this is **five times the effect** and it stacks with
+Adrenaline (×1.4) for an effective ×2.38.
+
+- **Fix:** the single number `CRAFT.NIGHT_SHOES`.
+- **Why not taken:** +70% is exactly the number Steven specified, and the material is a
+  cheetah — the fastest thing alive and genuinely hard to kill. Flagged, not tuned.
+
+## 9. 🥷 The Invisibility Cloak is a hard off-switch for the whole predator roster
+*Found 2026-08-07 (crafted tier). Balance. Shipped as asked.*
+
+While crouched, **nothing** picks you as a target — not the pride, not the gorilla, not a
+croc, not the hippo. Priced at 90, the dearest item in the game, deliberately above the
+crossbow's 80. It still costs you your movement speed (crouch is half) unless you also
+wear the Sand-Python Coil, and attacking breaks it for 3 s.
+
+- **Fix:** `CRAFT.CLOAK_VIS` softens the *seeing*; removing `playerUnseen()` from the
+  target scans softens the *aggro*. They are separate knobs on purpose.
+- **Why not taken:** "creatures don't aggro until the player uncrouches or attacks" is
+  Steven's own wording, and the aggro gate is the only way to deliver it. **If it plays
+  too strong, this is the first thing to look at.**
+
+## 10. 🦛 Hippo tusks drop but nothing spends them
+*Found 2026-08-07 (hippo). Design. Steven's own call.*
+
+The hippo drops a distinct 🦛 trophy that tallies, survives despawn and has no recipe —
+because he asked for exactly that ("gets its own recipe slot for future").
+
+- **Fix:** one entry in `SHOP_ITEMS` with `craft:{ hippo:1 }` and one line in `COIN_PRICES`.
+- **Why not taken:** he deferred it explicitly. Noting it so a future session does not
+  read the unused material as an oversight.

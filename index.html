@@ -12388,6 +12388,17 @@ const HIPPO = {
   CALM_AFTER:  6.0,  // seconds back home before it can be provoked again — stops a
                      // wounded hippo from re-charging the instant it touches water
   MOUTH_RATE:  7.0,  // jaw open/close lerp
+  // ⚠ HOW DEEP IT FLOATS — and the number came off the offline render sheet, because it
+  // was 0.86 and 0.86 was WRONG. Measured against makeHippo()'s own geometry: the barrel
+  // spans y 0.18–1.86, the skull tops out at 1.48, eyes sit at 1.52, ears at 1.56, and
+  // the nostrils top out at 1.34. A waterline at 0.86 left the whole head and most of the
+  // body in the air — it read as a hippo STANDING in the shallows, which is the one thing
+  // "swims when in water" must not look like. 1.30 puts the line just over the muzzle:
+  // nostrils, eyes and ears clear it and a hump of back stays proud, which IS the hippo
+  // silhouette and the whole reason those three were modelled riding high on the skull.
+  // ⚠ Verified on dossiers/hippo_render.png. Do not retune without re-rendering it —
+  // this is not visible from inside a headless canvas, which is why it shipped wrong.
+  FLOAT_DEPTH: 1.30,
 };
 // Night is `!dn.isDay`, the same flag the gorilla's whole day/night FSM reads. Not a
 // gameHour() range: two night predicates that can drift apart is a bug waiting to happen.
@@ -12545,7 +12556,7 @@ function hippoFloat(H, dt){
   // are usually the same pond and occasionally are not — a night wanderer can reach a
   // neighbour's water, and reading its home pond's level there would sink it or hover it.
   const w = poolAt(H.pos.x, H.pos.z);
-  const want = hippoInWater(H) ? (poolSurfaceY(w) - 0.86)
+  const want = hippoInWater(H) ? (poolSurfaceY(w) - HIPPO.FLOAT_DEPTH)
                                : terrainY(H.pos.x, H.pos.z);
   H.pos.y += (want - H.pos.y) * Math.min(1, 7*dt);
   H.mesh.position.copy(H.pos);

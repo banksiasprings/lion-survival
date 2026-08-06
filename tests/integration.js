@@ -1880,7 +1880,7 @@ test('hippo: floats, swims faster than it walks, charges when crowded, bolts whe
   detail.depths = hippoMeshes.map(H => ({ inWater: hippoInWater(H),
                                           depth: r2(H.pos.y - poolSurfaceY(poolAt(H.pos.x,H.pos.z) || H.pool)) }));
   detail.allFloat = hippoMeshes.every(H => !hippoInWater(H) ||
-    Math.abs((H.pos.y - poolSurfaceY(poolAt(H.pos.x,H.pos.z) || H.pool)) + 0.86) < 0.05);
+    Math.abs((H.pos.y - poolSurfaceY(poolAt(H.pos.x,H.pos.z) || H.pool)) + HIPPO.FLOAT_DEPTH) < 0.05);
   detail.someInWater = hippoMeshes.filter(H => hippoInWater(H)).length;
   // …plus the deterministic half: dropped on the BED at its pond centre, every hippo must
   // rise to the surface. This is the bug that shipped — buoyancy that only ran while the
@@ -1892,13 +1892,13 @@ test('hippo: floats, swims faster than it walks, charges when crowded, bolts whe
     return r2(H.pos.y - poolSurfaceY(H.pool));
   });
   detail.roseOffTheBed = bedTest;
-  detail.noneOnTheBed = bedTest.every(d => Math.abs(d + 0.86) < 0.05);
+  detail.noneOnTheBed = bedTest.every(d => Math.abs(d + HIPPO.FLOAT_DEPTH) < 0.05);
 
   // ---- 2. WATER DOES NOT SLOW IT — the "swims when in water" rule ----
   // Same hippo, same speed argument, same frame count: in its pond vs on dry bank.
   const H0 = hippoMeshes[0], w0 = H0.pool;
   const runFor = (inWater)=>{
-    if(inWater) H0.pos.set(w0.x, poolSurfaceY(w0)-0.86, w0.z);
+    if(inWater) H0.pos.set(w0.x, poolSurfaceY(w0)-HIPPO.FLOAT_DEPTH, w0.z);
     else { const bx = w0.x + w0.r + 8; H0.pos.set(bx, terrainY(bx, w0.z), w0.z); }
     H0.mesh.position.copy(H0.pos);
     const s = { x:H0.pos.x, z:H0.pos.z };
