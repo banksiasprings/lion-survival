@@ -4742,6 +4742,7 @@ function pouncePrey(){
   } else {
     showKillfeed(best.health<=0 ? '🩸 Pounce kill — '+best.label+'!' : '🐾 Pounced the '+best.label+' (flee!)');
   }
+  grantKillBounty(best);   // 🪙 the gore-back branch can still be the killing blow — pay from outside it
 }
 
 // Eat from the nearest carcass (E). Cannot eat lions. Refills hunger in chunks.
@@ -9648,6 +9649,7 @@ function updateThrownRocks(dt){
         if(P.species==='elephant'){ P.aggroT = ELE.RAGE_TIME; P.lastHitBy=player; P.lastHitKind='player'; }   // enrages it → it hones in on YOU
         hit = true;
         showKillfeed(P.health<=0 ? ic+' Kill — '+P.label+'!' : (P.species==='elephant' ? '🐘 The elephant turns on you!' : ic+' Stunned the '+P.label));
+        grantKillBounty(P);   // 🪙
       }
     });
     // They chip the gorilla too — far tankier than prey (skip a perched/sleeping
@@ -9835,6 +9837,39 @@ function grantDailyCoins(daySurvived){
   saveProgress();
   showKillfeed(COIN+' +'+daySurvived+' coin'+(daySurvived===1?'':'s')+
                ' — survived day '+daySurvived+' · balance '+progress.coins);
+}
+
+// ---- 🪙 KILL BOUNTIES — the second way to earn (2026-08-06) ----------
+// Until now the ONLY income was surviving a day. This is the first kill-based
+// income in the game, so it is a TABLE rather than a warthog special-case:
+// pricing the next animal is one line here, not another branch at four call
+// sites. Keyed on `species`, i.e. the SPECIES[] table — prey only for now.
+// Calibration: 100 is deliberately enormous next to the daily drip (ten days
+// survived = 55) — a warthog gores back for 14, so it is a real fight, and one
+// hog buys the crossbow's 80. If that reads as too generous, this is the knob.
+const KILL_BOUNTY = {
+  warthog: 100,        // Steven, 2026-08-06
+};
+// Paid for the KILLING BLOW ONLY, and only to the player: every call site is a
+// direct player attack (pounce / thrown rock, spear, bolt / boomerang / melee),
+// and the guard is `health <= 0` *after* that blow lands. So chipping a hog a
+// lion then finishes pays nothing, and a hog that drowns, starves, is taken by
+// a croc or bleeds out on your brambles pays nothing either — matching the
+// game's existing attribution rule, where only a direct hit tags
+// `lastHitBy = player`.
+// `_bountyPaid` is load-bearing, not belt-and-braces: a corpse stays in
+// preyMeshes until updatePrey reaps it at the end of the frame, and neither
+// projHit nor the melee scan filters on health, so a second rock landing on the
+// same dead hog in the same frame would otherwise pay twice.
+function grantKillBounty(o){
+  if(!o || o.health > 0 || o._bountyPaid) return 0;
+  const amt = KILL_BOUNTY[o.species] || 0;
+  if(!amt) return 0;
+  o._bountyPaid = true;
+  progress.coins += amt;
+  saveProgress();                       // same contract as every other coin grant
+  showKillfeed(COIN+' +'+amt+' coins — '+(o.label || o.species)+' down · balance '+progress.coins);
+  return amt;
 }
 
 const SAVE_VERSION = 1;
@@ -10146,6 +10181,7 @@ function boomerangStrike(kind, o){
     o.health -= D; o.state='flee'; o.alertTimer = 3;            // it bolts — that's AI, not a stun
     if(o.species==='elephant'){ o.aggroT = ELE.RAGE_TIME; o.lastHitBy=player; o.lastHitKind='player'; }   // the bull hones in on you
     showKillfeed(o.health<=0 ? '🪃 Boomerang kill — '+o.label+'!' : '🪃 Boomerang hits the '+o.label);
+    grantKillBounty(o);   // 🪙
   } else if(kind==='gorilla'){
     o.health -= D;
     showKillfeed(o.health<=0 ? '🪃 Boomerang kill — gorilla!' : '🪃 Boomerang bites into the gorilla!');
@@ -12097,6 +12133,7 @@ function dealKitMelee(hit, dmg, tool){
     o.health -= dmg; o.state='flee'; o.alertTimer = 3;      // it bolts — that's AI, not a stun
     if(o.species==='elephant'){ o.aggroT = ELE.RAGE_TIME; o.lastHitBy=player; o.lastHitKind='player'; }   // the bull hones in on you
     showKillfeed(o.health<=0 ? kill() : tool.icon+' The '+tool.name+' '+tool.hit+' the '+o.label);
+    grantKillBounty(o);   // 🪙
   } else if(hit.kind==='gorilla'){
     t='gorilla';
     o.health -= dmg;

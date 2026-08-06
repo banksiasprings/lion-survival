@@ -1521,6 +1521,129 @@ test('crocodile: every croc bursts out, hunts to the land ring, and walks home',
 });
 
 // =====================================================================
+//  FEATURE 6 — a warthog you kill YOURSELF is worth 🪙100
+// =====================================================================
+// Multi-instance in the sense this file cares about: the bounty is driven through
+// EVERY player weapon (melee, boomerang, thrown spear, pounce) and every non-player
+// death (cheetah, wild dog pack, and a plain world death with no attacker at all),
+// then the whole balance is asserted at once. A build that paid on any hog death,
+// or paid twice for a corpse still sitting in preyMeshes, passes a one-weapon smoke
+// test and fails this.
+test('bounty: only YOUR killing blow on a warthog pays 100 coins', ()=>{
+  pinPlayer();
+  const detail = {}, spawned = [];
+  const BOUNTY = KILL_BOUNTY.warthog;
+  const coinsBefore = progress.coins;          // restored at the end — the suite must not mint currency
+  const hog = (x, z)=>{ const H = makePrey('warthog', x, z, 'bounty-test'); spawned.push(H); return H; };
+
+  // Ground with no other animal inside `r`, so a hog put here is unambiguously the
+  // one the pounce scan and the projectile find.
+  const emptySpot = (r)=>{
+    const lists = [preyMeshes, lionMeshes, dogMeshes, gorillaMeshes, rhinoMeshes, cheetahMeshes];
+    for(let k=0;k<400;k++){
+      const x = rand(-MAPR+30, MAPR-30), z = rand(-MAPR+30, MAPR-30);
+      if(waterSpeedMul(x, z) !== 1) continue;                       // dry land only
+      if(lists.every(L => !L || L.every(e => Math.hypot(e.pos.x-x, e.pos.z-z) > r))) return { x, z };
+    }
+    return null;
+  };
+  // Every case is measured as a DELTA around one synchronous blow — no world update
+  // runs inside the measurement, so nothing else on the map can move the balance.
+  const cases = {};
+  const blow = (name, fn)=>{
+    const before = progress.coins;
+    const H = fn();
+    cases[name] = { paid: progress.coins - before, died: !!H && H.health <= 0 };
+  };
+
+  // ---- 1. THE PLAYER'S OWN KILLS — one hog per weapon, real damage numbers ----
+  blow('melee_hammer', ()=>{ const H = hog(player.pos.x + 3, player.pos.z);
+    dealKitMelee({ kind:'prey', o:H }, 67, MELEE_TOOL.hammer); return H; });
+  blow('boomerang', ()=>{ const H = hog(player.pos.x - 3, player.pos.z);
+    boomerangStrike('prey', H); return H; });
+
+  // The spear goes through the REAL updateThrownRocks path (projHit, damage table,
+  // kill line) — cleared first so no stray projectile from an earlier test is in flight.
+  thrownRocks.length = 0;
+  blow('thrown_spear', ()=>{
+    const s = emptySpot(20); if(!s) return null;
+    const H = hog(s.x, s.z);
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.1,4,3), new THREE.MeshBasicMaterial());
+    m.position.set(H.pos.x, H.pos.y + 0.5, H.pos.z); scene.add(m);
+    thrownRocks.push({ mesh:m, vel:new THREE.Vector3(0,0,0.01), dist:0, mult:1, spear:true });
+    updateThrownRocks(1/60);
+    return H;
+  });
+  thrownRocks.length = 0;
+
+  // Pounce is the warthog's signature interaction (it gores back for `counter`), and the
+  // bounty sits OUTSIDE that branch — so a hog killed by the same lunge that would have
+  // been gored still has to pay. Needs the necklace gate, an empty patch, and a camera
+  // actually looking at it.
+  const sp = { x:player.pos.x, z:player.pos.z }, ownedNecklace = hasNecklace();
+  blow('pounce', ()=>{
+    const s = emptySpot(14); if(!s) return null;
+    if(!ownedNecklace) progress.accessories.push('lion_necklace');
+    player.pos.set(s.x, terrainY(s.x, s.z), s.z); pinPlayer();
+    const H = hog(s.x, s.z + 2.5);
+    camera.position.set(player.pos.x, player.pos.y + 1.7, player.pos.z);
+    camera.lookAt(H.pos.x, H.pos.y + 0.5, H.pos.z);
+    player._pounceCd = 0; player._hidden = false; player.crouching = false;
+    pouncePrey();
+    return H;
+  });
+  if(!ownedNecklace){ const i = progress.accessories.indexOf('lion_necklace'); if(i >= 0) progress.accessories.splice(i,1); }
+  player.pos.set(sp.x, terrainY(sp.x, sp.z), sp.z); player.knockback.set(0,0,0); pinPlayer();
+
+  // ---- 2. DEATHS THAT ARE NOT YOURS — must pay nothing ----
+  // Real predator bite functions, driven the way the game drives them.
+  const C = cheetahMeshes[0], D = dogMeshes[0];
+  if(C){
+    const st = { t:C.target, k:C.targetKind };
+    blow('cheetah_kill', ()=>{ const H = hog(player.pos.x + 6, player.pos.z);
+      C.target = H; C.targetKind = 'prey'; cheetahBite(C); return H; });
+    C.target = st.t; C.targetKind = st.k;
+  }
+  if(D){
+    const st = D._preyTarget;
+    blow('wilddog_kill', ()=>{ const H = hog(player.pos.x - 6, player.pos.z);
+      D._preyTarget = H; dogBite(D,'prey'); dogBite(D,'prey'); return H; });   // 22 a bite — the pack needs two
+    D._preyTarget = st;
+  }
+  // …and a death with no attacker at all (fell off a cliff / drowned / starved).
+  blow('no_attacker', ()=>{ const H = hog(player.pos.x, player.pos.z + 6); H.health = 0; return H; });
+
+  // ---- 3. THE REAP MUST NOT PAY AGAIN ----
+  // Every corpse above is still sitting in preyMeshes. updatePrey turns them into
+  // carcasses and killObj's the meshes; not one coin may fall out of that loop.
+  const beforeReap = progress.coins;
+  updatePrey(0.05);
+  detail.reapPaid   = progress.coins - beforeReap;
+  detail.allReaped  = spawned.every(H => preyMeshes.indexOf(H) < 0);   // disposal ran on every one
+
+  // ---- assertions ----
+  const mine   = ['melee_hammer','boomerang','thrown_spear','pounce'];
+  const theirs = ['cheetah_kill','wilddog_kill','no_attacker'].filter(k => cases[k]);
+  detail.bounty     = BOUNTY;
+  detail.cases      = cases;
+  detail.playerKillsPaid   = mine.map(k => cases[k] && cases[k].paid);
+  detail.nonPlayerKillsPaid= theirs.map(k => cases[k] && cases[k].paid);
+  detail.everyKillLanded   = mine.concat(theirs).every(k => cases[k] && cases[k].died);
+  detail.eachPlayerKillPaidExactly = mine.every(k => cases[k] && cases[k].paid === BOUNTY);
+  detail.noNonPlayerKillPaid       = theirs.every(k => cases[k].paid === 0);
+  detail.totalPaid  = progress.coins - coinsBefore;
+  detail.expectTotal= mine.length * BOUNTY;
+
+  const pass = detail.everyKillLanded && detail.eachPlayerKillPaidExactly &&
+               detail.noNonPlayerKillPaid && detail.reapPaid === 0 &&
+               detail.allReaped && detail.totalPaid === detail.expectTotal;
+
+  progress.coins = coinsBefore; saveProgress();    // leave the player's purse as we found it
+  pinPlayer();
+  return { pass, detail };
+});
+
+// =====================================================================
 //  runner
 // =====================================================================
 window.SAVANNAH_TESTS = T;

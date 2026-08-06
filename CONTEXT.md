@@ -3424,3 +3424,78 @@ just the deck above — a textbook false green, and the number was wrong by 0.8)
    elevated ones snap to the 2.2 rim. So the tower steps inward once, at deck 0, then goes straight up.
 3. **Cap arithmetic.** `KIT_WALL_MAX` 100 and `ROOF.MAX` 30 → a 4-walls-per-storey tower tops out at
    **25 storeys** on walls, 30 on roofs. Nothing warns before then beyond the existing cap message.
+
+
+## 🪙 WARTHOG BOUNTY — kills become income (2026-08-06)
+Steven: *"killing a warthog awards 100 coins."*
+
+### This is a NEW mechanic, not a wiring job
+Before today the game had **exactly one** source of coins: `grantDailyCoins(dn.day)` at the dawn that ends
+a day. Nothing else on the map paid currency — no kill, no loot pickup, no craft. So this is the second
+income stream in the economy, and it changes the shape of the curve rather than just adding a line to it.
+
+Because of that it went in as a **table**, `KILL_BOUNTY`, sitting immediately under `COIN_PRICES` — the
+same "one tunable block" discipline that stopped prices scattering across the 20 `SHOP_ITEMS` entries.
+Pricing the next animal is one line, not another branch at four call sites.
+
+| species | 🪙 |
+|---|---|
+| warthog | **100** |
+
+### ⚠ Design implication, flagged not buried
+100 is **enormous** against the daily drip. Surviving ten full days banks 55; one hog beats that, and one
+hog alone nearly buys the 🏹 Rhino Crossbow (80), the item priced as a day-13 goal. A warthog is 30 HP and
+gores back for 14, so it is a real fight — but it is also the small buck a **solo lion already hunts**, they
+spawn in herds of 1-3, and the ecosystem keeps prey stocked at 28+. The practical effect is that the whole
+`COIN_PRICES` table becomes reachable on day 1-2 by anyone who hunts. That is exactly what Steven asked
+for and it ships as asked; the knob if it reads as too generous is the single number in `KILL_BOUNTY`.
+
+### Attribution: the KILLING BLOW, and only the player's
+`grantKillBounty(o)` is called at the **four player→prey damage sites** and nowhere else:
+`pouncePrey`, the prey branch of `updateThrownRocks` (rock / spear / bolt), `boomerangStrike`, and
+`dealKitMelee`. Each call sits after the health decrement, and the function's own guard is `health > 0 →
+pay nothing`. So:
+- Chip a hog, a lion finishes it → **0**. The player's last call saw `health > 0`; the lion path never calls.
+- Cheetah, wild dog pack, croc, snake, drowning, starving, a fall → **0**. None of them is a call site.
+- **Brambles are deliberately NOT a call site.** A hog bleeding out on your fence pays nothing. This follows
+  the game's own attribution convention: every direct attack tags `lastHitBy = player`, and `updateBrambles`
+  pointedly tags nobody. Worth a second look if Steven wants trap kills to count — it is one call.
+- In `pouncePrey` the call is placed **outside** the gore-back branch. A warthog is the one animal with
+  `counter`, so the killing lunge and the retaliation branch are the same code path; paying from inside it
+  would have silently skipped the game's signature warthog kill.
+
+### `_bountyPaid` is load-bearing, not belt-and-braces
+A dead animal stays in `preyMeshes` until `updatePrey` reaps it at the **end** of the frame, and neither
+`projHit` nor the melee aim scan filters on health. A second rock landing on the same corpse in the same
+frame would pay twice without the flag. The flag lives on the animal object, which `killObj` frees whole —
+**no new disposal surface**: the bounty adds no meshes, geometries, materials or textures, so every
+`killObj` invariant is untouched by construction. `saveProgress()` is called on the grant, matching the
+existing contract ("saved on every coin grant").
+
+### Verified
+- **HUD updates immediately** — `updateHUD()` rebuilds `#topright` every frame from `animate()`. Measured:
+  balance 0 → 100 at the blow, HUD still reads 0 in that same frame, reads **100 on the very next frame**
+  (~16 ms). No refresh, no reopening the shop. The gold span is `rgb(241,196,15)`, on-screen, non-zero box.
+- **Killfeed** prints two lines: `🪃 Boomerang kill — warthog!` then `🪙 +100 coins — warthog down · balance 100`.
+- **Suite 25/25**, three consecutive runs after `resetGame()` (24 was the multi-storey baseline). The new
+  test also asserts it leaves the purse exactly as it found it — 0 → 0 across every run.
+- No screenshot: the pane's compositor was wedged black again while `renderer.info.render.calls` read 2811
+  on a 2560×1440 canvas — renderer fine, compositor broken. Verified structurally instead, per the
+  standing rule.
+
+### The test — `bounty: only YOUR killing blow on a warthog pays 100 coins`
+Multi-instance in the sense this suite cares about: **every** player weapon and **every** non-player death,
+asserted as one balance.
+| case | paid | died |
+|---|---|---|
+| melee (hammer 67) | 100 | ✓ |
+| boomerang (100) | 100 | ✓ |
+| thrown spear, through the real `updateThrownRocks` | 100 | ✓ |
+| pounce (54, incl. the gore-back path) | 100 | ✓ |
+| `cheetahBite` | **0** | ✓ |
+| `dogBite` ×2 (22 a bite — the pack needs two) | **0** | ✓ |
+| no attacker at all (`health = 0`) | **0** | ✓ |
+| **the reap** — `updatePrey` turning all 7 corpses into carcasses | **0** | 7/7 reaped |
+- Total 400 = 4 × 100, exact.
+- Each case is a **delta around one synchronous blow** with no world update inside the measurement, so a
+  live ecosystem cannot perturb it — the flake that has bitten the bones test twice.
