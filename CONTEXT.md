@@ -3966,3 +3966,68 @@ with the control that stops it passing for the wrong reason:
   bowl shallows to nothing near its rim, so a hippo standing in 20 cm at 0.85r is still in its pond and
   must not count as having left.
 - 34 → **40 meshes**; `updateHippos` **40.0 µs** at 6 hippos, 0.24% of the frame budget.
+
+## 🎒 RAW MATERIALS PERSIST THROUGH DEATH (2026-08-07f)
+Steven: *"currently on death coins persist ✅ but the inventory of collected materials resets to zero.
+I want those to persist too."*
+
+### THE DEATH-PERSISTENCE CONTRACT — the explicit list
+Death sets `gameState = 'over'`; restarting calls `startGame()` → **`resetGame()`**, which *is* the respawn.
+So `resetGame` is the single place this contract is expressed.
+
+| | |
+|---|---|
+| **CARRIES OVER** | 🪙 **coins** · 🦷 **toothCount** · 🦴 **tuskCount** · 🦏 **hornCount** · 🎒 **`boneCounts{}`** — every `BONE_KINDS` drop: bones, fangs, quills, claws, skins, slime, the hippo tusk, all five cobra fangs · 🛒 **shop unlocks + loadout** (already did, since 2026-07-31) · 🏷️ the name book |
+| **RESETS** | ❤️ health · 🍖 hunger · 🏃 stamina · ⏱️ **ability cooldowns** (`abilityCd`) · ✨ **timed buffs** (`buffs`) · ☠️ venom · 🪵 **wood 20** · 🪨 **rock 10** · 🌿 **bramble 0** · every world object (walls, roofs, gates, brambles, fires, bone drops lying on the map) · the animals |
+
+- ⚠ **The line is "picked up from a killed animal".** Wood, rock and bramble are **gathered from the
+  world** — trees, the ground, berry bushes — not taken off a corpse, and they are handed out as a
+  **starter stock every run** (20/10). Persisting them would compound an infinite building supply across
+  deaths. That is why they stay run-scoped, and it is the line Steven's own wording draws.
+- ⚠ **Consumable/ability state is explicitly out of scope, and there was nothing to exclude.** The crafted
+  items have **no charges** — every one is cooldown-gated, so there is no per-use resource to persist even
+  by accident. The single per-USE material cost in the game is the crossbow's rhino horn, and that spends
+  `hornCount`, which is a raw material and therefore persists by the rule above (spending it now also
+  writes through, so ammo you burn is burned for good).
+- **Shop weapons already persisted**, so materials now match the behaviour of the weapons they are spent
+  on — which is what Steven asked me to check rather than assume.
+- ⚠ **`clearBoneDrops()` still runs.** Remains lying on the MAP are world objects with meshes to dispose;
+  what you have already walked over and collected stays in the pouch. Those are different things and the
+  reset only stopped doing the second one.
+
+### Implementation
+`materialsSnapshot()` / `materialsRestore()` sit next to `saveProgress`, and every mutation routes through
+`saveMaterials()` so no site can forget: **pickup** (`pickUpBone`), **craft spend** (`unlockItem` already
+saved), **crossbow ammo**. `SAVE_VERSION` **1 → 2**; the loader's existing
+`saved.saveVersion < SAVE_VERSION` branch rewrites an older save on load, so a v1 save arrives with an
+empty pouch rather than being rejected.
+- ⚠ **Sanitised on the way in**, the same treatment `nameBook` gets and for the same reason — this is
+  free-form JSON off localStorage. Unknown keys are dropped (a material no icon or recipe table knows
+  about), counts are clamped to non-negative integers ≤ 9999. Verified: `tooth:-5 → 0`, `tusk:2.7 → 2`,
+  `horn:'x' → 0`, `NOT_A_REAL_DROP → dropped`, `zebra:-3 → dropped`.
+- ⚠ **ORDERING.** `materialsRestore` reads `BONE_KINDS`, a `const` declared ~3000 lines *below* it. Its only
+  load-time caller is `loadProgress()`, which runs at the very bottom of the file — **verified, not
+  assumed**, because a `const` read before its declaration is a TDZ ReferenceError that kills the whole
+  bootstrap silently, which this file has already been bitten by twice (`KIT_WALL_MAX`, `venomDuration()`).
+
+### 🐛 The bug the migration test caught
+`materialsRestore` originally **returned early** on a missing or corrupt payload. A v1 save has no
+`materials` field at all — so loading one left whatever was already in the live globals standing, and the
+migration's own `saveProgress()` then wrote those stale numbers into the upgraded save, **inventing
+materials the player never picked up**. Harmless on a true cold boot where the globals are already 0,
+which is exactly why it would have shipped. *"Restore" means make the live state match the save; an early
+return means it matches neither.* It zeroes the pouch now.
+
+### Verified — suite 33 → 34, all green (4 consecutive runs)
+`death: raw materials and coins carry over; HP, buffs, cooldowns and world stock reset`
+- ⚠ **Both halves, deliberately.** A persistence test that only checks what *should* carry over would pass
+  against a build that persists everything, including the per-life state that must not.
+| pin | result |
+|---|---|
+| earn them the real way | 5 drops via `dropBone` → `pickUpBone` (4 pouch kinds + 1 legacy counter) — not by assigning to a counter |
+| carries over | all 4 pouch kinds, the lion tooth, 4321 coins, 4 unlocks — **identical across the death** |
+| resets | health → full · all 3 buffs → 0 · `abilityCd` cleared · wood/rock/bramble → **20/10/0** · map drops → 0 |
+| cold boot | survives a full localStorage round-trip; payload is `saveVersion 2` with a `materials` block |
+| sanitising | negatives, fractions, strings and unknown keys all rejected |
+| **v1 migration** | 57 coins, crossbow unlock and loadout all kept · upgraded in place to v2 · **invents nothing** |
+| corrupt save | does not throw, keeps coins, leaves a clean pouch |

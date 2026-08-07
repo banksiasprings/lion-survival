@@ -327,6 +327,13 @@ survive closing the app. Cheap first buys are the **Healing Herb (4)**, **Smoke 
 (6)**; the **Rhino Crossbow is 80 coins AND a rhino horn**. The 🦷/🦴/🦏 craft materials are separate and still
 reset every run — coins are the thing that lasts.
 
+**🎒 …AND SO ARE YOUR MATERIALS, AS OF 2026-08-07.** Anything you picked up off a dead animal — teeth,
+tusks, horns, fangs, quills, claws, skins, slime, bones — **survives dying**, exactly like coins and your
+purchased kit. Only what you *collected* carries over; remains still lying on the ground when you die are
+gone. **Wood, rock and bramble do NOT persist** — those are gathered from the world, not taken off a
+corpse, and you get a fresh 20 wood / 10 rock every run. Health, hunger, stamina, ability cooldowns and
+timed buffs all reset.
+
 **🦒 …AND KILLING A GIRAFFE PAYS 1000 COINS.** The second and only other way to earn. It must be **your
 own killing blow** — melee, thrown spear, bolt, boomerang or pounce. A giraffe that a lion finishes, that
 a crocodile drags under, that starves, drowns or bleeds out on your bramble fence pays **nothing**, and

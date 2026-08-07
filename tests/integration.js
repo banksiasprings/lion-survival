@@ -2447,6 +2447,7 @@ test('craft: all eleven recipes gate on their material, charge it, and none is f
     'python_coil','night_shoes'];
   const coins0 = progress.coins, unlocked0 = new Set(progress.unlocked);
   const bones0 = JSON.stringify(boneCounts);
+  const legacyBefore = { t:toothCount, u:tuskCount, h:hornCount };
   detail.count = IDS.length;
   detail.allInCatalogue = IDS.every(id => !!SHOP_BY_ID[id]);
   detail.allPriced      = IDS.every(id => itemPrice(id) > 0);
@@ -2501,8 +2502,12 @@ test('craft: all eleven recipes gate on their material, charge it, and none is f
   detail.legacyStillGates = !canCraft(SHOP_BY_ID['kit_boomerang']);
 
   // restore everything this test touched
+  // ⚠ restore the LEGACY counters to what they were, not to zero. They used to be
+  // run-scoped so zeroing them here cost nothing; since 2026-08-07f they are PERSISTED,
+  // and a test that zeroes them writes that straight into the player's save.
   progress.coins = coins0; progress.unlocked = unlocked0;
-  boneCounts = JSON.parse(bones0); toothCount = 0; tuskCount = 0; hornCount = 0;
+  boneCounts = JSON.parse(bones0);
+  toothCount = legacyBefore.t; tuskCount = legacyBefore.u; hornCount = legacyBefore.h;
   saveProgress(); pinPlayer();
   const pass = detail.allInCatalogue && detail.allPriced && detail.allHaveRecipe &&
                detail.unknownMaterials.length === 0 &&
@@ -2511,6 +2516,161 @@ test('craft: all eleven recipes gate on their material, charge it, and none is f
                detail.goldCoversEveryColour && detail.spendsColouredFirst &&
                detail.fallsBackToGold && detail.goldIsNotUniversal &&
                detail.legacyStillWorks && detail.legacyStillGates;
+  return { pass, detail };
+});
+
+// =====================================================================
+//  🎒 WHAT SURVIVES DEATH  (2026-08-07f)
+// =====================================================================
+// Steven: raw animal materials must now persist through death, like coins. This pins the
+// WHOLE contract, both halves, because a persistence test that only checks the things that
+// SHOULD carry over would pass just as happily against a build that persists everything —
+// including the per-life state that must not.
+test('death: raw materials and coins carry over; HP, buffs, cooldowns and world stock reset', ()=>{
+  pinPlayer();
+  const detail = {};
+  const coins0 = progress.coins;
+  const bones0 = JSON.stringify(boneCounts);
+  const legacy0 = { t:toothCount, u:tuskCount, h:hornCount };
+  const unlocked0 = new Set(progress.unlocked);
+
+  // ---- 1. EARN A DROP THE REAL WAY: kill something, then walk over the remains ----
+  // ⚠ Driven through dropBone → pickUpBone, not by assigning to the counter, so the test
+  // exercises the path a player actually takes and would catch a pickup that credits the
+  // pouch without persisting it.
+  const site = clearGroundNear(player.pos.x, player.pos.z, 8, 20);
+  player.pos.set(site.x, 0, site.z); pinPlayer();
+  boneCounts = {}; toothCount = 0; tuskCount = 0; hornCount = 0;
+  const KINDS = ['zebra', 'porcupine', 'cobra_fang_acid', 'hippo'];   // pouch materials
+  KINDS.forEach((k, i)=>{
+    dropBone(k, new THREE.Vector3(player.pos.x + (i-1.5)*0.4, 0, player.pos.z));
+  });
+  // …and one that routes to a LEGACY craft counter instead of the pouch
+  dropBone('lion', new THREE.Vector3(player.pos.x, 0, player.pos.z + 0.3));
+  let picked = 0;
+  for(let i=0;i<12 && pickUpBone(); i++) picked++;
+  detail.dropsPickedUp = picked;
+  detail.pouchAfterPickup = JSON.parse(JSON.stringify(boneCounts));
+  detail.legacyAfterPickup = { tooth:toothCount, tusk:tuskCount, horn:hornCount };
+  detail.pickupWorked = picked === KINDS.length + 1 &&
+                        KINDS.every(k => boneCounts[k] === 1) && toothCount === 1;
+
+  // ---- 2. set up the per-life state that must NOT survive ----
+  progress.coins = 4321;
+  woodCount = 77; rockCount = 55; brambleCount = 9;
+  player.health = 12;
+  buffs.adrenaline = 5; buffs.smoke = 4; buffs.eagleEye = 3;
+  abilityCd['kit_spear'] = 9;
+  const before = {
+    bones: JSON.parse(JSON.stringify(boneCounts)),
+    tooth: toothCount, tusk: tuskCount, horn: hornCount,
+    coins: progress.coins, unlocked: progress.unlocked.size,
+  };
+
+  // ---- 3. DIE AND RESTART, exactly the way the game does it ----
+  // `startGame()` calls `resetGame()` from the 'over' state; resetGame IS the respawn.
+  gameState = 'over';
+  resetGame();
+
+  const after = {
+    bones: JSON.parse(JSON.stringify(boneCounts)),
+    tooth: toothCount, tusk: tuskCount, horn: hornCount,
+    coins: progress.coins, unlocked: progress.unlocked.size,
+  };
+  detail.before = before; detail.after = after;
+
+  // ---- CARRIES OVER ----
+  detail.materialsPersist = JSON.stringify(before.bones) === JSON.stringify(after.bones) &&
+                            before.tooth === after.tooth && before.tusk === after.tusk &&
+                            before.horn  === after.horn;
+  detail.everyDropKindPersisted = KINDS.every(k => after.bones[k] === 1);
+  detail.legacyCounterPersisted = after.tooth === 1;
+  detail.coinsPersist    = after.coins === before.coins;
+  detail.unlocksPersist  = after.unlocked === before.unlocked;   // shop weapons already did
+
+  // ---- RESETS — the other half, and the half that makes this test mean something ----
+  detail.healthReset    = player.health === PLAYER.maxHealth;
+  detail.buffsReset     = buffs.adrenaline === 0 && buffs.smoke === 0 && buffs.eagleEye === 0;
+  detail.cooldownsReset = !(abilityCd['kit_spear'] > 0);
+  // ⚠ wood / rock / bramble are GATHERED FROM THE WORLD, not taken off a corpse — they go
+  // back to the starter stock. Persisting them would compound an infinite building supply
+  // across deaths, which is why the line is drawn at "picked up from a killed animal".
+  detail.worldStock = { wood:woodCount, rock:rockCount, bramble:brambleCount };
+  detail.worldStockReset = woodCount === 20 && rockCount === 10 && brambleCount === 0;
+  // …and nothing that fell on the map survives either — only what you actually collected
+  detail.mapDropsCleared = boneDrops.length === 0;
+
+  // ---- 4. it must survive a COLD BOOT, not just a respawn ----
+  const raw = (()=>{ try { return JSON.parse(localStorage.getItem(KIT_KEY)||'null'); }
+                     catch(e){ return null; } })();
+  detail.saveVersion = raw && raw.saveVersion;
+  detail.savePayloadHasMaterials = !!(raw && raw.materials);
+  toothCount = 0; tuskCount = 0; hornCount = 0; boneCounts = {};   // wipe the live copy
+  materialsRestore(raw && raw.materials);
+  detail.afterColdLoad = { bones: JSON.parse(JSON.stringify(boneCounts)), tooth: toothCount };
+  detail.survivesColdLoad = KINDS.every(k => boneCounts[k] === 1) && toothCount === 1;
+
+  // ---- 5. the restore SANITISES, because this is free JSON off localStorage ----
+  materialsRestore({ tooth:-5, tusk:2.7, horn:'x',
+                     bones:{ zebra:-3, NOT_A_REAL_DROP:9, lion:2.9, cheetah:1 } });
+  detail.sanitised = { tooth:toothCount, tusk:tuskCount, horn:hornCount,
+                       bones: JSON.parse(JSON.stringify(boneCounts)) };
+  detail.sanitiseHolds = toothCount === 0 && tuskCount === 2 && hornCount === 0 &&
+                         boneCounts.NOT_A_REAL_DROP === undefined &&   // unknown key rejected
+                         boneCounts.zebra === undefined &&             // negative dropped
+                         boneCounts.lion === 2 && boneCounts.cheetah === 1;
+
+  // ---- 6. ⚠ THE v1 → v2 MIGRATION: an existing save must not be damaged by the bump ----
+  // Steven has a real save. Loading it must keep his coins, unlocks and loadout, gain an
+  // EMPTY pouch (a v1 save has no materials field at all) — and crucially INVENT NOTHING.
+  const realSave = (()=>{ try { return localStorage.getItem(KIT_KEY); } catch(e){ return null; } })();
+  toothCount = 9; tuskCount = 9; hornCount = 9; boneCounts = { zebra:4 };   // stale live state
+  try {
+    localStorage.setItem(KIT_KEY, JSON.stringify({
+      saveVersion:1, coins:57, unlocked:['fire_torch','kit_crossbow'],
+      abilities:['fire_torch','kit_crossbow',null,null,null], accessories:[null,null],
+      activeAbility:1, nameBook:[], lastName:'' }));
+    loadProgress();
+    const up = JSON.parse(localStorage.getItem(KIT_KEY));
+    detail.v1 = { coins:progress.coins, hasCrossbow:progress.unlocked.has('kit_crossbow'),
+                  upgradedTo:up.saveVersion, materials:up.materials,
+                  pouch:JSON.parse(JSON.stringify(boneCounts)), tooth:toothCount };
+    detail.v1KeepsProgress = progress.coins === 57 && progress.unlocked.has('kit_crossbow');
+    detail.v1UpgradesInPlace = up.saveVersion >= 2 && !!up.materials;
+    // ⚠ the bug this caught: `materialsRestore` used to RETURN EARLY on a missing payload,
+    // leaving stale live counters standing — and the migration's own saveProgress() then
+    // wrote those into the upgraded save, inventing materials never picked up.
+    detail.v1InventsNothing = toothCount === 0 && Object.keys(boneCounts).length === 0 &&
+                              up.materials.tooth === 0 && Object.keys(up.materials.bones).length === 0;
+    // …and a corrupt payload must neither throw nor leave junk behind
+    toothCount = 7; boneCounts = { zebra:4 };
+    localStorage.setItem(KIT_KEY, JSON.stringify({ saveVersion:2, coins:5,
+      unlocked:['fire_torch'], abilities:[null], accessories:[null], activeAbility:0,
+      materials:'not an object' }));
+    let threw = false;
+    try { loadProgress(); } catch(e){ threw = true; }
+    detail.corruptSaveSurvives = !threw && progress.coins === 5 &&
+                                 toothCount === 0 && Object.keys(boneCounts).length === 0;
+  } finally {
+    if(realSave != null) localStorage.setItem(KIT_KEY, realSave);
+    loadProgress();                       // put the player's own save back, live
+  }
+
+  // restore the player's real pouch and purse — the suite must not mint materials either
+  boneCounts = JSON.parse(bones0);
+  toothCount = legacy0.t; tuskCount = legacy0.u; hornCount = legacy0.h;
+  progress.coins = coins0; progress.unlocked = unlocked0;
+  saveProgress(); pinPlayer();
+
+  const pass = detail.pickupWorked && detail.materialsPersist &&
+               detail.everyDropKindPersisted && detail.legacyCounterPersisted &&
+               detail.coinsPersist && detail.unlocksPersist &&
+               detail.healthReset && detail.buffsReset && detail.cooldownsReset &&
+               detail.worldStockReset && detail.mapDropsCleared &&
+               detail.saveVersion >= 2 && detail.savePayloadHasMaterials &&
+               detail.survivesColdLoad && detail.sanitiseHolds &&
+               detail.v1KeepsProgress && detail.v1UpgradesInPlace &&
+               detail.v1InventsNothing && detail.corruptSaveSurvives;
   return { pass, detail };
 });
 

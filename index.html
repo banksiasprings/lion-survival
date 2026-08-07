@@ -10123,7 +10123,10 @@ function grantKillBounty(o){
   return amt;
 }
 
-const SAVE_VERSION = 1;
+// ⚠ 1 → 2 (2026-08-07f): the save now carries raw animal materials as well as coins.
+// The loader's `saved.saveVersion < SAVE_VERSION` branch re-writes an older save on load,
+// so a v1 save simply arrives with an empty pouch rather than being rejected.
+const SAVE_VERSION = 2;
 // ⚠ The key changed on 2026-07-31. The OLD key still holds real progress for anyone
 // who has played, so it is read once and migrated rather than abandoned — orphaning it
 // would be exactly the "lose everything every time" Steven asked us to prevent.
@@ -10152,6 +10155,7 @@ function loadProgress(){
       : [];
     progress.lastName = typeof saved.lastName==='string'
       ? saved.lastName.slice(0, NAME_MAX_LEN) : '';
+    materialsRestore(saved.materials);           // 🎒 v2 — absent on a v1 save, so empty
     // MIGRATION v0 → v1. A legacy save predates coins, and back then every unlock was
     // FREE — so the player KEEPS everything they already own and simply starts on a 0
     // balance. Retroactively locking their kit would be the exact "lose everything"
@@ -10192,10 +10196,81 @@ function saveProgress(){
       accessories:progress.accessories, activeAbility:progress.activeAbility,
       // 🏷️ the name book + your last-typed name. NOT the animals themselves — see the
       // Name Tag module note: there is no world save to hang an animal identity on.
-      nameBook: progress.nameBook || [], lastName: progress.lastName || ''
+      nameBook: progress.nameBook || [], lastName: progress.lastName || '',
+      // 🎒 RAW ANIMAL MATERIALS — persisted from v2 (2026-08-07f). See materialsSnapshot().
+      materials: materialsSnapshot()
     }));
   } catch(e){ /* storage full / disabled — kit just won't persist */ }
 }
+
+// =====================================================================
+//  🎒 RAW MATERIALS PERSIST THROUGH DEATH  (2026-08-07f)
+// =====================================================================
+// Steven: *"currently on death coins persist but the inventory of collected materials
+// resets to zero. I want those to persist too."*
+//
+// ⚠ WHAT COUNTS IS "PICKED UP FROM A KILLED ANIMAL", and that line is the whole design:
+//   PERSISTS  🦷 toothCount · 🦴 tuskCount · 🦏 hornCount — the three legacy craft slots
+//             🎒 boneCounts{}  — every BONE_KINDS drop: bones, fangs, quills, claws,
+//                skins, slime, the hippo tusk, the five cobra fangs
+//   DOES NOT  🪵 wood · 🪨 rock · 🌿 bramble. These are GATHERED FROM THE WORLD (trees,
+//             the ground, berry bushes), not taken off a corpse, and they are handed out
+//             as a starter stock every run (20 wood / 10 rock) — persisting them would
+//             mean the stock compounds every death into an infinite building supply.
+//             Steven's ask is specifically raw animal drops; this is the line he drew.
+//
+// ⚠ AND NOT CONSUMABLE/ABILITY STATE — explicitly out of scope, and it already was:
+// `abilityCd` (cooldowns) and `buffs` are per-life and stay that way. The crafted items
+// have no charges at all — they are cooldown-gated, so there is nothing there to persist
+// even by accident. The one per-USE material cost in the game is the crossbow's rhino
+// horn, and that spends `hornCount`, which is a raw material and therefore persists by
+// the rule above.
+//
+// Shop purchases already persisted (`progress.unlocked` has been in localStorage since
+// 2026-07-31), so materials now match the behaviour of the weapons they are spent on —
+// which is what Steven asked me to check.
+function materialsSnapshot(){
+  const bones = {};
+  for(const k in boneCounts){
+    const n = boneCounts[k] | 0;
+    if(n > 0 && BONE_KINDS[k]) bones[k] = n;      // drop zeroes and anything unrecognised
+  }
+  return { tooth: toothCount|0, tusk: tuskCount|0, horn: hornCount|0, bones };
+}
+// ⚠ SANITISED ON THE WAY IN, because this is free-form JSON off localStorage — the same
+// treatment `nameBook` gets and for the same reason. An unknown key would put a material
+// in the pouch that no recipe or icon table knows about; a negative or fractional count
+// would poison every `canCraft` comparison downstream.
+// ⚠ ORDERING: this reads `BONE_KINDS`, a `const` declared ~3000 lines BELOW it, and the
+// only caller at load time is `loadProgress()` — which runs at the very bottom of the file,
+// after that declaration. Verified, not assumed: a `const` read before its declaration is a
+// TDZ ReferenceError that kills the whole bootstrap silently, which this file has already
+// been bitten by twice (`KIT_WALL_MAX`, `venomDuration()`). If `loadProgress()` is ever
+// moved earlier, this must move with it.
+function materialsRestore(m){
+  // ⚠ A MISSING OR CORRUPT PAYLOAD ZEROES THE POUCH — it does NOT return early leaving
+  // whatever was in the globals. "Restore" means make the live state match the save, and
+  // an early return means it matches neither. Caught by the v1-migration test: loading a
+  // pre-v2 save (which has no `materials` at all) left stale counters standing, and the
+  // migration's own `saveProgress()` then wrote those stale numbers into the upgraded
+  // save — inventing materials the player never picked up. Harmless on a true cold boot
+  // where the globals are already 0, which is exactly why it would have shipped.
+  const nn = v => Math.max(0, Math.min(9999, v|0));
+  const src = (m && typeof m === 'object') ? m : {};
+  toothCount = nn(src.tooth); tuskCount = nn(src.tusk); hornCount = nn(src.horn);
+  boneCounts = {};
+  const m2 = src;
+  if(m2.bones && typeof m2.bones === 'object'){
+    for(const k in m2.bones){
+      if(!BONE_KINDS[k]) continue;                // unknown drop key → ignored
+      const n = nn(m2.bones[k]);
+      if(n > 0) boneCounts[k] = n;
+    }
+  }
+}
+// Every material mutation routes through here so no site can forget to persist. Cheap:
+// one localStorage write per pickup, which is exactly what a coin grant already costs.
+function saveMaterials(){ saveProgress(); }
 
 // ---- Passive modifiers: recomputed each frame from accessories + timed buffs ----
 function computeEquipMods(){
@@ -10582,6 +10657,7 @@ function kitFireCrossbow(){
   scene.add(mesh);
   thrownRocks.push({ mesh, vel:dir.clone().multiplyScalar(CROSSBOW_SPEED), dist:0, crossbow:true });
   hornCount -= CROSSBOW_COST.horn;                // deduct a horn (HUD reads hornCount in updateHUD)
+  saveMaterials();                                // 🎒 spent ammo is spent for good
   playSound('throw');
   return true;
 }
@@ -13431,6 +13507,7 @@ function pickUpBone(){
     else if(slot === 'tusk')  held = ++tuskCount;
     else if(slot === 'horn')  held = ++hornCount;
     else                      held = boneCounts[d.key] = (boneCounts[d.key]||0) + 1;
+    saveMaterials();          // 🎒 picked up = kept, through death — same contract as coins
     showKillfeed((kind.icon||BONE.ICON)+' Picked up a '+d.label+' ('+held+')');
     playSound('collect');
     return true;
@@ -15228,11 +15305,13 @@ function resetGame(){
 
   woodCount  = 20;   // starter stock: 10 wood walls (2 wood each) buildable from a fresh spawn
   rockCount  = 10;   // starter stock: 2 stone walls (5 rock each) OR throwing ammo — rocks are scarce/premium
-  toothCount = 0;    // craft materials are run-scoped (the crafted item, once unlocked, persists across runs)
-  tuskCount  = 0;
-  hornCount  = 0;
+  // 🎒 ⚠ MATERIALS ARE **NOT** ZEROED HERE ANY MORE (2026-08-07f). They used to be, with
+  // the note "craft materials are run-scoped" — Steven reversed that: raw animal drops now
+  // survive death exactly like coins. `clearBoneDrops()` still frees the physical remains
+  // lying on the MAP (those are world objects with meshes to dispose); what you have
+  // already walked over and picked UP stays in the pouch.
   clearBoneDrops();  // 💀 free every set of remains lying on the map…
-  boneCounts = {};   // …and empty the pouch. Run-scoped, exactly like the three above.
+  materialsRestore(materialsSnapshot());   // …but keep the pouch, normalised
   scopeHeld  = false; scopeToggle = false;                   // drop any held/toggled crossbow scope on restart
   crouchToggle = false;                                      // stand up on restart (clear the crouch tap-toggle)
   // 🪽 fresh legs, and CLEAR THE LATCH — restarting with Space still held would otherwise
