@@ -3792,3 +3792,87 @@ so a hippo whose pond is 50 m from the rim physically cannot demonstrate a 70 m 
 the code is. Failed twice on a load whose first pond sat at z = -192 (MAPR 244) and passed on the next
 layout. It now picks the hippo with the **most clearance to the boundary**, and records that clearance in
 the detail. Fourth instance today of the same lesson: *control for world geometry the test does not own.*
+
+## 🐊🦛 Croc reach fix + a rhino-sized hippo (2026-08-07d)
+
+### 🐛 A CROCODILE COULD GRAB YOU OFF A SECOND-STOREY ROOF
+Steven, live-testing. It could: **every reach test in the croc module is purely XZ** —
+`crocInRange`, `crocInLandRange`, and the `Math.hypot(tp.x-C.pos.x, tp.z-C.pos.z)` in the CHARGE branch.
+A croc four metres below you was, as far as the code was concerned, standing next to you. Identical
+category error to `pushOutOfAABB` treating every wall as an infinite vertical column (2026-08-06): a 2-D
+test in a game that has since grown a third dimension.
+
+#### ⚠ THE OBVIOUS FIX WOULD HAVE DELETED THE CROCODILE
+Every other ground predator gates on `playerOffGround()` (`y − terrainY > 1.5`), and the croc pointedly
+does not. **That omission is load-bearing.** Inside a pond `terrainY` is the *dug bed*, so a player
+swimming at the surface measures **5.39 above the ground beneath them** (measured on a live pond) —
+`playerOffGround()` is therefore TRUE for every swimmer. Wiring it in here would have meant a crocodile
+could never grab anyone in the water, which is the entire animal. *The test now pins that trap
+explicitly:* `swimmerLooksOffGround: true` **and** `crocStillReachesSwimmer: true` in the same run.
+
+So the croc gets its own predicate, `crocCanReachPlayer(C)`, and it is about **water**, not the ground:
+| case | reachable |
+|---|---|
+| in the water, at any depth | **yes** — it swims; that is its element |
+| already held by this croc | **yes** — never re-litigated mid-haul, when the croc is dragging you down through exactly the height gap being measured |
+| up a tree / climbing / grappling | no |
+| otherwise | only within **`CROC_GRAB_Y` 1.5** of the croc's own height |
+- A roof deck sits **2.44** above the terrain under it, so 1.5 refuses it with ~0.9 to spare; a player on
+  a pond rim is **0.89** above a cruising croc (WATER.SURFACE −0.55 plus the 0.34 eye-ridge trim) and
+  stays comfortably in reach.
+- **Three gates, not one:** the target scan, `crocBeginGrab` (the choke point every grab in the game goes
+  through, so no future caller can route around it), and the plain **bite**. ⚠ Gating only the grab would
+  have left a croc chewing on a player two storeys up for 26 a snap — a quieter version of the same bug,
+  and the one that would have shipped.
+
+### 🦛 THE HIPPO IS NOW RHINO-SIZED, WITH THE TUSKS IT SHOULD ALWAYS HAVE HAD
+- **`HIPPO_SCALE` 1.0 → 1.24**, sized so its bounding **height** matches the rhino's — the reading of
+  "match rhino scale" that means "the same size" to someone looking at them. ⚠ Measured as the **max over
+  a full 180-frame animation cycle for both animals**, not from a single snapshot: both rigs move, so a
+  one-frame `Box3` differs by several percent depending when you catch it, and a first pass chased that
+  noise to the wrong number. Result **rhino 3.941 vs hippo 3.868 — ratio 0.981**, with the hippo far
+  longer through the barrel (5.6 vs 3.9), which is right for the species.
+- ⚠ **SCALE DOES NOT MOVE `BODY_R` OR `FLOAT_DEPTH` ON ITS OWN** — the trap documented on `PORC.BODY_R`
+  and `GOR.BODY_R` ("move it with the scale, or a bigger animal clips into walls it visibly stands clear
+  of"). Both are now multiplied through in exactly one place each, `hippoBodyR()` and `hippoFloatDepth()`,
+  so the one constant moves all three together and cannot drift again. Collider **1.05 → 1.30**,
+  waterline **1.30 → 1.61**, verified floating at −1.61.
+- **🦷 The tusks are rebuilt as three-segment tapered chains.** A cone cannot curve, so each lower canine
+  is three nested segments each angled a little further back — the same scene-graph trick the crocodile's
+  tail wave uses — with the radii tapering 0.115 → 0.082 → 0.052 so it reads as a tusk and not as three
+  stacked cones. **Pitched to clear the closed lip line**, which was the actual ask: the old tusks lived
+  *inside* the mouth and only existed during the two seconds of a charge, so the signature feature was
+  invisible in normal play. Muzzle flares **1.34** against the skull's 0.98 (a 37% flare), plus a fleshy
+  lip roll. 29 → **34 meshes**.
+- ⚠ **The render sheet could not answer its own question at first.** It claimed "the tusks must show even
+  closed" and then rendered the animal at 5 m on a three-quarter rear view where the muzzle occludes them.
+  A check you cannot read is not a check — same lesson as the untiled water. It now has a fourth panel,
+  a **head close-up**, which is where the claim is actually verified.
+- **HP and damage unchanged at 300 / 48, deliberately.** Steven asked whether they should scale. They were
+  already set *above* the rhino (220 / 35) precisely because a hippo is the pond apex — the model was the
+  thing that was undersized, not the stats. This makes the animal match numbers that were already right,
+  rather than requiring the numbers to chase the model.
+- **⚡ The target scan is now staggered** (`HIPPO.SCAN_EVERY` 6, offset by index). `hippoPickTarget` walks
+  the whole creature registry per hippo per frame and measured **33.3 µs of `updateHippos`' 53.8 µs — 62%**
+  at 6 hippos against 148 creatures. PROVOKE_R is 9 m and this is a proximity trigger, not a reflex test:
+  at a sprint you cover 1.6 m in the 100 ms worst case. Now **51.8 µs, 0.31% of the frame budget.**
+
+### Verified — suite 31 → 32, all green (8 consecutive runs + 5 more on a second page load)
+| pin | result |
+|---|---|
+| **croc vs height** | **16 trials** (4 crocs × 2.2 / 2.44 / 4.0 / 5.0 m): **0 grabs, 0 bites** |
+| the controls | all 4 crocs still grab at ground level **and** all 4 still take a swimmer in deep water |
+| the trap | `playerOffGround()` says a swimmer is unreachable; `crocCanReachPlayer` correctly says otherwise |
+| predicate | reaches on ground · refuses on a 4 m platform · refuses a treed player |
+| hippo | floats at the **scaled** 1.61, rises off the bed, swims 6.0 vs walks 4.2, all retreat when hurt, charges when crowded, gore 48, night range inside the leash, 0 crocs harmed |
+
+#### Two test-staleness failures caused by these changes, both caught and both worth stating
+1. The hippo float assertions pinned **`HIPPO.FLOAT_DEPTH`**, the base constant — which became the wrong
+   thing to assert the moment the scale helper existed. They read `hippoFloatDepth()` now: *assert the
+   function the engine reads, not the literal it is derived from.*
+2. The charge check ran **one** `updateHippos(DT)` and asserted `state === 'CHARGE'` — which the staggered
+   scan broke, on a hippo that charges perfectly well two frames later. It now allows `SCAN_EVERY + 2`.
+3. ⚠ And one in the NEW test: its predicate probe stood the player at `croc.x + 3`, which lands **inside
+   the pond** whenever the croc is mid-water — and 4 m above a pond *bed* is still 1.5 m *under* the
+   surface, so the croc correctly reached and the probe scored a correct build as broken. It now stands on
+   the bank and asserts `probeSpotIsDry` before trusting its own answer.

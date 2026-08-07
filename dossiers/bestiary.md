@@ -101,6 +101,11 @@ gorilla up a tree is left alone like every other targeting scan in the game. **R
 alone** — at 2+ tonnes they genuinely do shrug a croc off, and that was the case the old rule was about.
 **Hippos it also leaves alone: they share the water.**
 
+**⚠ IT CANNOT REACH YOU ON A ROOF (fixed 2026-08-07).** Until then every one of the crocodile's reach
+tests was flat 2-D, so a croc on the ground could grab you off a second-storey deck. Now it can only take
+you **at its own level (within 1.5 m) or anywhere in the water**. A wall top, a roof, an upper storey or a
+tree are all safe. **The water is not** — depth makes no difference at all in there; that is its element.
+
 **Fighting one:** hammer **67**, spear **80** — about **8 spears** to kill. (Until 2026-07-31 no weapon
 could touch a croc at all, and the same fault made the **cheetah** invulnerable since it was added. Both fixed.)
 
@@ -142,6 +147,10 @@ Cobra venom sticks to a croc **basking on the bank** but can't reach one **under
 **Every pond has 1–2 hippos as well as its crocodiles, and the two ignore each other.** A hippo is the
 toughest thing that walks: more than the rhino (220), well under the croc (600) — but it hits harder than
 anything else in the game.
+
+**It is the same height as a rhino and far longer** (2026-08-07) — the biggest-bodied animal on the map
+after the elephant. Two curved cream canines sweep up out of its lower jaw and **show even with its mouth
+shut**, against grey hide; when it charges, the mouth gapes wide and those tusks come at you first.
 
 **By day it is harmless if you let it be.** It wallows in its own water and comes out to **graze the shore
 grass**, drifting back in for a soak every so often. It has no interest in you at all.

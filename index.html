@@ -11748,6 +11748,39 @@ function spawnCrocodiles(){
 function crocSubmerged(C){
   return terrainY(C.pos.x, C.pos.z) < poolSurfaceY(C.pool) - 0.35;
 }
+
+// ---- 🐊 CAN THIS CROC ACTUALLY REACH THE PLAYER? (2026-08-07d) ----------------
+// 🐛 Steven: standing on a second-storey roof, a crocodile on the ground below still
+// grabbed him. It could: every reach test in this module — `crocInRange`,
+// `crocInLandRange`, the `Math.hypot(tp.x-C.pos.x, tp.z-C.pos.z)` in the CHARGE branch —
+// is **purely XZ**, so a croc four metres below you was, as far as the code was
+// concerned, standing right next to you. Same category error as `pushOutOfAABB` treating
+// every wall as an infinite vertical column (2026-08-06): a 2-D test in a game that grew
+// a third dimension.
+//
+// ⚠ THE OBVIOUS FIX IS WRONG, AND IT WOULD HAVE DELETED THE CROCODILE. Every other ground
+// predator gates on `playerOffGround()`, which is `y - terrainY > 1.5`. The croc pointedly
+// does not, and that omission is load-bearing: inside a pond `terrainY` is the DUG BED, so
+// a player swimming at the surface measures **5.39 above the ground beneath them**
+// (measured, on a real pond). `playerOffGround()` is therefore TRUE for every swimmer, and
+// wiring it in here would mean a crocodile could never grab anyone in the water — which is
+// the entire animal.
+//
+// So the croc gets its own test, and it is about WATER, not about the ground:
+//   • in the water at any depth  → reachable. It swims; that is its element.
+//   • otherwise                  → only within GRAB_Y of the croc's own height.
+// A roof deck sits 2.44 above the terrain under it, so 1.5 refuses it with ~0.9 to spare,
+// while a player on a pond rim (0.89 above a cruising croc, from WATER.SURFACE -0.55 plus
+// the 0.34 eye-ridge trim) is still comfortably in reach.
+const CROC_GRAB_Y = 1.5;     // Steven's number
+function crocCanReachPlayer(C){
+  if(player.inTree || player.climbing || grapple.active) return false;
+  // Already held? Then it plainly can reach you — do not re-litigate it mid-haul, when the
+  // croc is dragging you down through exactly the height gap this test measures.
+  if(playerHeldBy(C)) return true;
+  if(player.swimming || inWaterAt(player.pos.x, player.pos.z, player.pos.y)) return true;
+  return Math.abs(player.pos.y - C.pos.y) <= CROC_GRAB_Y;
+}
 // ⚠ THE LEASH. A croc may never be further from its pond centre than the rim plus a
 // small bank margin. Every destination and every chase clamps through this, which is
 // why a croc physically cannot follow you across the map.
@@ -11809,7 +11842,8 @@ function crocPickTarget(C){
     if(d < bd){ bd=d; best=e; bk=kind; }
   };
   const preach = (C.lungeCd<=0 || C.state==='LUNGE') ? crocInLandRange : crocInRange;
-  if(gameState==='playing' && !playerUnseen() && crocGrab.graceT<=0 && preach(C, player.pos.x, player.pos.z)){
+  if(gameState==='playing' && !playerUnseen() && crocGrab.graceT<=0 &&
+     crocCanReachPlayer(C) && preach(C, player.pos.x, player.pos.z)){
     const d = Math.hypot(player.pos.x-C.pos.x, player.pos.z-C.pos.z);
     if(d < bd){ bd=d; best=player; bk='player'; }
   }
@@ -12019,6 +12053,9 @@ function crocAnimate(C, dt, spd){
 // taps spread over 9 seconds would free you while you calmly drowned.
 function crocBeginGrab(C){
   if(playerGrabbed() || crocGrab.graceT>0) return false;
+  // 🐊 THE CHOKE POINT for the roof bug — every grab in the game starts here, so a future
+  // caller cannot route around the height test the way the XZ-only reach checks did.
+  if(!crocCanReachPlayer(C)) return false;
   crocGrab.croc = C; crocGrab.t = 0; crocGrab.taps = 0; crocGrab.rollT = CROC.ROLL_EVERY*0.5;
   C.state = 'GRAB'; C.stateT = 0;
   player.inTree = false; player.climbing = false;
@@ -12275,6 +12312,10 @@ function updateCrocodiles(dt){
         const reachR = CROC.GRAB_R * (C.sizeMul || 1);       // a bigger croc reaches further
         if(d > reachR || blocked){ crocStep(C, tp.x, tp.z, spd, dt); }
         else if(t===player){
+          // ⚠ The BITE needs the same height gate as the grab. Gating only the grab would
+          // have left a croc chewing on a player two storeys up for 26 a snap — a quieter
+          // version of the same bug, and the one that would have shipped.
+          if(!crocCanReachPlayer(C)){ crocBeginReturn(C, false); break; }
           if(C.grabCd<=0 && !playerGrabbed() && crocGrab.graceT<=0){ crocBeginGrab(C); }
           else if(C.biteCd<=0){
             C.biteCd = CROC.BITE_CD;
@@ -12424,6 +12465,7 @@ const HIPPO = {
   CALM_AFTER:  6.0,  // seconds back home before it can be provoked again — stops a
                      // wounded hippo from re-charging the instant it touches water
   MOUTH_RATE:  7.0,  // jaw open/close lerp
+  SCAN_EVERY:    6,  // frames between target scans, staggered per hippo — see updateHippos
   // ⚠ HOW DEEP IT FLOATS — and the number came off the offline render sheet, because it
   // was 0.86 and 0.86 was WRONG. Measured against makeHippo()'s own geometry: the barrel
   // spans y 0.18–1.86, the skull tops out at 1.48, eyes sit at 1.52, ears at 1.56, and
@@ -12454,7 +12496,29 @@ function hippoInWater(H){
   const w = poolAt(H.pos.x, H.pos.z);
   return !!w && terrainY(H.pos.x, H.pos.z) < poolSurfaceY(w) - 0.30;
 }
-const HIPPO_SCALE = 1.0;
+// ⚠ The two hand-set world-space numbers, multiplied through HIPPO_SCALE in ONE place
+// each. `HIPPO.BODY_R` and `HIPPO.FLOAT_DEPTH` are authored for a scale-1.0 hippo; these
+// are what the rest of the module actually calls, so resizing the animal can never again
+// leave its collider or its waterline behind at the old size.
+function hippoBodyR(){ return HIPPO.BODY_R * HIPPO_SCALE; }
+function hippoFloatDepth(){ return HIPPO.FLOAT_DEPTH * HIPPO_SCALE; }
+// ⚠ SIZED AGAINST THE RHINO (2026-08-07d). Steven: *"match rhino scale — rhino is the
+// reference, whatever RHINO.scale / bounding-box height is."* Both readings were on the
+// table; this takes the **bounding-box height**, which is the one that means "the same
+// size" to a player looking at them. Measured with Box3.setFromObject on live animals:
+//   rhino  max h 3.943  (group.scale 1.15)
+//   hippo  max h 3.716  at scale 1.17   →  1.17 × 3.943/3.716 = 1.24
+// ⚠ Measured as the MAX over a full 180-frame animation cycle for both animals, not from a
+// single snapshot: both rigs move their legs and spine, so a one-frame Box3 differs by
+// several percent depending when you catch it, and an early pass chased that noise. The
+// two now read as the same-height animal — the hippo still much longer and heavier
+// through the barrel (l 5.6 vs the rhino's 3.9), which is correct for the species.
+// ⚠ THIS CONSTANT DOES NOT MOVE `HIPPO.BODY_R` OR `HIPPO.FLOAT_DEPTH` ON ITS OWN. Both are
+// hand-set world-space numbers, the exact trap documented on PORC.BODY_R and GOR.BODY_R
+// ("MOVE IT WITH THE SCALE — skip it and a bigger animal clips into walls it visibly
+// stands clear of"). They are multiplied through at their use sites below instead, so
+// changing this one number moves all three together and cannot drift again.
+const HIPPO_SCALE = 1.24;
 
 function makeHippo(x, z, pool){
   const g = new THREE.Group();
@@ -12477,23 +12541,56 @@ function makeHippo(x, z, pool){
   const head = new THREE.Group(); head.position.set(0, 0.10, 1.62); body.add(head);
   const skull = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.72, 0.92), hideM);
   skull.castShadow = true; head.add(skull);
-  const upperJaw = new THREE.Mesh(new THREE.BoxGeometry(1.06, 0.34, 0.78), hideM);
-  upperJaw.position.set(0, -0.08, 0.72); head.add(upperJaw);
+  // ⚠ THE MUZZLE FLARES WIDER THAN THE SKULL — Steven asked for a wider muzzle and it is
+  // the single most recognisable thing about a hippo's head: the snout is dramatically
+  // broader than the braincase behind it, not a continuation of it. 1.34 against the
+  // skull's 0.98 is a 37% flare, read against reference silhouettes on the render sheet.
+  const upperJaw = new THREE.Mesh(new THREE.BoxGeometry(1.34, 0.38, 0.86), hideM);
+  upperJaw.position.set(0, -0.06, 0.74); upperJaw.castShadow = true; head.add(upperJaw);
+  // the fleshy lip roll along the top of the snout — catches the light and stops the
+  // muzzle reading as a plain box
+  const lip = new THREE.Mesh(new THREE.SphereGeometry(0.30, 8, 6), bellyM);
+  lip.scale.set(2.10, 0.42, 1.35); lip.position.set(0, 0.02, 1.02); head.add(lip);
   // ⚠ THE JAW IS A PIVOT GROUP HINGED AT THE BACK of the mouth, not a box that moves
   // down. Hinging it at the hinge is what makes the gape read as a hippo's 150° yawn
   // rather than as a drawer sliding open.
   const jaw = new THREE.Group(); jaw.position.set(0, -0.22, 0.32); head.add(jaw);
-  const lower = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.30, 0.80), hideM);
-  lower.position.set(0, -0.10, 0.42); lower.castShadow = true; jaw.add(lower);
-  const gums = new THREE.Mesh(new THREE.BoxGeometry(0.84, 0.16, 0.70), mouthM);
-  gums.position.set(0, 0.04, 0.42); jaw.add(gums);
-  // ---- THE TUSKS — Steven's "gores/thrusts with tusks". Lower canines, curved up. ----
+  const lower = new THREE.Mesh(new THREE.BoxGeometry(1.22, 0.32, 0.88), hideM);
+  lower.position.set(0, -0.10, 0.44); lower.castShadow = true; jaw.add(lower);
+  const gums = new THREE.Mesh(new THREE.BoxGeometry(1.10, 0.18, 0.76), mouthM);
+  gums.position.set(0, 0.05, 0.44); jaw.add(gums);
+  // ---- 🦷 THE TUSKS (rebuilt 2026-08-07d) ----------------------------------------
+  // Steven: *"two curved lower canines poking out of the mouth is the iconic hippo look —
+  // cream/white against grey skin."* The first version had them, but small (0.46 long) and
+  // sitting INSIDE the mouth, so they only existed while the jaw was open — i.e. the
+  // signature feature was invisible for all but the two seconds of a charge.
+  //
+  // ⚠ A CONE CANNOT CURVE, so each canine is a THREE-SEGMENT TAPERED CHAIN, each segment
+  // nested in the last and angled a little further back — the standard way to fake an arc
+  // in a scene graph, and the same nesting the crocodile's tail wave uses. Tapering the
+  // radii down the chain (0.115 → 0.082 → 0.052) is what makes it read as a tusk rather
+  // than as three stacked cones.
+  //
+  // ⚠ They are pitched so the tips clear the closed lip line. That is the whole point: a
+  // hippo standing with its mouth shut still shows two pale spikes against the grey, which
+  // is the silhouette Steven is asking for. Verified on dossiers/hippo_render.png.
   for(const s of [-1, 1]){
-    const tusk = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.46, 6), ivoryM);
-    tusk.position.set(s*0.31, 0.16, 0.70); tusk.rotation.x = -0.30; tusk.rotation.z = s*0.13;
-    tusk.castShadow = true; jaw.add(tusk);
-    const inc = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.24, 5), ivoryM);
-    inc.position.set(s*0.13, 0.12, 0.74); inc.rotation.x = -0.18; jaw.add(inc);
+    const root = new THREE.Group();
+    root.position.set(s*0.42, 0.06, 0.66);
+    root.rotation.set(-0.62, 0, s*0.20);          // up and outward out of the jaw
+    jaw.add(root);
+    const seg = (r0, r1, len, y, rx) => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(r1, r0, len, 6), ivoryM);
+      m.position.y = y; m.castShadow = true;
+      const g2 = new THREE.Group(); g2.rotation.x = rx; g2.add(m);
+      return { node:g2, mesh:m };
+    };
+    const a = seg(0.115, 0.082, 0.30, 0.15, 0);      root.add(a.node);
+    const b = seg(0.082, 0.052, 0.26, 0.13, -0.34);  b.node.position.y = 0.30; a.node.add(b.node);
+    const c = seg(0.052, 0.012, 0.22, 0.11, -0.38);  c.node.position.y = 0.26; b.node.add(c.node);
+    // the smaller front incisor beside it, angled the other way — hippos show both
+    const inc = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.28, 5), ivoryM);
+    inc.position.set(s*0.17, 0.14, 0.80); inc.rotation.x = -0.34; jaw.add(inc);
   }
   g._jaw = jaw;
   // eyes, ears and nostrils all ride HIGH on the skull — the periscope silhouette that
@@ -12569,8 +12666,9 @@ function hippoStep(H, tx, tz, speed, dt){
   const dx = tx-bx, dz = tz-bz, d = Math.hypot(dx, dz);
   if(d > 0.001){ const step = Math.min(speed*dt, d); H.pos.x += dx/d*step; H.pos.z += dz/d*step; }
   H.pos.x = clamp(H.pos.x, -HALF+1, HALF-1); H.pos.z = clamp(H.pos.z, -HALF+1, HALF-1);
-  if(segCrossesWall(bx, bz, H.pos.x, H.pos.z, HIPPO.BODY_R)){ H.pos.x = bx; H.pos.z = bz; }
-  collideWalls(H.pos, HIPPO.BODY_R); collideStoneWalls(H.pos, HIPPO.BODY_R);
+  const bodyR = hippoBodyR();                    // ⚠ rides HIPPO_SCALE — see the note there
+  if(segCrossesWall(bx, bz, H.pos.x, H.pos.z, bodyR)){ H.pos.x = bx; H.pos.z = bz; }
+  collideWalls(H.pos, bodyR); collideStoneWalls(H.pos, bodyR);
   const a = Math.atan2(tx-bx, tz-bz);
   let ddg = a - H.heading;
   while(ddg > Math.PI) ddg -= Math.PI*2; while(ddg < -Math.PI) ddg += Math.PI*2;
@@ -12592,7 +12690,7 @@ function hippoFloat(H, dt){
   // are usually the same pond and occasionally are not — a night wanderer can reach a
   // neighbour's water, and reading its home pond's level there would sink it or hover it.
   const w = poolAt(H.pos.x, H.pos.z);
-  const want = hippoInWater(H) ? (poolSurfaceY(w) - HIPPO.FLOAT_DEPTH)
+  const want = hippoInWater(H) ? (poolSurfaceY(w) - hippoFloatDepth())
                                : terrainY(H.pos.x, H.pos.z);
   H.pos.y += (want - H.pos.y) * Math.min(1, 7*dt);
   H.mesh.position.copy(H.pos);
@@ -12709,6 +12807,14 @@ function updateHippos(dt){
 
     animateHippo(H, dt);
     hippoFloat(H, dt);          // every frame, whatever the state does — see hippoFloat
+    // ⚠ THE TARGET SCAN IS STAGGERED, and it is the hippo's dominant cost: measured at
+    // 33.3 µs of updateHippos' 53.8 µs (62%) at 6 hippos against 148 creatures, because
+    // `hippoPickTarget` walks the whole creature registry per hippo per frame. PROVOKE_R
+    // is 9 m and this is a proximity trigger, not a reflex test — at a sprint you cover
+    // 1.6 m in the 100 ms worst case, so a sixth of the rate is indistinguishable in play
+    // and costs a sixth of the time. Offset by index so the six never scan on one frame.
+    H._scanT = (H._scanT|0) + 1;
+    const mayScan = ((H._scanT + hippoMeshes.indexOf(H)) % HIPPO.SCAN_EVERY) === 0;
     if((H.stunTimer||0) > 0){ H.stunTimer -= dt; H._lastSpeed = 0; return; }
 
     switch(H.state){
@@ -12746,7 +12852,7 @@ function updateHippos(dt){
       // ---- ROAM: night only. Steven's 70 m, and it starts fights out there. ----
       case 'ROAM': {
         if(!night){ H.state = 'GRAZE'; H.stateT = 0; H.dest = null; break; }
-        const pick = (H.calmT<=0) ? hippoPickTarget(H, HIPPO.NIGHT_AGGRO_R) : null;
+        const pick = (H.calmT<=0 && mayScan) ? hippoPickTarget(H, HIPPO.NIGHT_AGGRO_R) : null;
         if(pick){ H.state='CHARGE'; H.stateT=0; H.target=pick.ent; H.targetKind=pick.kind; break; }
         if(!H.dest || H.stateT > 9){
           const a = rand(0, 6.28), rr = rand(H.pool.r, H.pool.r + HIPPO.NIGHT_RANGE);
@@ -12760,7 +12866,7 @@ function updateHippos(dt){
       // ---- GRAZE: the daytime default. "Passive by default, eats grass." ----
       case 'GRAZE': {
         if(night){ H.state = 'ROAM'; H.stateT = 0; H.dest = null; break; }
-        const pick = (H.calmT<=0) ? hippoPickTarget(H, HIPPO.PROVOKE_R) : null;
+        const pick = (H.calmT<=0 && mayScan) ? hippoPickTarget(H, HIPPO.PROVOKE_R) : null;
         if(pick){ H.state='CHARGE'; H.stateT=0; H.target=pick.ent; H.targetKind=pick.kind; break; }
         H.grazeT -= dt;
         if(H.grazeT <= 0){
@@ -12788,7 +12894,7 @@ function updateHippos(dt){
       }
       // ---- WALLOW: sitting in its own pond. The resting state, day or night. ----
       default: {
-        const pick = (H.calmT<=0) ? hippoPickTarget(H, HIPPO.PROVOKE_R) : null;
+        const pick = (H.calmT<=0 && mayScan) ? hippoPickTarget(H, HIPPO.PROVOKE_R) : null;
         if(pick){ H.state='CHARGE'; H.stateT=0; H.target=pick.ent; H.targetKind=pick.kind; break; }
         if(H.stateT > rand(6, 10)){
           H.state = night ? 'ROAM' : 'GRAZE'; H.stateT = 0; H.dest = null; break;

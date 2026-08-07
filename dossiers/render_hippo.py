@@ -11,6 +11,10 @@ reason and same approach as render_cobra.py / render_croc.py / render_porcupine.
 render_croc.py rather than copied. There is one projector in this folder and this file is
 a scene for it — a second copy would drift.
 
+⚠ Rendered in MODEL space, so the group's HIPPO_SCALE (1.24, sized to match the rhino's
+bounding height) does not appear here — and the waterline stays at the base FLOAT_DEPTH
+1.30, because scaling the group scales the float offset with it.
+
 ⚠ This mirrors makeHippo() / animateHippo() in index.html BY HAND. If either changes, this
 file must change with it: it is a dossier illustration, not a test. Every constant below is
 transcribed verbatim from makeHippo().
@@ -81,19 +85,32 @@ def build(gait=0.0, mouth=0.04, swimming=False, moving=True, bob=0.0):
     head = TF((0, 0.10, 1.62))
     hs = [root, body, head]
     box(hs, 0.98, 0.72, 0.92, HIDE, out)                       # skull
-    box(hs + [TF((0, -0.08, 0.72))], 1.06, 0.34, 0.78, HIDE, out)   # upper jaw
+    # ⚠ the muzzle FLARES wider than the skull (1.34 vs 0.98) — the hippo's signature
+    box(hs + [TF((0, -0.06, 0.74))], 1.34, 0.38, 0.86, HIDE, out)   # upper jaw
+    sphere(hs + [TF((0, 0.02, 1.02))], 0.30, BELLY, out,
+           scale=(2.10, 0.42, 1.35), rings=6, segs=8)               # fleshy lip roll
 
     # ---- THE JAW PIVOT — hinged at the BACK of the mouth, not sliding down ----
     jaw = TF((0, -0.22, 0.32), (mouth * 1.15, 0, 0))
     js = hs + [jaw]
-    box(js + [TF((0, -0.10, 0.42))], 0.94, 0.30, 0.80, HIDE, out)   # lower jaw
-    box(js + [TF((0, 0.04, 0.42))], 0.84, 0.16, 0.70, MOUTH, out)   # gums
-    # ⚠ THE TUSKS. rotation.x = -0.30 tips the cone's +Y AWAY from +Z, and +Z is the
-    # nose — so a NEGATIVE x-rotation is what makes them rake up and forward out of the
-    # mouth. This is the exact sign that was wrong on the porcupine's quills.
+    box(js + [TF((0, -0.10, 0.44))], 1.22, 0.32, 0.88, HIDE, out)   # lower jaw
+    box(js + [TF((0, 0.05, 0.44))], 1.10, 0.18, 0.76, MOUTH, out)   # gums
+    # ---- 🦷 THE CURVED LOWER CANINES, as a three-segment tapered chain ----
+    # ⚠ A cone cannot curve, so each tusk is three nested segments, each angled a little
+    # further back than the last — the same scene-graph trick the crocodile's tail wave
+    # uses. THE POINT OF THIS SHEET is that the tips must clear the CLOSED lip line: a
+    # hippo standing with its mouth shut still shows two pale spikes against the grey.
     for s in (-1, 1):
-        cone(js + [TF((s*0.31, 0.16, 0.70), (-0.30, 0, s*0.13))], 0.085, 0.46, 6, IVORY, out)
-        cone(js + [TF((s*0.13, 0.12, 0.74), (-0.18, 0, 0))], 0.05, 0.24, 5, IVORY, out)
+        # ⚠ NOT named `root` — that shadowed the scene root TF and turned it into a list,
+        # which crashed the leg loop further down with a bare AttributeError.
+        tuskBase = js + [TF((s*0.42, 0.06, 0.66), (-0.62, 0, s*0.20))]
+        a = tuskBase
+        cyl(a + [TF((0, 0.15, 0))], 0.082, 0.115, 0.30, IVORY, out)
+        b = a + [TF((0, 0.30, 0), (-0.34, 0, 0))]
+        cyl(b + [TF((0, 0.13, 0))], 0.052, 0.082, 0.26, IVORY, out)
+        c = b + [TF((0, 0.26, 0), (-0.38, 0, 0))]
+        cyl(c + [TF((0, 0.11, 0))], 0.012, 0.052, 0.22, IVORY, out)
+        cone(js + [TF((s*0.17, 0.14, 0.80), (-0.34, 0, 0))], 0.055, 0.28, 5, IVORY, out)
 
     # ---- eyes / ears / nostrils, all riding HIGH on the skull ----
     for s in (-1, 1):
@@ -144,21 +161,33 @@ def water_plane(y, out, half=4.0, step=0.4):
 
 # ---------------------------------------------------------------- sheets
 def hero_sheet(path):
-    """Land silhouette, the gape, and the waterline pose — the three things to check."""
+    """Land silhouette, the CLOSED-MOUTH head close-up, the gape, and the waterline.
+
+    ⚠ The close-up exists because the first version of this sheet could not answer its own
+    question. It claimed "the tusks must show even closed" and then rendered the animal at
+    5 m on a three-quarter rear view, where the muzzle occludes them and the tips are three
+    pale pixels. A check you cannot read is not a check — same lesson as the untiled water.
+    """
     PW, PH = 380, 290
-    sheet = Image.new('RGB', (PW*3, PH), (24, 27, 22))
+    sheet = Image.new('RGB', (PW*4, PH), (24, 27, 22))
 
     # 1. on land, mouth shut, mid-stride
     polys = build(gait=0.18, mouth=0.04, swimming=False, moving=True)
     img = render(polys, PW, PH, (5.4, 2.3, 4.6), (0, 1.0, 0), fov=40)
-    label(img, 'ON LAND  mouth shut, mid-stride', 'legs move — Steven asked for it explicitly')
+    label(img, 'ON LAND  mouth SHUT, mid-stride', 'the tusks must show even closed — that is the whole ask')
     sheet.paste(img, (0, 0))
 
-    # 2. THE GAPE — what a charging hippo shows you
+    # 2. HEAD CLOSE-UP, MOUTH SHUT — the panel that actually answers the question
+    polys = build(gait=0.0, mouth=0.04, swimming=False, moving=False)
+    img = render(polys, PW, PH, (2.5, 1.9, 3.6), (0, 1.05, 1.5), fov=34)
+    label(img, 'HEAD CLOSE-UP  mouth shut', 'two pale canines clearing the lip line = the ask')
+    sheet.paste(img, (PW, 0))
+
+    # 3. THE GAPE — what a charging hippo shows you
     polys = build(gait=0.5, mouth=1.0, swimming=False, moving=True)
     img = render(polys, PW, PH, (1.2, 1.9, 5.6), (0, 1.1, 0.9), fov=42)
-    label(img, 'THE GAPE  mouth=1.0 (CHARGE)', 'tusks must rake UP and OUT of the lower jaw')
-    sheet.paste(img, (PW, 0))
+    label(img, 'THE GAPE  mouth=1.0 (CHARGE)', 'curved canines rake up and out of the lower jaw')
+    sheet.paste(img, (PW*2, 0))
 
     # 3. THE PERISCOPE — floating at the surface, which is what swimming looks like
     polys = build(gait=0.3, mouth=0.04, swimming=True, moving=True, bob=1.4)
@@ -170,7 +199,7 @@ def hero_sheet(path):
     water_plane(FLOAT_DEPTH, polys)
     img = render(polys, PW, PH, (3.4, 1.5, 4.4), (0, 0.95, 0.4), fov=40)
     label(img, 'IN THE WATER  body pinned %.2f under' % FLOAT_DEPTH, 'eyes / ears / nostrils clear the line, nothing else')
-    sheet.paste(img, (PW*2, 0))
+    sheet.paste(img, (PW*3, 0))
 
     sheet.save(path)
     return path

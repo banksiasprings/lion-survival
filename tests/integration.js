@@ -1675,6 +1675,146 @@ test('crocodile: every croc bursts out, hunts to the land ring, and walks home',
 });
 
 // =====================================================================
+//  🐊 THE ROOF-REACH BUG — a croc must not grab you off an upper storey
+// =====================================================================
+// 🐛 Steven, live: standing on a second-storey roof, a crocodile on the ground below still
+// grabbed him. Every reach test in the croc module was purely XZ, so a croc four metres
+// below was, to the code, standing next to him — the same category error as
+// `pushOutOfAABB` treating a wall as an infinite vertical column.
+//
+// ⚠ THE SHAPE THIS EXISTS TO CATCH is a fix that overreaches. The obvious repair is to
+// gate on `playerOffGround()` like every other predator — and that would have DELETED the
+// crocodile, because inside a pond `terrainY` is the dug bed, so a player swimming at the
+// surface measures ~5.4 above the ground beneath them and reads as "off the ground". So
+// this test asserts BOTH directions at once, at several heights, across every croc on the
+// map: nothing is grabbable from up high, everything still is at ground level and in deep
+// water. A lone "no grab happened" is also what a broken crocodile prints.
+test('crocodile: cannot reach a player on a roof — but still takes one on the ground or swimming', ()=>{
+  const crocs = crocMeshes.filter(C => C.health > 0);
+  if(!crocs.length) return { pass:false, detail:'no crocodile on the map' };
+  const detail = {}, DT = 1/60;
+  if(crocGrab.croc) crocEndGrab(false);
+  crocGrab.croc = null; crocGrab.taps = 0; crocGrab.graceT = 0;
+  const saved = crocs.map(C => ({ C, x:C.pos.x, z:C.pos.z, st:C.state, hp:C.health }));
+
+  // Park every other creature far away: `crocPickTarget` takes the NEAREST candidate, and
+  // a pond is where the ecosystem congregates — a zebra closer than the player would make
+  // "no grab" mean nothing. (Built from the registry, not by hand.)
+  const others = [];
+  allCreatureLists().forEach(([list])=>{
+    if(!list || list === crocMeshes) return;
+    list.forEach(e=>{ if(e) others.push({ e, x:e.pos.x, z:e.pos.z }); });
+  });
+  others.forEach(o=>{ o.e.pos.x += 5000; });
+
+  // Put ONE croc on the bank beside a spot, hold the player at height `h` above the
+  // terrain there, and run the real updateCrocodiles for N frames.
+  const trial = (C, h, opts)=>{
+    const w = C.pool;
+    const bx = w.x + w.r + 2, bz = w.z;
+    const ty = terrainY(bx, bz);
+    // reset every croc so a leftover sortie from a previous trial can't bleed in
+    crocs.forEach(X=>{ const ww = X.pool;
+      X.pos.set(ww.x, terrainY(ww.x, ww.z), ww.z); X.mesh.position.copy(X.pos);
+      X.state='CRUISE'; X.stateT=0; X.target=null; X.targetKind=null; X.dest=null;
+      X.health=X.maxHealth; X.grabCd=0; X.biteCd=0; X.lungeCd=0; X.lungeT=0; X.dryT=0; });
+    C.pos.set(bx - 1.2, ty, bz); C.mesh.position.copy(C.pos);
+    if(crocGrab.croc) crocEndGrab(false);
+    crocGrab.croc = null; crocGrab.graceT = 0;
+    const place = ()=>{
+      if(opts && opts.swim){
+        player.pos.set(w.x, poolSurfaceY(w) - 0.4, w.z);
+        player.onGround = false; player.swimming = true;
+      } else {
+        player.pos.set(bx, ty + h, bz);
+        player.onGround = true; player.swimming = false;
+      }
+      player.vel.set(0,0,0); player.inTree = false; player.climbing = false;
+      player.health = 100; player.hunger = 100; gameState = 'playing';
+    };
+    place();
+    let grabbed = false; const hp0 = player.health;
+    for(let f=0; f<420; f++){
+      place();                       // hold the player pinned at the test height
+      updateCrocodiles(DT);
+      if(playerGrabbed()){ grabbed = true; break; }
+    }
+    const bitten = player.health < hp0 - 0.001;
+    if(crocGrab.croc) crocEndGrab(false);
+    crocGrab.croc = null; crocGrab.graceT = 0;
+    return { grabbed, bitten };
+  };
+
+  // ---- 1. UP HIGH: every croc, at every elevation a player can actually stand at ----
+  // 2.44 = a roof deck (ROOF.CLEARANCE 2.3 + half its thickness); 2.2 = a wall top;
+  // 4.0 = Steven's "4 m platform"; 5.0 = a second storey.
+  const HEIGHTS = [2.2, 2.44, 4.0, 5.0];
+  const high = [];
+  crocs.forEach((C, ci)=>{
+    HEIGHTS.forEach(h=>{
+      const r = trial(C, h);
+      high.push({ croc:ci, h, grabbed:r.grabbed, bitten:r.bitten });
+    });
+  });
+  detail.elevated = high;
+  detail.elevatedTrials   = high.length;
+  detail.grabsFromHeight  = high.filter(r=>r.grabbed).length;
+  detail.bitesFromHeight  = high.filter(r=>r.bitten).length;
+
+  // ---- 2. THE CONTROLS — the same crocs must still be lethal where they should be ----
+  // ⚠ Without these, this test passes just as happily against a crocodile that has been
+  // accidentally disabled outright.
+  const ground = crocs.map((C, ci)=>({ croc:ci, ...trial(C, 0.1) }));
+  const water  = crocs.map((C, ci)=>({ croc:ci, ...trial(C, 0.1, { swim:true }) }));
+  detail.atGroundLevel = ground;
+  detail.inDeepWater   = water;
+  detail.grabsOnGround = ground.filter(r=>r.grabbed).length;
+  detail.grabsSwimming = water.filter(r=>r.grabbed).length;
+
+  // ---- 3. the predicate itself, including the trap it must not fall into ----
+  const C0 = crocs[0], w0 = C0.pool;
+  C0.pos.set(w0.x, terrainY(w0.x, w0.z), w0.z); C0.mesh.position.copy(C0.pos);
+  player.pos.set(w0.x, poolSurfaceY(w0) - 0.4, w0.z);
+  player.swimming = true; player.onGround = false; player.inTree = false; gameState = 'playing';
+  detail.swimmerLooksOffGround = playerOffGround();          // TRUE — the trap
+  detail.crocStillReachesSwimmer = crocCanReachPlayer(C0);   // …and must still be TRUE
+  player.swimming = false;
+  // ⚠ THE PROBE MUST STAND ON GENUINELY DRY LAND, and an early version used
+  // `C0.pos.x + 3`, which lands INSIDE the pond whenever the croc is cruising mid-water.
+  // Four metres above a pond BED is still a metre and a half UNDER the surface, so
+  // `crocCanReachPlayer` correctly returned true and the probe scored a correct build as
+  // broken. Use the bank, outside the rim, and assert it is dry before trusting the answer.
+  const bankX = w0.x + w0.r + 4, bankZ = w0.z;
+  const gy = terrainY(bankX, bankZ);
+  detail.probeSpotIsDry = waterSpeedMul(bankX, bankZ) === 1;
+  C0.pos.set(bankX - 1.5, terrainY(bankX - 1.5, bankZ), bankZ); C0.mesh.position.copy(C0.pos);
+  player.pos.set(bankX, gy + 0.1, bankZ); player.onGround = true;
+  detail.reachesOnGround = crocCanReachPlayer(C0);
+  player.pos.y = gy + 4.0;
+  detail.refusesOnPlatform = !crocCanReachPlayer(C0);
+  player.inTree = true; player.pos.y = gy + 0.1;
+  detail.refusesTreedPlayer = !crocCanReachPlayer(C0);
+  player.inTree = false;
+
+  // restore the world
+  others.forEach(o=>{ o.e.pos.x = o.x; o.e.pos.z = o.z; });
+  saved.forEach(s=>{ s.C.pos.set(s.x, terrainY(s.x, s.z), s.z); s.C.mesh.position.copy(s.C.pos);
+    s.C.state = s.st; s.C.health = s.hp; s.C.target = null; s.C.targetKind = null; });
+  if(crocGrab.croc) crocEndGrab(false);
+  crocGrab.croc = null; crocGrab.graceT = 0;
+  pinPlayer();
+
+  const pass = detail.elevatedTrials >= 8 &&
+               detail.grabsFromHeight === 0 && detail.bitesFromHeight === 0 &&
+               detail.grabsOnGround === crocs.length &&      // the control, both ways
+               detail.grabsSwimming === crocs.length &&
+               detail.swimmerLooksOffGround && detail.crocStillReachesSwimmer &&
+               detail.probeSpotIsDry &&
+               detail.reachesOnGround && detail.refusesOnPlatform && detail.refusesTreedPlayer;
+  return { pass, detail };
+});
+
+// =====================================================================
 //  FEATURE 6 — a warthog you kill YOURSELF is worth 🪙100
 // =====================================================================
 // Multi-instance in the sense this file cares about: the bounty is driven through
@@ -2026,8 +2166,13 @@ test('hippo: floats, swims faster than it walks, charges when crowded, bolts whe
   // design. Assert the RULE ("in water → at the water line"), not a snapshot.
   detail.depths = hippoMeshes.map(H => ({ inWater: hippoInWater(H),
                                           depth: r2(H.pos.y - poolSurfaceY(poolAt(H.pos.x,H.pos.z) || H.pool)) }));
+  // ⚠ Assert the SCALED depth, not the base constant. `HIPPO.FLOAT_DEPTH` is authored for
+  // a scale-1.0 hippo and `hippoFloatDepth()` multiplies it through `HIPPO_SCALE` — so
+  // when the hippo was resized to match the rhino (1.0 → 1.24) this assertion started
+  // measuring 1.30 against a correct 1.61. Read the function the engine reads.
+  detail.floatDepthExpected = r2(hippoFloatDepth());
   detail.allFloat = hippoMeshes.every(H => !hippoInWater(H) ||
-    Math.abs((H.pos.y - poolSurfaceY(poolAt(H.pos.x,H.pos.z) || H.pool)) + HIPPO.FLOAT_DEPTH) < 0.05);
+    Math.abs((H.pos.y - poolSurfaceY(poolAt(H.pos.x,H.pos.z) || H.pool)) + hippoFloatDepth()) < 0.05);
   detail.someInWater = hippoMeshes.filter(H => hippoInWater(H)).length;
   // …plus the deterministic half: dropped on the BED at its pond centre, every hippo must
   // rise to the surface. This is the bug that shipped — buoyancy that only ran while the
@@ -2039,7 +2184,7 @@ test('hippo: floats, swims faster than it walks, charges when crowded, bolts whe
     return r2(H.pos.y - poolSurfaceY(H.pool));
   });
   detail.roseOffTheBed = bedTest;
-  detail.noneOnTheBed = bedTest.every(d => Math.abs(d + HIPPO.FLOAT_DEPTH) < 0.05);
+  detail.noneOnTheBed = bedTest.every(d => Math.abs(d + hippoFloatDepth()) < 0.05);
 
   // ---- 2. WATER DOES NOT SLOW IT — the "swims when in water" rule ----
   // Same hippo, same speed argument, same frame count: in its pond vs on dry bank.
@@ -2090,7 +2235,15 @@ test('hippo: floats, swims faster than it walks, charges when crowded, bolts whe
   progress.accessories = [null, null]; EQUIP = computeEquipMods();   // no cloak in the way
   player.pos.set(bank.x + 5, 0, bank.z); pinPlayer(false);
   dn.isDay = true;
-  updateHippos(DT);
+  // ⚠ Give the STAGGERED target scan time to fire. `hippoPickTarget` is the hippo's
+  // dominant per-frame cost, so it runs once every `HIPPO.SCAN_EVERY` frames offset by
+  // index — a single `updateHippos(DT)` may land on a frame that does not scan. Asserting
+  // after one frame started failing the moment that optimisation went in, on a hippo that
+  // charges perfectly well two frames later. Worst case here is ~100 ms, against a 9 m
+  // trigger radius.
+  let framesToCharge = 0;
+  for(; framesToCharge < HIPPO.SCAN_EVERY + 2 && H1.state !== 'CHARGE'; framesToCharge++) updateHippos(DT);
+  detail.framesToCharge = framesToCharge;
   detail.chargedWhenCrowded = H1.state === 'CHARGE' && H1.targetKind === 'player';
   detail.tookNoDamageToProvoke = H1.health === H1.maxHealth;
   // …the tusk thrust itself
