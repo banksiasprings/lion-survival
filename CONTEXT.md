@@ -3934,11 +3934,21 @@ crossbow is now the wrong answer to a hippo.**
    inland — leashed only by `hippoLeash` — and **walk out of its own pond in broad daylight.** The exact
    rule the state exists to enforce, defeated by a stale field. It re-picks now unless the existing target
    is genuinely inside the deep half of the bowl, so the rule holds *by construction*.
-2. **The wallow radius was too wide.** 0.75r → **0.60r**. Measured on a 22.9 m pond, the bowl shallows
-   fast: depth **4.61** at the centre, **0.41** at 0.75r, and already **above the surface** — dry mud, still
-   inside the pond footprint — by 0.85r. A hippo drifting to 0.75r spent part of its day technically
-   un-submerged, which is what "stays submerged during the day" is meant to rule out. 0.60r keeps it in
-   ≥1.27 of water.
+2. ⚠ **THE WALLOW SPOT IS PICKED BY DEPTH, BECAUSE NO RADIUS FRACTION EXISTS.** This took three goes and
+   the third one is the only correct one. 0.75r was too wide (the bowl shallows fast — 4.61 at the centre,
+   0.41 at 0.75r, dry mud by 0.85r), so it became 0.60r — and that still flickered, on the LIVE deploy,
+   at 3–85 frames in 45 000. The reason is that **the bowl is not symmetric**: `terrainY` inside a pond
+   still carries the surrounding terrain's slope, so the water is deep on the downhill side and absent on
+   the uphill one. Measured on a 20.5 m pond, the depth **at 0.60r around the circle ran 1.64 → −0.48** —
+   dry ground at the same fraction that is 1.5 m under water on the far side. **0.75 and 0.60 were both
+   guesses at a number that does not exist.**
+   `WALLOW` now samples up to six candidates and keeps the first with ≥ `WALLOW_DEPTH` (1.0 m) of real
+   water, falling back to the pond CENTRE — always its deepest point, so the fallback cannot fail.
+   *Ask the world; do not assume a constant.* Exactly the lesson the test suite's `dryPatchNear` learned,
+   arrived at independently in the product a day later.
+   - **Verified adversarially:** three forced r=20 ponds (the shallowest the generator makes) on sloping
+     ground, the shape that produced the 1.64/−0.48 spread — **5 runs, 0 frames out of pond, 0 frames
+     un-submerged.**
 
 ### Verified — suite 32 → 33, all green (12 consecutive runs across two page loads)
 `hippo: 800 HP, holds its ground above half, and never leaves the pond by day` — Steven's three pins, each

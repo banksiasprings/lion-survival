@@ -12490,6 +12490,10 @@ const HIPPO = {
                      // reads as a bull, not a hippo, and the silhouette is the thing
                      // Steven explicitly asked to keep.
   SCAN_EVERY:    6,  // frames between target scans, staggered per hippo — see updateHippos
+  WALLOW_DEPTH: 1.0, // ⚠ metres of water a daytime wallowing spot must actually HAVE. Not a
+                     // radius fraction — the bowl is asymmetric (terrain slope runs through
+                     // it), so the same fraction is 1.58 deep on one side of a pond and
+                     // −0.49 (dry) on the other. See the WALLOW branch.
   // ⚠ HOW DEEP IT FLOATS — and the number came off the offline render sheet, because it
   // was 0.86 and 0.86 was WRONG. Measured against makeHippo()'s own geometry: the barrel
   // spans y 0.18–1.86, the skull tops out at 1.48, eyes sit at 1.52, ears at 1.56, and
@@ -12975,24 +12979,37 @@ function updateHippos(dt){
             showKillfeed('🦛 A hippo heaves itself out of the water…');
           break;
         }
-        // ⚠ WALLOW MUST OWN ITS DESTINATION, not inherit one. It used to keep any `H.dest`
-        // that was already on the record, and ROAM/HOMEWARD leave LAND destinations there —
-        // so a hippo entering WALLOW straight off a night wander would calmly swim toward a
-        // point 30 m inland, leashed only by `hippoLeash`, and walk out of its own pond in
-        // broad daylight. That is precisely the rule this state exists to enforce, defeated
-        // by a stale field. Re-pick unless the existing target is genuinely inside the deep
-        // half of the bowl, so "stays in the pond by day" holds by construction rather than
-        // by whatever happened to run before.
-        const dOK = H.dest && Math.hypot(H.dest.x-H.pool.x, H.dest.z-H.pool.z) <= H.pool.r*0.62;
+        // ⚠ WALLOW MUST OWN ITS DESTINATION, not inherit one, AND IT MUST PICK BY DEPTH.
+        // Two separate bugs, both about this one line.
+        //
+        // (a) It used to keep any `H.dest` already on the record — and ROAM/HOMEWARD leave
+        //     LAND destinations there, so a hippo entering WALLOW off a night wander would
+        //     calmly swim toward a point 30 m inland and walk out of its own pond in broad
+        //     daylight. The rule this state exists to enforce, defeated by a stale field.
+        //
+        // (b) The replacement picked a random point inside a fraction of the radius — and
+        //     ⚠ NO RADIUS FRACTION IS SAFE, because the bowl is not symmetric. `terrainY`
+        //     inside a pond still carries the surrounding terrain's slope, so the water is
+        //     deep on the downhill side and nothing on the uphill one. Measured on a 20.5 m
+        //     pond, the depth at 0.60r around the circle ran from **1.58 down to −0.49** —
+        //     i.e. dry ground, at the same fraction that is 1.5 m under on the far side.
+        //     0.75r and 0.60r were both just guesses at a number that does not exist.
+        //
+        // So ASK THE WORLD, the same lesson as the test suite's `dryPatchNear`: sample a
+        // few candidates and keep the first that is genuinely submerged. The pond CENTRE is
+        // always its deepest point, so the fallback can never fail.
+        const dDepth = H.dest ? (poolSurfaceY(H.pool) - terrainY(H.dest.x, H.dest.z)) : -1;
+        const dOK = H.dest && dDepth >= HIPPO.WALLOW_DEPTH &&
+                    !!poolAt(H.dest.x, H.dest.z);
         if(!dOK || Math.hypot(H.dest.x-H.pos.x, H.dest.z-H.pos.z) < 1.2){
-          // ⚠ 0.75r → 0.60r. The bowl shallows FAST: measured on a 22.9 m pond, depth is
-          // 4.61 at the centre, 0.41 at 0.75r and already ABOVE the surface (dry mud, still
-          // inside the pond footprint) by 0.85r. A hippo drifting to 0.75r therefore spent
-          // part of its day technically un-submerged, which is exactly what "stays
-          // submerged during the day" is supposed to rule out. 0.60r keeps it in ≥1.27 of
-          // water — properly under, with the periscope silhouette showing.
-          const a = rand(0, 6.28), rr = Math.sqrt(Math.random())*H.pool.r*0.60;
-          H.dest = { x: H.pool.x + Math.cos(a)*rr, z: H.pool.z + Math.sin(a)*rr };
+          H.dest = { x: H.pool.x, z: H.pool.z };            // guaranteed-deep fallback
+          for(let k=0;k<6;k++){
+            const a = rand(0, 6.28), rr = Math.sqrt(Math.random())*H.pool.r*0.65;
+            const cx = H.pool.x + Math.cos(a)*rr, cz = H.pool.z + Math.sin(a)*rr;
+            if((poolSurfaceY(H.pool) - terrainY(cx, cz)) >= HIPPO.WALLOW_DEPTH){
+              H.dest = { x:cx, z:cz }; break;
+            }
+          }
         }
         hippoStep(H, H.dest.x, H.dest.z, HIPPO.SPEED_SWIM*0.35, dt);
         break;
