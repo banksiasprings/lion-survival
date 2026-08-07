@@ -12433,15 +12433,22 @@ function clearCrocodiles(){
 const HIPPO = {
   PER_POND_MIN: 1, PER_POND_MAX: 2,   // ponds are shared with the crocs, as asked
   MAX: 6,
-  // ⚠ CALIBRATION, stated because Steven asked for "gorilla-scale" and this is above it.
-  // Anchors already in the game: gorilla 160 · rhino 220 · crocodile 600. A hippo that
-  // sat at the gorilla's 160 would be softer than a rhino, which reads wrong for the
-  // animal that kills more people than any other in Africa — so it lands one step ABOVE
-  // the rhino and well under the croc: the toughest thing that walks on land, but not a
-  // pond boss. "Legit dangerous" is carried by GORE_DMG, not by the HP pool.
-  HEALTH:     300,
-  GORE_DMG:    48,   // the biggest single hit any animal lands (rhino gore 35, cheetah
-                     // sprint 46). Two connect and an unarmoured player is dead.
+  // ⚠ 300 → 800 (2026-08-07e, Steven — he said 500, then corrected to 800). This makes it
+  // a **mid-tier boss**, not merely the toughest thing that walks: it now outlasts the
+  // crocodile. Anchors: gorilla 160 · rhino 220 · crocodile 600 · black cobra 700 ·
+  // 🦛 800 · gold cobra 1500. Time-to-kill at 800: 10 spears, 8 boomerangs, 9 club swings,
+  // ~11 s of sustained Cobra Dagger, or 16 crossbow bolts — and a bolt costs a rhino horn,
+  // so the crossbow is now the *wrong* answer to a hippo. That is a real fight.
+  HEALTH:     800,
+  // ⚠ DAMAGE DELIBERATELY NOT SCALED WITH THE HP POOL, and this is the judgement call
+  // Steven left open. 800/300 is 2.67×, which would put a gore at 128 — and the PLAYER HAS
+  // 100 HP. Anything at or above 100 is a one-shot kill with no counterplay, which is not
+  // a harder fight, it is a death sentence with a longer wind-up. The player's health
+  // ceiling is the binding constraint here, not the hippo's.
+  // 48 → 55 keeps the **two-hit kill** (55+55 = 110 > 100) while making it unambiguously
+  // the hardest single hit in the game — rhino gore 35, cheetah sprint 46, croc bite 26.
+  // The 800 HP is what makes it a boss; the 55 is what makes it frightening.
+  GORE_DMG:    55,
   GORE_CD:    2.0,   // …but slow. The counterplay is spacing, not tanking.
   GORE_R:     3.8,   // tusk reach — it is a big animal with a bigger mouth
   GORE_STUN:  0.7,   // the thrust knocks you off your feet
@@ -12450,14 +12457,23 @@ const HIPPO = {
                      // does NOT ride group.scale — the same trap documented on PORC.BODY_R
                      // and GOR.BODY_R. Body is ~2.0 wide, so this is half-width + margin.
                      // MOVE IT BY HAND if HIPPO_SCALE ever changes.
-  SPEED_GRAZE: 2.4,  // head-down amble along the shore
+  SPEED_GRAZE: 2.4,  // head-down amble while grazing (night only — see ROAM)
   SPEED_ROAM:  4.2,  // the night wander
   SPEED_CHARGE:13.5, // ⚠ faster than a WALK (10), slower than a SPRINT (16). Deliberate:
                      // strolling away from a charging hippo must fail, and sprinting away
                      // must work. Same shape as the rhino's 15.
   SPEED_SWIM:  6.0,  // in water — and NOT multiplied down. See the note above.
-  SPEED_RETREAT: 12, // bolting for the pond after being hurt
-  GRAZE_RANGE: 14,   // how far from its own rim it will graze by day
+  SPEED_RETREAT: 12, // bolting for the pond once genuinely hurt — see RETREAT_HP
+  // ⚠ IT ONLY BREAKS OFF AT HALF HEALTH (2026-08-07e). Steven: the old "retreats when
+  // injured" was any HP drop at all, which he found far too eager — one rock and the pond
+  // apex ran away. Above this fraction a wounded hippo now does the OPPOSITE and turns on
+  // whatever hit it. So the two triggers are still opposed, just re-cut:
+  //     crowded, or lightly hurt   → CHARGE
+  //     hurt past half its pool    → RETREAT
+  // At 800 HP that is 400 — roughly 5 spears of commitment before it will give you the
+  // fight rather than the chase.
+  RETREAT_HP:  0.50,
+  GRAZE_RANGE: 14,   // how far from its own rim it will graze at night
   NIGHT_RANGE: 70,   // ⚠ Steven's number, exact — the night leash
   PROVOKE_R:    9,   // crowd it this close and it charges (day, near its water)
   NIGHT_AGGRO_R: 16, // …and at night, out on the plain, it starts things from further off
@@ -12465,6 +12481,14 @@ const HIPPO = {
   CALM_AFTER:  6.0,  // seconds back home before it can be provoked again — stops a
                      // wounded hippo from re-charging the instant it touches water
   MOUTH_RATE:  7.0,  // jaw open/close lerp
+  GAPE:       1.75,  // ⚠ radians at full open — was 1.15 (~66°). Steven wants the mouth
+                     // "wider to show the tusks and lower canines"; 1.75 is ~100°, which
+                     // is the real animal's threat yawn and puts the whole lower arcade
+                     // and both canines in view. Verified on the render sheet.
+  HEAD_DROP:  0.14,  // ⚠ the AGGRESSIVE STANCE — the head group drops this far while a
+                     // hippo is charging. Small on purpose: any more and the barrel body
+                     // reads as a bull, not a hippo, and the silhouette is the thing
+                     // Steven explicitly asked to keep.
   SCAN_EVERY:    6,  // frames between target scans, staggered per hippo — see updateHippos
   // ⚠ HOW DEEP IT FLOATS — and the number came off the offline render sheet, because it
   // was 0.86 and 0.86 was WRONG. Measured against makeHippo()'s own geometry: the barrel
@@ -12522,12 +12546,21 @@ const HIPPO_SCALE = 1.24;
 
 function makeHippo(x, z, pool){
   const g = new THREE.Group();
-  // Palette: wet slate-grey back fading to the famous pink-brown belly and muzzle.
-  const hideM  = new THREE.MeshLambertMaterial({color:0x6b6168});
-  const bellyM = new THREE.MeshLambertMaterial({color:0x9a6f6a});
-  const mouthM = new THREE.MeshLambertMaterial({color:0x7d3f45});
-  const ivoryM = new THREE.MeshLambertMaterial({color:0xefe7cf});
-  const darkM  = new THREE.MeshLambertMaterial({color:0x3a3238});
+  // ⚠ PALETTE DARKENED (2026-08-07e). Steven: *"darker grey skin… whatever reads as
+  // 'this thing will kill you' at a glance."* The old 0x6b6168 was a mild slate that read
+  // as placid next to the rhino's 0x8f8f86; 0x463f47 is a wet, near-charcoal hide with a
+  // faint cold violet in it, so the cream tusks and the blood-red eye now carry ALL the
+  // contrast on the head. ⚠ renderer.outputEncoding is sRGB and colours go in un-decoded,
+  // so everything renders ~2× lighter than the literal hex — judge these on the render
+  // sheet, never on the number (the same authoring note COBRA_COLORS carries).
+  const hideM  = new THREE.MeshLambertMaterial({color:0x463f47});
+  const bellyM = new THREE.MeshLambertMaterial({color:0x7d534f});
+  const mouthM = new THREE.MeshLambertMaterial({color:0x8a2b33});   // rawer, bloodier gum
+  const ivoryM = new THREE.MeshLambertMaterial({color:0xf6efdc});   // brighter against the dark hide
+  const darkM  = new THREE.MeshLambertMaterial({color:0x241f26});
+  // 🩸 THE EYE. Emissive so it holds its colour at night, when this animal is actually out.
+  const eyeM   = new THREE.MeshLambertMaterial({color:0x8e0f12, emissive:0x5a0507});
+  const veinM  = new THREE.MeshLambertMaterial({color:0xc23a2e, emissive:0x3a0806});
 
   // ---- BARREL BODY ----
   const body = new THREE.Group(); body.position.y = 1.02; g.add(body);
@@ -12596,13 +12629,25 @@ function makeHippo(x, z, pool){
   // eyes, ears and nostrils all ride HIGH on the skull — the periscope silhouette that
   // makes a submerged hippo readable as a hippo with only 15 cm showing.
   for(const s of [-1, 1]){
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.085, 6, 5), darkM);
-    eye.position.set(s*0.30, 0.40, 0.24); head.add(eye);
+    // 🩸 BLOODSHOT EYE — a bigger red eyeball ringed by an angrier sclera, with a black
+    // slit pupil in front so it still reads as an EYE and not as a glowing dot. Three
+    // meshes a side, and they are the single loudest "this will kill you" cue on the model
+    // because they sit on the highest point of the head — the part you see first when it
+    // is in the water, and the only part lit at night.
+    const sclera = new THREE.Mesh(new THREE.SphereGeometry(0.115, 7, 6), veinM);
+    sclera.position.set(s*0.31, 0.41, 0.24); head.add(sclera);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.095, 7, 6), eyeM);
+    eye.position.set(s*0.31, 0.41, 0.28); head.add(eye);
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.042, 6, 5), darkM);
+    pupil.scale.set(0.55, 1.0, 0.55); pupil.position.set(s*0.31, 0.41, 0.36); head.add(pupil);
+    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.07, 0.20), hideM);
+    brow.position.set(s*0.31, 0.52, 0.26); brow.rotation.z = -s*0.30; head.add(brow);  // scowl
     const ear = new THREE.Mesh(new THREE.SphereGeometry(0.11, 6, 5), hideM);
-    ear.scale.set(0.7, 1.0, 0.55); ear.position.set(s*0.36, 0.44, -0.22); head.add(ear);
+    ear.scale.set(0.7, 1.0, 0.55); ear.position.set(s*0.36, 0.46, -0.22); head.add(ear);
     const nos = new THREE.Mesh(new THREE.SphereGeometry(0.075, 6, 5), darkM);
     nos.position.set(s*0.17, 0.14, 1.06); head.add(nos);
   }
+  g._head = head;                 // the aggressive stance lowers this — see animateHippo
 
   // ---- LEGS: stumpy, and they MOVE (Steven asked for it explicitly) ----
   const legs = [];
@@ -12706,7 +12751,12 @@ function animateHippo(H, dt){
   const wantMouth = (H.state==='CHARGE') ? 1.0
                   : (H.state==='WALLOW' && Math.sin(H.bob*0.45) > 0.93) ? 0.75 : 0.04;
   H.mouth += (wantMouth - H.mouth) * Math.min(1, HIPPO.MOUTH_RATE*dt);
-  if(H.mesh._jaw) H.mesh._jaw.rotation.x = H.mouth * 1.15;   // ~66° gape at full
+  if(H.mesh._jaw) H.mesh._jaw.rotation.x = H.mouth * HIPPO.GAPE;   // ~100° at full
+  // ⚠ THE AGGRESSIVE STANCE: the head drops as the mouth opens, so the two cues arrive
+  // together and a charging hippo reads as coming at you low with its jaws open rather
+  // than trotting along yawning. Driven off `H.mouth` (already a smoothed 0..1) instead of
+  // off the state, so it eases in and out for free and can never pop.
+  if(H.mesh._head) H.mesh._head.position.y = 0.10 - H.mouth * HIPPO.HEAD_DROP;
 
   const legs = H.mesh._legs, bodyG = H.mesh._body;
   if(legs){
@@ -12795,13 +12845,31 @@ function updateHippos(dt){
     H.goreCd = Math.max(0, H.goreCd - dt);
     H.calmT  = Math.max(0, H.calmT  - dt);
 
-    // ⚠ TRIGGER 1 — "attacked → retreats to pond". An HP-drop watchdog, the lions' and
-    // the porcupine's pattern, so EVERY damage path in the game (present and future)
-    // wakes it without having to remember to. It also OVERRIDES a charge in progress.
-    if(H.health < H._prevHealth - 0.001 && H.health > 0 && H.state !== 'RETREAT'){
-      H.state = 'RETREAT'; H.stateT = 0; H.target = null; H.targetKind = null; H.dest = null;
-      if(Math.hypot(player.pos.x-H.pos.x, player.pos.z-H.pos.z) < 55)
-        showKillfeed('🦛 The hippo wheels and bolts for the water!');
+    // ⚠ TRIGGER 1 — THE HP-DROP WATCHDOG, and it now cuts BOTH ways (2026-08-07e).
+    // Still the lions'/porcupine's pattern, so every damage path in the game present and
+    // future wakes it without having to remember to — but the old version sent it running
+    // on ANY damage, which Steven found far too eager: one thrown rock and the pond apex
+    // fled. Now the size of the wound decides which way it goes:
+    //     health > 50%  → it TURNS ON whatever hit it and holds its ground
+    //     health ≤ 50%  → it breaks off and bolts for the water
+    // The retreat still overrides a charge in progress; the retaliation deliberately does
+    // NOT override an existing retreat, or a hippo you are finishing off would keep
+    // flipping back to fight every time you landed a hit.
+    if(H.health < H._prevHealth - 0.001 && H.health > 0){
+      const spent = H.health <= H.maxHealth * HIPPO.RETREAT_HP;
+      if(spent && H.state !== 'RETREAT'){
+        H.state = 'RETREAT'; H.stateT = 0; H.target = null; H.targetKind = null; H.dest = null;
+        if(Math.hypot(player.pos.x-H.pos.x, player.pos.z-H.pos.z) < 55)
+          showKillfeed('🦛 The hippo is badly hurt — it breaks off for the water!');
+      } else if(!spent && H.state !== 'RETREAT' && H.lastHitBy){
+        // hurt but far from beaten: come for whoever did it
+        const wasCharging = H.state === 'CHARGE';
+        H.state = 'CHARGE'; H.stateT = 0; H.calmT = 0;
+        H.target = H.lastHitBy;
+        H.targetKind = (H.lastHitKind === 'player' || H.lastHitBy === player) ? 'player' : H.lastHitKind;
+        if(!wasCharging && Math.hypot(player.pos.x-H.pos.x, player.pos.z-H.pos.z) < 55)
+          showKillfeed('🦛 The hippo GAPES and comes straight at you!');
+      }
     }
     H._prevHealth = H.health;
 
@@ -12836,7 +12904,9 @@ function updateHippos(dt){
         const alive = isP ? (player.health>0 && !playerOffGround()) : (t && t.health>0 && !t.dying);
         const tp = isP ? player.pos : (t && t.pos);
         if(!alive || !tp || Math.hypot(tp.x-H.pos.x, tp.z-H.pos.z) > HIPPO.GIVEUP){
-          H.state = night ? 'ROAM' : 'GRAZE'; H.stateT = 0; H.target = null; H.dest = null;
+          // ⚠ by DAY a finished charge goes HOMEWARD, never to a land-wander state —
+          // that is what keeps "no hippos on land in daylight" true even after a fight.
+          H.state = night ? 'ROAM' : 'HOMEWARD'; H.stateT = 0; H.target = null; H.dest = null;
           break;
         }
         const d = Math.hypot(tp.x-H.pos.x, tp.z-H.pos.z);
@@ -12849,58 +12919,79 @@ function updateHippos(dt){
         }
         break;
       }
-      // ---- ROAM: night only. Steven's 70 m, and it starts fights out there. ----
+      // ---- ROAM: NIGHT ONLY. Steven's 70 m, and it starts fights out there. ----
+      // ⚠ At DAWN this hands straight to HOMEWARD, not to a land state. See the day rule.
       case 'ROAM': {
-        if(!night){ H.state = 'GRAZE'; H.stateT = 0; H.dest = null; break; }
+        if(!night){ H.state = 'HOMEWARD'; H.stateT = 0; H.dest = null; break; }
         const pick = (H.calmT<=0 && mayScan) ? hippoPickTarget(H, HIPPO.NIGHT_AGGRO_R) : null;
         if(pick){ H.state='CHARGE'; H.stateT=0; H.target=pick.ent; H.targetKind=pick.kind; break; }
         if(!H.dest || H.stateT > 9){
           const a = rand(0, 6.28), rr = rand(H.pool.r, H.pool.r + HIPPO.NIGHT_RANGE);
           H.dest = { x: clamp(H.pool.x + Math.cos(a)*rr, -MAPR, MAPR),
                      z: clamp(H.pool.z + Math.sin(a)*rr, -MAPR, MAPR) };
+          // ⚠ GRAZING MOVED HERE (2026-08-07e), and it is where it always belonged: real
+          // hippos leave the water to eat AT NIGHT and lie up in it all day. So the grass
+          // preference that used to drive the daytime GRAZE state now steers the night
+          // wander — "passive by default, eats grass" is unchanged, it just happens after
+          // dark like everything else this animal does on land.
+          const g = tallGrassAt(H.dest.x, H.dest.z);
+          if(g && Math.hypot(g.x-H.pool.x, g.z-H.pool.z) < H.pool.r + HIPPO.NIGHT_RANGE){
+            H.dest.x = g.x; H.dest.z = g.z;
+          }
           H.stateT = 0;
         }
-        hippoStep(H, H.dest.x, H.dest.z, HIPPO.SPEED_ROAM, dt);
+        const near = Math.hypot(H.dest.x-H.pos.x, H.dest.z-H.pos.z) < 1.6;
+        hippoStep(H, H.dest.x, H.dest.z, near ? HIPPO.SPEED_GRAZE : HIPPO.SPEED_ROAM, dt);
         break;
       }
-      // ---- GRAZE: the daytime default. "Passive by default, eats grass." ----
-      case 'GRAZE': {
-        if(night){ H.state = 'ROAM'; H.stateT = 0; H.dest = null; break; }
+      // ---- HOMEWARD: dawn. Walk back to the water, calmly — this is not a retreat. ----
+      // ⚠ A SEPARATE STATE FROM RETREAT ON PURPOSE. RETREAT is a wounded animal bolting at
+      // SPEED_RETREAT with a killfeed line about breaking off; sunrise is neither. Reusing
+      // it would have made every dawn print "the hippo is badly hurt".
+      case 'HOMEWARD': {
+        if(night){ H.state = 'ROAM'; H.stateT = 0; H.dest = null; break; }   // dusk again
+        if(hippoInWater(H)){ H.state = 'WALLOW'; H.stateT = 0; H.dest = null; break; }
+        // it will still defend itself on the way home
         const pick = (H.calmT<=0 && mayScan) ? hippoPickTarget(H, HIPPO.PROVOKE_R) : null;
         if(pick){ H.state='CHARGE'; H.stateT=0; H.target=pick.ent; H.targetKind=pick.kind; break; }
-        H.grazeT -= dt;
-        if(H.grazeT <= 0){
-          // back into the water for a wallow every so often — a hippo cannot stay out of
-          // water indefinitely, and it is what keeps them readable as pond animals by day
-          if(Math.random() < 0.45){ H.state='WALLOW'; H.stateT=0; H.dest=null; H.grazeT=rand(8,18); break; }
-          H.dest = null; H.grazeT = rand(6, 14);
-        }
-        if(!H.dest){
-          // ⚠ It aims at GRASS when there is any in reach — "eats grass" is a real
-          // preference, not a label. Falls back to any spot on its shore otherwise.
-          const a = rand(0, 6.28), rr = rand(H.pool.r*0.9, H.pool.r + HIPPO.GRAZE_RANGE);
-          let dx = clamp(H.pool.x + Math.cos(a)*rr, -MAPR, MAPR);
-          let dz = clamp(H.pool.z + Math.sin(a)*rr, -MAPR, MAPR);
-          const g = tallGrassAt(dx, dz) || tallGrassAt(H.pos.x, H.pos.z);
-          if(g && Math.hypot(g.x-H.pool.x, g.z-H.pool.z) < H.pool.r + HIPPO.GRAZE_RANGE){
-            dx = g.x; dz = g.z;
-          }
-          H.dest = { x:dx, z:dz };
-        }
-        if(Math.hypot(H.dest.x-H.pos.x, H.dest.z-H.pos.z) > 1.6)
-          hippoStep(H, H.dest.x, H.dest.z, HIPPO.SPEED_GRAZE, dt);
-        else { H._lastSpeed = 0; H.dest = null; }
+        hippoStep(H, H.pool.x, H.pool.z, HIPPO.SPEED_ROAM, dt);
+        if(H.stateT > 40){ H.state = 'WALLOW'; H.stateT = 0; }   // stranding guard
         break;
       }
-      // ---- WALLOW: sitting in its own pond. The resting state, day or night. ----
+      // ---- WALLOW: in its own pond. THE DAYTIME STATE, and the night resting state. ----
       default: {
         const pick = (H.calmT<=0 && mayScan) ? hippoPickTarget(H, HIPPO.PROVOKE_R) : null;
         if(pick){ H.state='CHARGE'; H.stateT=0; H.target=pick.ent; H.targetKind=pick.kind; break; }
-        if(H.stateT > rand(6, 10)){
-          H.state = night ? 'ROAM' : 'GRAZE'; H.stateT = 0; H.dest = null; break;
+        // ⚠ IT ONLY LEAVES THE WATER AT NIGHT (2026-08-07e). Steven: *"the hippo only
+        // leaves the pond at night. During the day it stays submerged in/near the water,
+        // not on land wandering. At dusk it emerges and starts its 70 m wander. At dawn it
+        // returns."* By day this branch has NO exit to a land state at all — that is the
+        // rule, expressed as the absence of a transition rather than as a guard somewhere
+        // else that could be forgotten. The only thing that can put a hippo on dry land
+        // between dawn and dusk is a CHARGE, which is self-limiting and ends in HOMEWARD.
+        if(night && H.stateT > rand(4, 9)){
+          H.state = 'ROAM'; H.stateT = 0; H.dest = null;
+          if(Math.hypot(player.pos.x-H.pos.x, player.pos.z-H.pos.z) < 70)
+            showKillfeed('🦛 A hippo heaves itself out of the water…');
+          break;
         }
-        if(!H.dest || Math.hypot(H.dest.x-H.pos.x, H.dest.z-H.pos.z) < 1.2){
-          const a = rand(0, 6.28), rr = Math.sqrt(Math.random())*H.pool.r*0.75;
+        // ⚠ WALLOW MUST OWN ITS DESTINATION, not inherit one. It used to keep any `H.dest`
+        // that was already on the record, and ROAM/HOMEWARD leave LAND destinations there —
+        // so a hippo entering WALLOW straight off a night wander would calmly swim toward a
+        // point 30 m inland, leashed only by `hippoLeash`, and walk out of its own pond in
+        // broad daylight. That is precisely the rule this state exists to enforce, defeated
+        // by a stale field. Re-pick unless the existing target is genuinely inside the deep
+        // half of the bowl, so "stays in the pond by day" holds by construction rather than
+        // by whatever happened to run before.
+        const dOK = H.dest && Math.hypot(H.dest.x-H.pool.x, H.dest.z-H.pool.z) <= H.pool.r*0.62;
+        if(!dOK || Math.hypot(H.dest.x-H.pos.x, H.dest.z-H.pos.z) < 1.2){
+          // ⚠ 0.75r → 0.60r. The bowl shallows FAST: measured on a 22.9 m pond, depth is
+          // 4.61 at the centre, 0.41 at 0.75r and already ABOVE the surface (dry mud, still
+          // inside the pond footprint) by 0.85r. A hippo drifting to 0.75r therefore spent
+          // part of its day technically un-submerged, which is exactly what "stays
+          // submerged during the day" is supposed to rule out. 0.60r keeps it in ≥1.27 of
+          // water — properly under, with the periscope silhouette showing.
+          const a = rand(0, 6.28), rr = Math.sqrt(Math.random())*H.pool.r*0.60;
           H.dest = { x: H.pool.x + Math.cos(a)*rr, z: H.pool.z + Math.sin(a)*rr };
         }
         hippoStep(H, H.dest.x, H.dest.z, HIPPO.SPEED_SWIM*0.35, dt);

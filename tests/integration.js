@@ -2206,8 +2206,11 @@ test('hippo: floats, swims faster than it walks, charges when crowded, bolts whe
   hippoMeshes.forEach(H=>{
     const w = H.pool, bx = w.x + w.r + 13;
     H.pos.set(bx, terrainY(bx, w.z), w.z); H.mesh.position.copy(H.pos);
-    H.state='GRAZE'; H.calmT=0; H.stunTimer=0; H.health=H.maxHealth; H._prevHealth=H.health;
-    H.health -= 25;                                  // any damage at all
+    // ⚠ 'GRAZE' no longer exists — the hippo does not wander on land by day at all now,
+    // so its land state is ROAM (night) and the daytime state is WALLOW. And the wound has
+    // to be past HALF: since 2026-08-07e a lightly hurt hippo turns on you instead.
+    H.state='ROAM'; H.calmT=0; H.stunTimer=0; H.health=H.maxHealth; H._prevHealth=H.health;
+    H.health = H.maxHealth * HIPPO.RETREAT_HP - 1;   // just past the break-off threshold
     updateHippos(DT);
     const went = H.state === 'RETREAT';
     // ⚠ MEASURE THE TRANSITION, NOT THE AFTERMATH. The first version asserted
@@ -2231,7 +2234,7 @@ test('hippo: floats, swims faster than it walks, charges when crowded, bolts whe
   const H1 = hippoMeshes[0], w1 = H1.pool;
   const bank = { x:w1.x + w1.r + 6, z:w1.z };
   H1.pos.set(bank.x, terrainY(bank.x, bank.z), bank.z); H1.mesh.position.copy(H1.pos);
-  H1.state='GRAZE'; H1.calmT=0; H1.health=H1.maxHealth; H1._prevHealth=H1.health; H1.stunTimer=0;
+  H1.state='ROAM'; H1.calmT=0; H1.health=H1.maxHealth; H1._prevHealth=H1.health; H1.stunTimer=0;
   progress.accessories = [null, null]; EQUIP = computeEquipMods();   // no cloak in the way
   player.pos.set(bank.x + 5, 0, bank.z); pinPlayer(false);
   dn.isDay = true;
@@ -2280,7 +2283,7 @@ test('hippo: floats, swims faster than it walks, charges when crowded, bolts whe
   for(let i=0;i<18000;i++){ updateHippos(DT);
     maxD = Math.max(maxD, Math.hypot(H2.pos.x-w2.x, H2.pos.z-w2.z)); }
   detail.nightMaxDist  = r2(maxD);
-  detail.dayLeash      = r2(w2.r + HIPPO.GRAZE_RANGE);
+  detail.grazeBar      = r2(w2.r + HIPPO.GRAZE_RANGE);   // the old day-leash, now just a bar
   detail.nightLeash    = r2(w2.r + HIPPO.NIGHT_RANGE);
   detail.leftTheWater  = maxD > w2.r + HIPPO.GRAZE_RANGE;
   detail.leashHeld     = maxD <= w2.r + HIPPO.NIGHT_RANGE + 0.5;
@@ -2296,6 +2299,137 @@ test('hippo: floats, swims faster than it walks, charges when crowded, bolts whe
                detail.allRetreated && detail.chargedWhenCrowded && detail.tookNoDamageToProvoke &&
                detail.goreIsTheNumber && detail.leftTheWater && detail.leashHeld &&
                detail.crocsUnharmed;
+  return { pass, detail };
+});
+
+// =====================================================================
+//  🦛 THE HIPPO'S 2026-08-07e BEHAVIOUR SPEC
+// =====================================================================
+// Three pins Steven asked for by name, plus the controls that stop each of them passing
+// for the wrong reason. Every one is driven across the WHOLE population, not one animal:
+// the failure being guarded against is a rule that holds for the hippo you happened to
+// test and not for the one in the far pond.
+test('hippo: 800 HP, holds its ground above half, and never leaves the pond by day', ()=>{
+  pinPlayer();
+  const detail = {}, DT = 1/60;
+  const pop = hippoMeshes.length;
+  if(!pop) return { pass:false, detail:{ error:'no hippos spawned' } };
+  detail.population = pop;
+  const wasDay = dn.isDay;
+  const home = { x:player.pos.x, z:player.pos.z };
+  // park the player far away so nothing is provoked by the measurement itself
+  player.pos.set(-MAPR+10, 0, -MAPR+10); pinPlayer();
+
+  // ---- PIN 1: HP is 800, on the table AND on every live animal ----
+  detail.constantIs800  = HIPPO.HEALTH === 800;
+  detail.everyHippoIs800 = hippoMeshes.every(H => H.maxHealth === 800);
+  detail.maxHealths = hippoMeshes.map(H => H.maxHealth);
+
+  // ---- PIN 2: it does NOT retreat above 50% — it turns on whoever hit it ----
+  // ⚠ Tested at several depths of wound, either side of the line, on every hippo. A single
+  // "it didn't retreat" proves nothing on its own: an animal that never retreats at ALL
+  // would pass that. So the same loop asserts the flip side at the same time.
+  // ⚠ THE PLAYER HAS TO BE WITHIN REACH FOR THE RETALIATION HALF TO BE VISIBLE, and the
+  // first version of this parked them 300 m away (to avoid accidental provocation) and
+  // then asserted the hippo charges *that* player. It set CHARGE correctly and the CHARGE
+  // branch gave up on the same frame — target beyond GIVEUP 34 — so every row read
+  // HOMEWARD and a correct build scored as broken.
+  // ⚠ `calmT = 99` is what keeps this honest: it blocks the PROXIMITY scan outright, so a
+  // CHARGE here can only have come from the HP-drop watchdog and never from the player
+  // standing nearby. Both halves are real.
+  const wound = (H, frac)=>{
+    const w = H.pool, bx = w.x + w.r + 10;
+    H.pos.set(bx, terrainY(bx, w.z), w.z); H.mesh.position.copy(H.pos);
+    player.pos.set(bx + 8, 0, w.z); pinPlayer();     // inside GIVEUP, outside GORE_R
+    H.state = 'ROAM'; H.stateT = 0; H.calmT = 99; H.stunTimer = 0; H.target = null;
+    H.health = H.maxHealth; H._prevHealth = H.health;
+    H.lastHitBy = player; H.lastHitKind = 'player';
+    H.health = H.maxHealth * frac;          // the wound lands here
+    updateHippos(DT);
+    return H.state;
+  };
+  const above = [], below = [];
+  hippoMeshes.forEach(H=>{
+    [0.99, 0.80, 0.60, 0.51].forEach(f => above.push({ f, state: wound(H, f) }));
+    [0.50, 0.49, 0.30, 0.10].forEach(f => below.push({ f, state: wound(H, f) }));
+    H.health = H.maxHealth; H._prevHealth = H.health; H.state = 'WALLOW';
+  });
+  detail.aboveHalf = above;
+  detail.belowHalf = below;
+  detail.neverRetreatsAboveHalf = above.every(r => r.state !== 'RETREAT');
+  detail.retaliatesAboveHalf    = above.every(r => r.state === 'CHARGE');
+  detail.alwaysRetreatsAtOrBelowHalf = below.every(r => r.state === 'RETREAT');
+  detail.thresholdIsHalf = HIPPO.RETREAT_HP === 0.50;
+  player.pos.set(-MAPR+10, 0, -MAPR+10); pinPlayer();   // back out of the way
+
+  // ---- PIN 3: it does not emerge from the pond during the DAY ----
+  // ⚠ "On land" is measured as OUTSIDE THE POND FOOTPRINT (`poolAt`), not as the depth
+  // predicate: the bowl shallows to nothing near its rim, so a hippo standing in 20 cm of
+  // water at 0.85r is still in its pond and must not count as having left.
+  dn.isDay = true;
+  // ⚠ clear `dest` too — the wound loop above leaves LAND destinations on these records,
+  // and a state that inherits one is exactly the bug this section found in WALLOW.
+  hippoMeshes.forEach(H=>{ H.state='WALLOW'; H.stateT=0; H.calmT=99; H.dest=null;
+    H.target=null; H.targetKind=null;
+    H.health=H.maxHealth; H._prevHealth=H.health;
+    const w=H.pool; H.pos.set(w.x, terrainY(w.x,w.z), w.z); H.mesh.position.copy(H.pos); });
+  let outFrames = 0, unsub = 0; const dayStates = {};
+  const DAY_FRAMES = 9000;                                   // 150 s of game time
+  for(let i=0;i<DAY_FRAMES;i++){
+    updateHippos(DT);
+    hippoMeshes.forEach(H=>{
+      if(!poolAt(H.pos.x, H.pos.z)) outFrames++;
+      if(!hippoInWater(H)) unsub++;
+      dayStates[H.state] = (dayStates[H.state]||0) + 1;
+    });
+  }
+  detail.dayFramesSampled  = DAY_FRAMES * pop;
+  detail.dayFramesOutOfPond = outFrames;
+  detail.dayFramesUnsubmerged = unsub;
+  detail.dayStates = dayStates;
+  detail.staysInByDay = outFrames === 0 && unsub === 0;
+  // …and the state machine must offer NO land state by day
+  detail.noLandStateByDay = !Object.keys(dayStates).some(k => k==='ROAM' || k==='HOMEWARD');
+
+  // ---- THE CONTROL: at night they DO come out, or the day result means nothing ----
+  dn.isDay = false;
+  hippoMeshes.forEach(H=>{ H.stateT = 99; });
+  const emerged = new Set(); let maxD = 0;
+  for(let i=0;i<9000;i++){
+    updateHippos(DT);
+    hippoMeshes.forEach((H, ix)=>{
+      if(!poolAt(H.pos.x, H.pos.z)) emerged.add(ix);
+      maxD = Math.max(maxD, Math.hypot(H.pos.x-H.pool.x, H.pos.z-H.pool.z));
+    });
+  }
+  detail.nightEmerged = emerged.size;
+  detail.nightMaxDist = r2(maxD);
+  detail.allEmergeAtNight = emerged.size === pop;
+
+  // ---- …and at DAWN every one of them goes home ----
+  dn.isDay = true;
+  for(let i=0;i<18000;i++) updateHippos(DT);
+  detail.dawnBackInPond = hippoMeshes.filter(H => !!poolAt(H.pos.x, H.pos.z)).length;
+  detail.dawnSubmerged  = hippoMeshes.filter(H => hippoInWater(H)).length;
+  detail.dawnStates     = hippoMeshes.map(H => H.state);
+  detail.allComeHomeAtDawn = detail.dawnBackInPond === pop && detail.dawnSubmerged === pop;
+
+  // ---- the damage number that goes with 800 HP ----
+  detail.goreDamage = HIPPO.GORE_DMG;
+  // ⚠ must stay UNDER the player's 100 max: at or above it, a gore is an unavoidable
+  // one-shot kill rather than a hard fight. Two hits must still be lethal.
+  detail.goreIsNotAOneShot = HIPPO.GORE_DMG < PLAYER.maxHealth;
+  detail.goreKillsInTwo    = HIPPO.GORE_DMG * 2 >= PLAYER.maxHealth;
+
+  dn.isDay = wasDay;
+  hippoMeshes.forEach(H=>{ H.health = H.maxHealth; H._prevHealth = H.health; H.state = 'WALLOW'; });
+  player.pos.set(home.x, 0, home.z); pinPlayer();
+  const pass = detail.constantIs800 && detail.everyHippoIs800 && detail.thresholdIsHalf &&
+               detail.neverRetreatsAboveHalf && detail.retaliatesAboveHalf &&
+               detail.alwaysRetreatsAtOrBelowHalf &&
+               detail.staysInByDay && detail.noLandStateByDay &&
+               detail.allEmergeAtNight && detail.allComeHomeAtDawn &&
+               detail.goreIsNotAOneShot && detail.goreKillsInTwo;
   return { pass, detail };
 });
 

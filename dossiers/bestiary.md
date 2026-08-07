@@ -143,35 +143,37 @@ grace** to get out of the water. Killing the croc also makes it let go.
 Cobra venom sticks to a croc **basking on the bank** but can't reach one **under the water**.
 ⚠ Clear a pond of crocs and it's yours — **until dawn, when a new one moves in.**
 
-### 🦛 Hippopotamus — the pond's OTHER apex *(300 HP)*
-**Every pond has 1–2 hippos as well as its crocodiles, and the two ignore each other.** A hippo is the
-toughest thing that walks: more than the rhino (220), well under the croc (600) — but it hits harder than
-anything else in the game.
+### 🦛 Hippopotamus — the pond's OTHER apex *(800 HP — a boss)*
+**Every pond has 1–2 hippos as well as its crocodiles, and the two ignore each other.** At **800 HP** it
+is a **mid-tier boss** — tougher than the crocodile (600), and it hits harder than anything else alive.
+Anchors: gorilla 160 · rhino 220 · croc 600 · **hippo 800** · gold cobra 1500.
 
-**It is the same height as a rhino and far longer** (2026-08-07) — the biggest-bodied animal on the map
-after the elephant. Two curved cream canines sweep up out of its lower jaw and **show even with its mouth
-shut**, against grey hide; when it charges, the mouth gapes wide and those tusks come at you first.
+**It is the same height as a rhino and far longer** — the biggest-bodied animal on the map after the
+elephant. Near-black hide, **bloodshot red eyes**, and two curved cream canines that sweep up out of its
+lower jaw and **show even with its mouth shut**. When it charges, the head drops, the mouth gapes ~100°
+and those tusks come at you first.
 
-**By day it is harmless if you let it be.** It wallows in its own water and comes out to **graze the shore
-grass**, drifting back in for a soak every so often. It has no interest in you at all.
+**⚠ YOU WILL ONLY MEET ONE AT NIGHT.** From dawn to dusk a hippo stays **submerged in its own pond** — it
+does not come out on land at all. At dusk it heaves itself out and starts wandering; at dawn it walks back
+in. A pond that is completely safe to approach at noon is the centre of a **70 m** danger zone after dark,
+and out there it starts fights with lions, wild dogs, cheetahs, gorillas, porcupines and serpents as well
+as you. It grazes while it wanders.
 
-**Two things set it off, and they point opposite ways:**
-- **Crowd it (within ~9 m) and it CHARGES** — mouth gaping wide, tusks first, **48 damage** a thrust plus a
-  stun and a hard knockback. That is the biggest single hit any animal lands. It charges at **13.5**, which
-  is faster than you WALK (10) and slower than you SPRINT (16): strolling away fails, running away works.
-- **Actually hurt it and it BOLTS for the water** instead, whatever it was doing — even mid-charge. So
-  shooting a hippo drives it off rather than pulling it onto you, and once it is back in its pond it needs a
-  few seconds before anything can provoke it again.
+**Two things set it off:**
+- **Crowd it (within ~9 m) and it CHARGES** — tusks first, **55 damage** a thrust plus a stun and a hard
+  knockback. That is the biggest single hit in the game: **two connect and you are dead.** It charges at
+  **13.5**, faster than you WALK (10) and slower than you SPRINT (16) — strolling away fails, running works.
+- **⚠ HURTING IT DOES NOT DRIVE IT OFF ANY MORE.** Above **half health it turns on whoever hit it** and
+  keeps coming. Only once you have taken it past 400 does it break off and bolt for the water. At 800 HP
+  that is roughly five spears of commitment before it gives you the chase instead of the fight.
 
 **⚠ NEVER FOLLOW ONE INTO THE WATER.** A hippo is the **one animal water does not slow down** — everything
 else in the game (you included) moves at a third speed in a pond, and a hippo actually moves *faster* in
-there (6.0) than it does on the bank (4.2). It also floats at the surface with only its eyes, ears and
-nostrils and a hump of back showing, so a hippo in its pond is much harder to see than one on land.
+there (6.0) than it does on the bank (4.2). It floats with only its eyes, ears, nostrils and a hump of back
+showing — at night, those red eyes on the water are the only warning you get.
 
-**At night it leaves.** It wanders **up to 70 m out from its pond** (Steven's number — measured from the
-water's edge, so a big pond's hippo ranges ~95 m from the centre) and **starts fights out there**, taking on
-lions, wild dogs, cheetahs, gorillas, porcupines and serpents as well as you. A pond that is safe at noon is
-the centre of a 70 m danger zone after dark.
+**Fighting one:** ~10 spears, 8 boomerangs, or 9 Gorilla Club swings. ⚠ **Not the crossbow** — 16 bolts at
+one rhino horn each.
 
 **On the radar** it is the **biggest dot there is** — bigger than the rhino or the gorilla, because it
 outweighs them — slate-mauve while it minds its own business, **blazing magenta the instant it charges**.

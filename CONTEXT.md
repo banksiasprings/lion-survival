@@ -3876,3 +3876,83 @@ So the croc gets its own predicate, `crocCanReachPlayer(C)`, and it is about **w
    the pond** whenever the croc is mid-water — and 4 m above a pond *bed* is still 1.5 m *under* the
    surface, so the croc correctly reached and the probe scored a correct build as broken. It now stands on
    the bank and asserts `probeSpotIsDry` before trusting its own answer.
+
+## 🦛 HIPPO — the boss pass: 800 HP, night-only, and made to look like it (2026-08-07e)
+Steven: *"make it scary… red/bloodshot eyes, mouth opens wider, aggressive stance, darker grey skin…
+whatever reads as 'this thing will kill you' at a glance. Keep the barrel body / stubby legs."* Plus three
+behaviour changes and an HP buff.
+
+### The numbers
+| | was | now | why |
+|---|---|---|---|
+| **HEALTH** | 300 | **800** | Steven said 500, corrected to 800. Now a **mid-tier boss** — it outlasts the crocodile. Anchors: gorilla 160 · rhino 220 · croc 600 · black cobra 700 · **🦛 800** · gold cobra 1500 |
+| **GORE_DMG** | 48 | **55** | ⚠ *deliberately not scaled with the pool* — see below |
+| **RETREAT_HP** | any damage | **≤ 50%** | "retreats when injured" was far too eager |
+| **GAPE** | 1.15 rad (66°) | **1.75 rad (~100°)** | the real animal's threat yawn; puts the whole lower arcade in view |
+
+⚠ **DAMAGE IS NOT SCALED WITH HP, and that is the judgement call he left open.** 800/300 is 2.67×, which
+would put a gore at **128** — and **the player has 100 HP**. Anything at or above 100 is a one-shot kill
+with no counterplay: not a harder fight, a death sentence with a longer wind-up. **The player's health
+ceiling is the binding constraint, not the hippo's.** 55 keeps the **two-hit kill** (55+55 = 110) while
+being unambiguously the hardest single hit in the game (rhino gore 35, cheetah sprint 46, croc bite 26).
+*The 800 makes it a boss; the 55 makes it frightening.* Time-to-kill at 800: 10 spears, 8 boomerangs,
+9 club swings, ~11 s of Cobra Dagger — or 16 crossbow bolts, and a bolt costs a rhino horn, so **the
+crossbow is now the wrong answer to a hippo.**
+
+### 🩸 The look
+- **Hide darkened** 0x6b6168 → **0x463f47**, a wet near-charcoal with a cold violet in it. The old slate
+  read as placid next to the rhino's 0x8f8f86. Now the cream tusks and the red eye carry all the contrast.
+- **Bloodshot eyes** — three meshes a side: an angry `veinM` sclera, a `0x8e0f12` **emissive** eyeball, and
+  a black slit pupil in front so it still reads as an eye and not a glowing dot, plus a scowling brow bar.
+  ⚠ Emissive on purpose: this animal is now *only* out at night, and the eye is the one part of it that is
+  lit — and the highest point of the head, so it is what you see first when it is in the water.
+- **Aggressive stance** driven off `H.mouth` (already a smoothed 0..1) rather than off the state, so the
+  head drop eases in and out for free and can never pop. `HEAD_DROP` is only **0.14** — any more and the
+  barrel reads as a bull, and the silhouette is the thing Steven explicitly asked to keep.
+
+### 🌙 NIGHT-ONLY SURFACING — and `GRAZE` is gone
+| state | when |
+|---|---|
+| **WALLOW** | the daytime state, and night rest. In its own pond. |
+| **ROAM** | **night only.** Out of the water, up to 70 m, grazing as it goes, starting fights. |
+| **HOMEWARD** | dawn — a calm walk back to the water |
+| CHARGE / RETREAT | any time |
+- ⚠ **The day rule is expressed as the ABSENCE of a transition.** By day, `WALLOW` has no exit to a land
+  state at all — rather than a guard somewhere else that a future edit could forget. The only thing that
+  can put a hippo on dry land between dawn and dusk is a CHARGE, which is self-limiting and ends in
+  HOMEWARD.
+- ⚠ **HOMEWARD is a separate state from RETREAT on purpose.** RETREAT is a wounded animal bolting at
+  SPEED_RETREAT with a killfeed line about breaking off. Sunrise is neither, and reusing it would have
+  printed *"the hippo is badly hurt"* every single dawn.
+- **Grazing moved into the night wander**, which is where it always belonged — real hippos leave the water
+  to eat after dark and lie up in it all day. "Passive by default, eats grass" is unchanged; it just
+  happens after dark like everything else this animal now does on land.
+
+### 🩹 Two bugs this pass found in the hippo's own code
+1. ⚠ **`WALLOW` trusted a `dest` it did not set.** ROAM and HOMEWARD leave *land* destinations on the
+   record, so a hippo entering WALLOW straight off a night wander would calmly swim toward a point 30 m
+   inland — leashed only by `hippoLeash` — and **walk out of its own pond in broad daylight.** The exact
+   rule the state exists to enforce, defeated by a stale field. It re-picks now unless the existing target
+   is genuinely inside the deep half of the bowl, so the rule holds *by construction*.
+2. **The wallow radius was too wide.** 0.75r → **0.60r**. Measured on a 22.9 m pond, the bowl shallows
+   fast: depth **4.61** at the centre, **0.41** at 0.75r, and already **above the surface** — dry mud, still
+   inside the pond footprint — by 0.85r. A hippo drifting to 0.75r spent part of its day technically
+   un-submerged, which is what "stays submerged during the day" is meant to rule out. 0.60r keeps it in
+   ≥1.27 of water.
+
+### Verified — suite 32 → 33, all green (12 consecutive runs across two page loads)
+`hippo: 800 HP, holds its ground above half, and never leaves the pond by day` — Steven's three pins, each
+with the control that stops it passing for the wrong reason:
+| pin | result |
+|---|---|
+| **HP is 800** | on the constant **and** on every live animal |
+| **no retreat above 50%** | 0.99 / 0.80 / 0.60 / 0.51 × every hippo → **never RETREAT**, and **always CHARGE** — ⚠ the control, because an animal that never retreats *at all* would pass the first half alone |
+| …and it does below | 0.50 / 0.49 / 0.30 / 0.10 → **always RETREAT** (0.50 inclusive) |
+| **no emerging by day** | **0 of 45 000** frames outside the pond **and 0** un-submerged; only `WALLOW` ever observed |
+| the control | at night **all** hippos leave the pond, reaching 76 m from centre |
+| dawn | **all** back in the pond and submerged, all `WALLOW` |
+| gore sanity | 55 < the player's 100 (not a one-shot) **and** 2×55 ≥ 100 (still a two-hit kill) |
+- ⚠ **"On land" is measured as OUTSIDE THE POND FOOTPRINT (`poolAt`), not by the depth predicate** — the
+  bowl shallows to nothing near its rim, so a hippo standing in 20 cm at 0.85r is still in its pond and
+  must not count as having left.
+- 34 → **40 meshes**; `updateHippos` **40.0 µs** at 6 hippos, 0.24% of the frame budget.

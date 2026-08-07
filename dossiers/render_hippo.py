@@ -35,11 +35,13 @@ from render_croc import TF, chain, box, cone, sphere, render, shade, label   # n
 
 # ---------------------------------------------------------------- palette
 # transcribed from makeHippo()
-HIDE  = 0x6b6168     # wet slate-grey back
-BELLY = 0x9a6f6a     # the famous pink-brown underside
-MOUTH = 0x7d3f45     # gums
-IVORY = 0xefe7cf     # tusks + incisors
-DARK  = 0x3a3238     # eyes, nostrils, feet
+HIDE  = 0x463f47     # near-charcoal hide (darkened 2026-08-07e — "make it scary")
+BELLY = 0x7d534f     # the pink-brown underside, muted to match
+MOUTH = 0x8a2b33     # raw, bloody gum
+IVORY = 0xf6efdc     # tusks + incisors — brighter, so they carry the contrast
+DARK  = 0x241f26     # nostrils, feet, pupil
+EYE   = 0x8e0f12     # 🩸 bloodshot eyeball
+VEIN  = 0xc23a2e     # …and the angrier sclera ring behind it
 
 WATER = 0x2b6a8c     # the pond disc colour from the minimap note
 
@@ -67,6 +69,10 @@ def leg_pose(ph, moving, swimming):
     return (swing * reach * k, up * lift, -swing * 0.5 * k, up * 0.7)
 
 
+GAPE      = 1.75     # HIPPO.GAPE  — ~100 deg at full open
+HEAD_DROP = 0.14     # HIPPO.HEAD_DROP — the aggressive stance
+
+
 def build(gait=0.0, mouth=0.04, swimming=False, moving=True, bob=0.0):
     """One hippo, posed. Mirrors makeHippo() + animateHippo() exactly."""
     out = []
@@ -82,7 +88,9 @@ def build(gait=0.0, mouth=0.04, swimming=False, moving=True, bob=0.0):
            scale=(1.0, 0.55, 1.45), rings=6, segs=8)
 
     # ---- HEAD (head group at 0, 0.10, 1.62 inside body) ----
-    head = TF((0, 0.10, 1.62))
+    # ⚠ THE AGGRESSIVE STANCE: the head drops as the mouth opens, so both cues land
+    # together and a charging hippo reads as coming at you low with its jaws open.
+    head = TF((0, 0.10 - mouth*HEAD_DROP, 1.62))
     hs = [root, body, head]
     box(hs, 0.98, 0.72, 0.92, HIDE, out)                       # skull
     # ⚠ the muzzle FLARES wider than the skull (1.34 vs 0.98) — the hippo's signature
@@ -91,7 +99,7 @@ def build(gait=0.0, mouth=0.04, swimming=False, moving=True, bob=0.0):
            scale=(2.10, 0.42, 1.35), rings=6, segs=8)               # fleshy lip roll
 
     # ---- THE JAW PIVOT — hinged at the BACK of the mouth, not sliding down ----
-    jaw = TF((0, -0.22, 0.32), (mouth * 1.15, 0, 0))
+    jaw = TF((0, -0.22, 0.32), (mouth * GAPE, 0, 0))
     js = hs + [jaw]
     box(js + [TF((0, -0.10, 0.44))], 1.22, 0.32, 0.88, HIDE, out)   # lower jaw
     box(js + [TF((0, 0.05, 0.44))], 1.10, 0.18, 0.76, MOUTH, out)   # gums
@@ -112,10 +120,17 @@ def build(gait=0.0, mouth=0.04, swimming=False, moving=True, bob=0.0):
         cyl(c + [TF((0, 0.11, 0))], 0.012, 0.052, 0.22, IVORY, out)
         cone(js + [TF((s*0.17, 0.14, 0.80), (-0.34, 0, 0))], 0.055, 0.28, 5, IVORY, out)
 
-    # ---- eyes / ears / nostrils, all riding HIGH on the skull ----
+    # ---- 🩸 bloodshot eyes / ears / nostrils, all riding HIGH on the skull ----
+    # The eye is the loudest "this will kill you" cue on the model: it sits on the highest
+    # point of the head, so it is the part you see first when the animal is in the water
+    # and the only part lit at night.
     for s in (-1, 1):
-        sphere(hs + [TF((s*0.30, 0.40, 0.24))], 0.085, DARK, out, rings=5, segs=6)
-        sphere(hs + [TF((s*0.36, 0.44, -0.22))], 0.11, HIDE, out,
+        sphere(hs + [TF((s*0.31, 0.41, 0.24))], 0.115, VEIN, out, rings=6, segs=7)  # sclera
+        sphere(hs + [TF((s*0.31, 0.41, 0.28))], 0.095, EYE,  out, rings=6, segs=7)  # eyeball
+        sphere(hs + [TF((s*0.31, 0.41, 0.36))], 0.042, DARK, out,
+               scale=(0.55, 1.0, 0.55), rings=5, segs=6)                            # pupil
+        box(hs + [TF((s*0.31, 0.52, 0.26), (0, 0, -s*0.30))], 0.26, 0.07, 0.20, HIDE, out)  # scowl brow
+        sphere(hs + [TF((s*0.36, 0.46, -0.22))], 0.11, HIDE, out,
                scale=(0.7, 1.0, 0.55), rings=5, segs=6)
         sphere(hs + [TF((s*0.17, 0.14, 1.06))], 0.075, DARK, out, rings=5, segs=6)
 
@@ -186,7 +201,7 @@ def hero_sheet(path):
     # 3. THE GAPE — what a charging hippo shows you
     polys = build(gait=0.5, mouth=1.0, swimming=False, moving=True)
     img = render(polys, PW, PH, (1.2, 1.9, 5.6), (0, 1.1, 0.9), fov=42)
-    label(img, 'THE GAPE  mouth=1.0 (CHARGE)', 'curved canines rake up and out of the lower jaw')
+    label(img, 'THE GAPE  mouth=1.0 (CHARGE)', 'gape 1.75 rad (~100 deg) + head dropped = the threat')
     sheet.paste(img, (PW*2, 0))
 
     # 3. THE PERISCOPE — floating at the surface, which is what swimming looks like
