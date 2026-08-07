@@ -4031,3 +4031,79 @@ return means it matches neither.* It zeroes the pouch now.
 | sanitising | negatives, fractions, strings and unknown keys all rejected |
 | **v1 migration** | 57 coins, crossbow unlock and loadout all kept · upgraded in place to v2 · **invents nothing** |
 | corrupt save | does not throw, keeps coins, leaves a clean pouch |
+
+## 📱 iPHONE — "zooms in too much and won't fit the screen" (2026-08-08)
+Steven, on iPhone Safari: *"zooms in too much"* and it *"won't fit the screen properly."*
+
+### The report was two faults wearing one coat
+Most of the usual mobile suspects were **already right** and were not the problem: the viewport meta tag
+already carried `maximum-scale=1, user-scalable=no, viewport-fit=cover`; there is not a single `100vh` in
+the file (every overlay is `position:fixed; inset:0`); the DPR was already capped at 2; the canvas already
+had `touch-action:none`; and the touch HUD already used `env(safe-area-inset-*)` on all four sides. So the
+fix is **not** the checklist — it is what the checklist hides.
+
+**Fault 1 — the canvas never re-sized.** Measured live at the deployed build: viewport `844×390`, canvas
+still `375×812`. The renderer only listened for `resize`, and iOS is exactly where that is not enough —
+rotating an iPhone fires `resize` while `innerWidth/innerHeight` still report the *pre-rotation* numbers,
+and the URL bar retracting changes `innerHeight` with **no `resize` at all** (it resizes the *visual*
+viewport instead). Either way the canvas keeps the size it had, so a phone turned to landscape renders a
+portrait strip into the corner of a landscape screen. That is the *"won't fit"* half, literally.
+
+**Fault 2 — a vertical FOV on a screen that is short.** ⚠ **`THREE.PerspectiveCamera.fov` is VERTICAL**,
+which is a trap on a phone: hold it fixed and a narrow viewport silently throws the *horizontal* view away.
+75° vertical spans **107° across at 16:9 but only 39° across on a portrait phone** — a 2.7× telescope
+nobody asked for. Fault 1 left the camera projecting that portrait aspect even in landscape, so *"zooms in
+too much"* and *"won't fit"* were the **same bug seen twice**.
+
+### The fix — stop trusting any single event
+`applyViewport(force)` is now the one authority for canvas size, aspect, DPR and fov. It is called from
+**everything**: `resize`, `orientationchange` (plus a settle ladder at 50/150/350/700 ms, because iOS reports
+the old size in that handler *and for a beat after it*), `visualViewport` resize+scroll, `pageshow`, `focus`,
+`visibilitychange`, and — the backstop that makes a stale canvas impossible — **once per frame in `animate()`**
+if the numbers have drifted. Two int compares per frame; the overlap between all these routes is free
+because a call that finds no change returns immediately.
+
+`vFovFor(fov, aspect)` holds the **horizontal** angle instead of the vertical one (the "Hor+" rule every FPS
+uses), clamped at `MAX_VFOV = 100` before it goes fisheye.
+- ⚠ **`REF_ASPECT = 1.5`, and the number is doing real work.** Anything at or above it is returned
+  **byte-identical**, which covers every desktop, every laptop, and a phone held in landscape. This can only
+  widen a screen that is genuinely too narrow — it can never re-frame the game Steven already knows. A fix
+  that quietly changes the desktop view is not a fix, it is a second bug, so the test asserts the *control*
+  half (16:9, 16:10, MacBook 1.54, ultrawide, phone-landscape → all exactly `BASE_FOV`) as hard as the fix.
+- ⚠ **The scope lerp drives `baseFov`, never `camera.fov`.** `BASE_FOV`/`SCOPE_FOV` moved up next to
+  `baseFov` and `vFovFor` — the three only make sense read together. `updateScope` lerps the *pre-aspect*
+  value and `applyCameraFov()` re-derives `camera.fov` from it, so a narrow phone keeps its widened view all
+  the way through an ADS zoom. Drive `camera.fov` directly and the next frame silently undoes the fit.
+
+### The HUD genuinely did not fit either
+A phone in landscape is only ~390 CSS px tall and the touch HUD was laid out on a tablet-sized box.
+Measured on `844×390`, three pairs **actually overlapped**: the day/lions readout sat on top of ability
+slots 5–6, the action-button cluster ran under the minimap, and the signals panel was clipped mid-line.
+A `@media (max-height:520px)` block shrinks the fixed-pixel furniture and re-stacks it — **0 overlapping
+pairs** after, verified by measuring every HUD rect against every other. Nothing in it applies to a tall
+screen, so tablet and desktop are untouched.
+- ⚠ The signals panel is now anchored **top *and* bottom** rather than given a `vh` fraction. The fraction
+  guessed short and clipped the last line — and `vh` is the one unit iOS lies about while the URL bar moves.
+
+### Pinch / double-tap
+⚠ **iOS has ignored `user-scalable=no` since iOS 10**, so the meta tag was never the guard. Safari's own
+`gesturestart/change/end` are swallowed, plus any `touchmove` carrying **more than one** touch.
+- ⚠ **The single-finger control matters as much as the fix.** One finger passes straight through, or the
+  look-swipe and the shop panel's scrolling both die and the cure is worse than the disease.
+`touch-action:manipulation` on `<body>` kills double-tap-zoom without touching scrolling;
+`-webkit-text-size-adjust:100%` stops iOS inflating fonts in landscape and reflowing a pixel-sized HUD.
+
+### 📱 Device readout
+`applyViewport` logs `viewport: <w> <h> <dpr> <orientation>` on every real change (never on a no-op).
+On iPhone: **Settings → Safari → Advanced → Web Inspector**, then read it from a Mac via Safari's Develop
+menu. Kept in deliberately — if a phone still looks wrong, that line is the evidence.
+
+### Verified — suite 34 → 37, all green
+| test | what it pins |
+|---|---|
+| `viewport: a rotation the browser never announced still re-fits the canvas` | stubs `innerWidth/innerHeight`, rotates with **no event at all**, asserts the stale state, then that a silent change re-applies (`true`) and an unchanged one no-ops (`false`); after a `resize` the buffer is exactly `innerWidth × pixelRatio` (`1688×780`), DPR ≤ 2, aspect followed, real screen restored |
+| `viewport: a narrow screen widens the view instead of zooming in` | portrait hFOV **39.0° → 57.7° (1.48× wider)**; every desktop/landscape aspect returns `BASE_FOV` unchanged; swept 0.35→3.0 for never-narrower, never-past-clamp, never-NaN |
+| `viewport: a two-finger touch cannot pinch-zoom the page` | 2- and 3-finger `touchmove` swallowed, `gesturestart` swallowed, **1-finger untouched**, `scrollHeight` and `visualViewport.scale` unmoved, canvas `touch-action:none` |
+- ⚠ **`withViewport` restores the property DESCRIPTOR, it never `delete`s.** `innerWidth`/`innerHeight` are
+  own accessors on `window`: `defineProperty` overwrites one with a data property and `delete` then removes
+  it **outright**, after which every later read is a `ReferenceError`. Learned by doing it, mid-session.

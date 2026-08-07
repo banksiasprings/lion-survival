@@ -17,7 +17,14 @@
 <script>window.__bip=null;window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window.__bip=e;window.dispatchEvent(new Event('bip-ready'));});</script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-select:none}
+/* -webkit-text-size-adjust: iOS Safari inflates font sizes of its own accord when a
+   page turns landscape, which reflows a HUD that is sized in exact pixels. */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+/* touch-action:manipulation kills double-tap-to-zoom while leaving single-finger
+   scrolling alone, so the shop panel still scrolls. */
+body{background:#000;overflow:hidden;font-family:'Courier New',monospace;user-select:none;
+  -webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation;
+  -webkit-tap-highlight-color:transparent}
 #game-canvas{display:block;position:fixed;inset:0;z-index:1;touch-action:none}
 #hud{position:fixed;inset:0;pointer-events:none;color:#fff;text-shadow:0 1px 3px #000;z-index:10}
 #crosshair{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:20px;height:20px;pointer-events:none}
@@ -219,6 +226,42 @@ body.touch #bottombar{bottom:calc(14px + var(--sa-b))}
 body.touch #health-wrap,body.touch #stamina-wrap,body.touch #hunger-wrap{width:168px}
 /* Crosshair a touch smaller / dimmer — you aim by facing, not a pointer. */
 body.touch #crosshair{opacity:0.5}
+
+/* ---- Short landscape (a phone on its side) ----------------------------------
+   A phone in landscape is only ~390 CSS px tall, and the touch HUD above was
+   laid out on a tablet-sized box. Measured on an 844×390 viewport, three pairs
+   actually overlapped: the day/lions readout sat on top of ability slots 5-6,
+   the action-button cluster ran under the minimap, and the signals panel was
+   clipped mid-line. Shrink the fixed-pixel furniture and re-stack it — nothing
+   here changes on a tall screen, so the tablet and desktop layouts are untouched. */
+@media (max-height:520px){
+  body.touch #minimap{width:104px;height:104px;top:calc(62px + var(--sa-t));right:calc(8px + var(--sa-r))}
+  body.touch #minimap canvas{width:104px;height:104px}
+  body.touch #abilitybar{top:calc(4px + var(--sa-t));gap:5px}
+  body.touch #abilitybar .ab-slot{width:40px;height:40px;font-size:19px}
+  body.touch #abilitybar .ab-slot .ab-key{font-size:9px;line-height:13px;top:-6px}
+  /* Drop the stats clear of the ability strip and left of the minimap. */
+  body.touch #topright{top:calc(50px + var(--sa-t));right:calc(120px + var(--sa-r));font-size:11px;line-height:1.45}
+  body.touch #topleft{top:calc(10px + var(--sa-t));font-size:11px;line-height:1.45}
+  body.touch #tc-menu{width:42px;height:42px;font-size:20px}
+  /* Anchored top AND bottom so it fills the gap between the ability strip and the
+     thumbstick exactly — a vh fraction guessed short and clipped the last line, and
+     vh is the one unit iOS lies about while the URL bar is moving. */
+  body.touch #signals{top:calc(56px + var(--sa-t));bottom:calc(122px + var(--sa-b));max-height:none;
+    font-size:9px;max-width:168px;line-height:1.35;padding:5px 7px}
+  /* Thumb furniture in: the joystick and the attack button own the bottom corners,
+     and the secondary cluster tucks between them instead of climbing into the minimap. */
+  body.touch #tc-joy{width:104px;height:104px;left:calc(14px + var(--sa-l));bottom:calc(14px + var(--sa-b))}
+  body.touch #tc-joy-knob{width:46px;height:46px;margin:-23px 0 0 -23px}
+  body.touch #tc-attack{width:74px;height:74px;font-size:30px;right:calc(14px + var(--sa-r));bottom:calc(16px + var(--sa-b))}
+  body.touch #tc-actions{right:calc(96px + var(--sa-r));bottom:calc(16px + var(--sa-b));
+    grid-template-columns:repeat(2,46px);gap:8px 8px}
+  body.touch #tc-actions .tc-btn{width:46px;height:46px;font-size:20px}
+  body.touch #health-wrap,body.touch #stamina-wrap,body.touch #hunger-wrap{width:140px;height:8px}
+  body.touch #bottombar{bottom:calc(10px + var(--sa-b));gap:4px}
+  body.touch #killfeed{top:auto;bottom:calc(96px + var(--sa-b));font-size:11px}
+  body.touch #prompt{bottom:calc(92px + var(--sa-b));font-size:13px}
+}
 
 /* ---- Rotate-to-landscape nudge (touch + portrait only; pure CSS) ---- */
 #rotate-hint{position:fixed;inset:0;z-index:200;display:none;
@@ -1249,15 +1292,103 @@ function makeSoftDot(){
 }
 
 // =====================================================================
+//  VIEWPORT — the one authority for canvas size, aspect and field of view
+// =====================================================================
+// ⚠ THIS IS A FUNCTION AND NOT THREE LINES IN A 'resize' LISTENER BECAUSE OF iOS.
+// Rotating an iPhone fires 'resize' while innerWidth/innerHeight still report the
+// OLD orientation, and retracting the URL bar changes innerHeight without firing
+// 'resize' at all. Either way the canvas keeps the size it had — measured on
+// 2026-08-08 as a 375×812 canvas still sitting on an 844×390 viewport, i.e. a
+// portrait strip rendered into the corner of a landscape phone. That single stale
+// size is the whole "zooms in too much / won't fit the screen" report: the strip
+// doesn't fit, and the portrait aspect it is still projecting with is a telescope.
+// The fix is to stop trusting any one event — re-apply on everything that could
+// mean a resize, again on a settle ladder after orientationchange, and once more
+// per frame if the numbers have drifted. Redundancy is free because a call that
+// finds no change returns immediately.
+
+const BASE_FOV = 75, SCOPE_FOV = 30;   // base is the game default; zoomed ≈ 2.5× (Steven asked ~30°)
+let baseFov = BASE_FOV;                // pre-aspect fov — the scope lerp drives THIS, never camera.fov
+
+// ⚠ THREE.JS `fov` IS VERTICAL, which is a trap on a phone: held fixed, a narrow
+// viewport silently throws the horizontal view away. 75° vertical spans 107°
+// across at 16:9 but only 39° across on a portrait phone — a 2.7× telescope
+// nobody asked for. So hold the HORIZONTAL angle instead and let the vertical
+// open up (the "Hor+" rule every FPS uses), clamped before it goes fisheye.
+// Anything at or above REF_ASPECT is returned untouched — that covers every
+// desktop and every phone held in landscape, so this can only widen a screen
+// that is genuinely too narrow. It never changes the view Steven already knows.
+const REF_ASPECT = 1.5, MAX_VFOV = 100;
+function vFovFor(fov, aspect){
+  if(!(aspect > 0) || aspect >= REF_ASPECT) return fov;
+  const hHalf = Math.atan(Math.tan(fov*Math.PI/360) * REF_ASPECT);   // half the horizontal angle at the reference
+  return Math.min(MAX_VFOV, 2*Math.atan(Math.tan(hHalf)/aspect) * 180/Math.PI);
+}
+function applyCameraFov(){
+  if(!camera) return;
+  camera.fov = vFovFor(baseFov, camera.aspect);
+  camera.updateProjectionMatrix();
+}
+
+let vpW = 0, vpH = 0;
+function applyViewport(force){
+  const w = Math.max(1, innerWidth), h = Math.max(1, innerHeight);
+  if(!force && w === vpW && h === vpH) return false;
+  vpW = w; vpH = h;
+  if(renderer){
+    // Re-read the DPR each time — it changes when a laptop moves to an external
+    // display. Capped at 2: an iPhone's 3 has the GPU drawing 9× the pixels of a
+    // logical one, which costs frames and buys nothing anyone can see.
+    renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+    renderer.setSize(w, h);
+  }
+  if(camera){ camera.aspect = w/h; applyCameraFov(); }
+  // 📱 Device readout. If a phone still looks wrong, this line is the evidence —
+  // Steven screenshots it and we debug from measurements instead of adjectives.
+  console.log('viewport:', w, h, devicePixelRatio,
+    (window.screen && screen.orientation && screen.orientation.type) || 'unknown');
+  return true;
+}
+
+// Wire every route to a new size. They overlap heavily and that is the point.
+function initViewportWatch(){
+  const bump = ()=>applyViewport(false);
+  addEventListener('resize', bump);
+  addEventListener('pageshow', bump);          // back/forward-cache restore returns at any size
+  addEventListener('focus', bump);             // coming back from another app on iOS
+  // While the page is hidden rAF is dead, so the per-frame guard cannot run — and
+  // the phone may well have been rotated in the meantime. Re-check on the way back in.
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) bump(); });
+  addEventListener('orientationchange', ()=>{
+    // iOS reports the PRE-rotation size here and for a beat afterwards, so a
+    // single read is worthless — re-check up a ladder until the numbers settle.
+    bump(); [50,150,350,700].forEach(ms=>setTimeout(bump, ms));
+  });
+  if(window.visualViewport){
+    // The URL bar sliding away resizes the visual viewport WITHOUT a window 'resize'.
+    visualViewport.addEventListener('resize', bump);
+    visualViewport.addEventListener('scroll', bump);
+  }
+  // 🤏 Pinch-zoom and double-tap-zoom. iOS has ignored `user-scalable=no` since
+  // iOS 10, so the meta tag alone does not hold the line: kill Safari's gesture
+  // events outright and swallow any multi-finger touchmove. Single-finger moves
+  // fall straight through, so the look-swipe and the shop's scroll still work.
+  ['gesturestart','gesturechange','gestureend'].forEach(t=>
+    addEventListener(t, e=>e.preventDefault(), {passive:false}));
+  addEventListener('touchmove', e=>{
+    if(e.touches && e.touches.length > 1) e.preventDefault();
+  }, {passive:false});
+}
+
+// =====================================================================
 //  SCENE SETUP
 // =====================================================================
 function initScene(){
   scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x87ceeb, 0.018*FOG_SCALE);
-  camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.05, 1300);
+  camera = new THREE.PerspectiveCamera(BASE_FOV, innerWidth/innerHeight, 0.05, 1300);
   renderer = new THREE.WebGLRenderer({antialias:true});
-  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-  renderer.setSize(innerWidth, innerHeight);
+  applyViewport(true);          // canvas size, aspect, capped DPR and the aspect-adapted fov
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputEncoding = THREE.sRGBEncoding;
@@ -1314,11 +1445,7 @@ function initScene(){
     console.warn('Survive the Savannah: shadows disabled — this GPU/driver failed the shadow-map probe.');
   }
 
-  window.addEventListener('resize', ()=>{
-    camera.aspect = innerWidth/innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-  });
+  initViewportWatch();
 }
 
 // Render a minimal shadow-casting scene and report whether the GL context stays
@@ -10662,14 +10789,18 @@ function kitFireCrossbow(){
   return true;
 }
 // ---- ADS scope zoom (Rhino Crossbow only) ----
-const BASE_FOV = 75, SCOPE_FOV = 30;              // base is the game default; zoomed ≈ 2.5× (Steven asked ~30°)
+// ⚠ BASE_FOV / SCOPE_FOV now live UP IN THE VIEWPORT SECTION, next to `baseFov`
+// and vFovFor() — the three only make sense read together.
 function scopeActive(){ return (scopeHeld || scopeToggle) && progress.abilities[progress.activeAbility]==='kit_crossbow'; }
 function updateScope(dt){
   const want = scopeActive() ? SCOPE_FOV : BASE_FOV;
-  if(Math.abs(camera.fov - want) > 0.05){
-    camera.fov += (want - camera.fov) * Math.min(1, dt*14);
-    if(Math.abs(camera.fov - want) < 0.05) camera.fov = want;
-    camera.updateProjectionMatrix();
+  // ⚠ Lerp the PRE-aspect fov, never camera.fov directly. applyCameraFov() re-derives
+  // camera.fov from it, so a narrow phone keeps its widened horizontal view all the
+  // way through the zoom — drive camera.fov here and the next frame undoes the fit.
+  if(Math.abs(baseFov - want) > 0.05){
+    baseFov += (want - baseFov) * Math.min(1, dt*14);
+    if(Math.abs(baseFov - want) < 0.05) baseFov = want;
+    applyCameraFov();
   }
   const sc = document.getElementById('scope');
   if(sc){ const on = scopeActive(); if(sc._on!==on){ sc.style.display = on?'block':'none'; sc._on = on; } }
@@ -15317,7 +15448,7 @@ function resetGame(){
   // 🪽 fresh legs, and CLEAR THE LATCH — restarting with Space still held would otherwise
   // leave `_jumpDown` true and swallow the first jump of the new run.
   player.jumpsLeft = maxJumps(); player.airT = 0; player._jumpDown = false;
-  if(camera){ camera.fov = BASE_FOV; camera.updateProjectionMatrix(); }
+  baseFov = BASE_FOV; applyCameraFov();                      // drop any scope zoom, keep the screen's fit
   const sc = document.getElementById('scope'); if(sc){ sc.style.display='none'; sc._on=false; }
   kills      = 0;
   elapsed    = 0;
@@ -15359,6 +15490,10 @@ function resetGame(){
 // =====================================================================
 function animate(){
   animId = requestAnimationFrame(animate);
+  // 📱 The backstop that makes a stale canvas impossible. Two int compares per
+  // frame, and it catches every resize no event told us about — which on iOS is
+  // most of them. Runs before the gameState gate so the menu re-fits too.
+  if(vpW !== innerWidth || vpH !== innerHeight) applyViewport(false);
   const dt = Math.min(clock.getDelta(), 0.05);
   if(gameState!=='playing'){ renderer.render(scene,camera); return; }
   // Loadout overlay open mid-game — freeze the sim but keep rendering the frozen frame.
@@ -15463,7 +15598,7 @@ function startGame(){
     resetGame();
     // Safety re-seed the renderer in case anything was off (canvas size,
     // clear color) — this kills the "blank/dark screen on restart" path.
-    renderer.setSize(innerWidth, innerHeight);
+    applyViewport(true);
     renderer.setClearColor(SKY.day.hor, 1);
     animate();
     // Request pointer lock — must happen inside user gesture (desktop only;

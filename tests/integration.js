@@ -2841,6 +2841,157 @@ test('cloak: no predator picks a crouched player, and every one of them does unc
 });
 
 // =====================================================================
+//  📱 VIEWPORT — the iPhone "zooms in too much / won't fit" regression
+// =====================================================================
+// Steven could not play on iPhone Safari on 2026-08-08. Measured cause: the
+// canvas was still 375×812 on an 844×390 viewport — a portrait strip rendered
+// into the corner of a landscape phone, projecting a portrait aspect, which is
+// a 39°-wide view where a desktop gets 107°. Two independent faults, so two
+// independent tests: the canvas must re-fit whether or not an event announced
+// the change, and a narrow screen must widen its view instead of zooming in.
+
+// Stub innerWidth/innerHeight. ⚠ RESTORE THE DESCRIPTOR, NEVER `delete` — these
+// are own accessors on window, so deleting one removes it outright and every
+// later read throws ReferenceError (learned the hard way while writing this).
+function withViewport(w, h, fn){
+  const dW = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+  const dH = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+  const set = (a,b)=>{
+    Object.defineProperty(window,'innerWidth', {value:a, configurable:true});
+    Object.defineProperty(window,'innerHeight',{value:b, configurable:true});
+  };
+  try { set(w,h); return fn(set); }
+  finally {
+    Object.defineProperty(window,'innerWidth', dW);
+    Object.defineProperty(window,'innerHeight',dH);
+    applyViewport(true);                       // hand the real screen back, whatever happened
+  }
+}
+// The angle that actually matters on a phone: how wide the world is left-to-right.
+const hFovOf = (vFov, aspect) => 2*Math.atan(Math.tan(vFov*Math.PI/360)*aspect)*180/Math.PI;
+
+test('viewport: a rotation the browser never announced still re-fits the canvas', ()=>{
+  const detail = {};
+  withViewport(390, 844, set => {
+    applyViewport(true);
+    detail.portraitCss = renderer.domElement.style.width + 'x' + renderer.domElement.style.height;
+
+    // --- rotate to landscape, telling the game NOTHING. This is the iOS case:
+    //     'resize' either never fires or fires with the pre-rotation numbers. ---
+    set(844, 390);
+    detail.staleBeforeAnything = renderer.domElement.style.width === '390px';
+
+    // The per-frame guard's contract: a silent change re-applies and reports it…
+    detail.silentChangeReapplied = applyViewport(false) === true;
+    // …and an unchanged viewport costs nothing, so running it every frame is free.
+    detail.noChangeIsANoOp = applyViewport(false) === false;
+
+    // --- and the announced path lands on exactly the same numbers ---
+    set(844, 390);
+    window.dispatchEvent(new Event('resize'));
+    const c = renderer.domElement, pr = renderer.getPixelRatio();
+    detail.cssMatchesWindow  = c.style.width === '844px' && c.style.height === '390px';
+    detail.bufferMatchesDpr  = c.width === Math.floor(844*pr) && c.height === Math.floor(390*pr);
+    detail.buffer            = c.width + 'x' + c.height;
+    detail.pixelRatio        = pr;
+    detail.pixelRatioCapped  = pr <= 2;                       // an iPhone's 3 would draw 9× the pixels
+    detail.aspectFollowed    = Math.abs(camera.aspect - 844/390) < 1e-6;
+  });
+  // and the real screen is back, undamaged
+  detail.restored = renderer.domElement.style.width === innerWidth + 'px' &&
+                    Math.abs(camera.aspect - innerWidth/innerHeight) < 1e-6;
+  const pass = detail.staleBeforeAnything && detail.silentChangeReapplied && detail.noChangeIsANoOp &&
+               detail.cssMatchesWindow && detail.bufferMatchesDpr && detail.pixelRatioCapped &&
+               detail.aspectFollowed && detail.restored;
+  return { pass, detail };
+});
+
+test('viewport: a narrow screen widens the view instead of zooming in', ()=>{
+  const detail = {};
+  // ⚠ THE CONTROL HALF, and it is the important one: every screen Steven already
+  // plays on must come back BYTE-IDENTICAL. A fix that quietly re-frames the
+  // desktop game is not a fix, it is a second bug.
+  const unchanged = { '16:9':16/9, '16:10':1.6, 'macbook':1.54, 'ultrawide':21/9, 'phone-landscape':844/390 };
+  detail.untouched = {};
+  Object.keys(unchanged).forEach(k => detail.untouched[k] = vFovFor(BASE_FOV, unchanged[k]) === BASE_FOV);
+  detail.allUntouched = Object.keys(detail.untouched).every(k => detail.untouched[k]);
+
+  // …and the scope zoom is just as untouched on those screens.
+  detail.scopeUntouched = vFovFor(SCOPE_FOV, 16/9) === SCOPE_FOV;
+
+  // --- the phone-portrait case that started this ---
+  const a = 390/844;
+  const before = hFovOf(BASE_FOV, a);          // what a fixed vertical fov gave: the telescope
+  const after  = hFovOf(vFovFor(BASE_FOV, a), a);
+  detail.portraitHFovBefore = +before.toFixed(1);
+  detail.portraitHFovAfter  = +after.toFixed(1);
+  detail.portraitWiderBy    = +(after/before).toFixed(2);
+  detail.wasATelescope      = before < 45;                    // measured 39.0° on a real iPhone
+  detail.nowUsable          = after > 55;
+  detail.clampedNotFisheye  = vFovFor(BASE_FOV, a) <= MAX_VFOV;
+
+  // Across every aspect: never narrower than before, and never past the clamp.
+  const sweep = [];
+  for(let asp=0.35; asp<=3.0; asp+=0.05) sweep.push(asp);
+  detail.neverNarrower = sweep.every(s => hFovOf(vFovFor(BASE_FOV,s), s) >= hFovOf(BASE_FOV,s) - 1e-9);
+  detail.neverFisheye  = sweep.every(s => vFovFor(BASE_FOV,s) <= MAX_VFOV + 1e-9);
+  detail.alwaysFinite  = sweep.every(s => isFinite(vFovFor(BASE_FOV,s)) && vFovFor(BASE_FOV,s) > 0);
+  // degenerate inputs must not produce NaN — a NaN fov blanks the whole screen
+  detail.survivesGarbage = vFovFor(BASE_FOV, 0) === BASE_FOV && vFovFor(BASE_FOV, NaN) === BASE_FOV;
+
+  const pass = detail.allUntouched && detail.scopeUntouched && detail.wasATelescope &&
+               detail.nowUsable && detail.clampedNotFisheye && detail.neverNarrower &&
+               detail.neverFisheye && detail.alwaysFinite && detail.survivesGarbage;
+  return { pass, detail };
+});
+
+test('viewport: a two-finger touch cannot pinch-zoom the page', ()=>{
+  const detail = {};
+  // iOS has ignored user-scalable=no since iOS 10, so the meta tag is not the
+  // guard — swallowing the events is. Build a real TouchEvent where we can; the
+  // handler only reads touches.length, so a shimmed one proves the same contract.
+  function touchMove(n){
+    const pts = [];
+    for(let i=0;i<n;i++){
+      try { pts.push(new Touch({identifier:i, target:document.body, clientX:40+i*90, clientY:60+i*40})); }
+      catch(e){ pts.push({identifier:i, clientX:40+i*90, clientY:60+i*40}); }
+    }
+    let ev;
+    try { ev = new TouchEvent('touchmove', {touches:pts, cancelable:true, bubbles:true}); }
+    catch(e){
+      ev = new Event('touchmove', {cancelable:true, bubbles:true});
+      Object.defineProperty(ev, 'touches', {value:pts});
+    }
+    document.body.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  }
+  const scrollBefore = document.documentElement.scrollHeight;
+  const scaleBefore  = (window.visualViewport && visualViewport.scale) || 1;
+
+  detail.twoFingerSwallowed = touchMove(2);
+  detail.threeFingerSwallowed = touchMove(3);
+  // ⚠ THE CONTROL: one finger must pass straight through, or the look-swipe and
+  // the shop panel's scrolling both die and the "fix" is worse than the bug.
+  detail.oneFingerUntouched = touchMove(1) === false;
+
+  // Safari's own pinch events, which is what actually fires on an iPhone.
+  const gesture = new Event('gesturestart', {cancelable:true, bubbles:true});
+  document.body.dispatchEvent(gesture);
+  detail.gestureStartSwallowed = gesture.defaultPrevented;
+
+  detail.documentDidNotGrow = document.documentElement.scrollHeight === scrollBefore;
+  detail.scaleStillOne = ((window.visualViewport && visualViewport.scale) || 1) === scaleBefore;
+  // and the canvas opts out of browser gestures entirely
+  detail.canvasTouchAction = getComputedStyle(renderer.domElement).touchAction;
+  detail.canvasOptedOut = detail.canvasTouchAction === 'none';
+
+  const pass = detail.twoFingerSwallowed && detail.threeFingerSwallowed &&
+               detail.oneFingerUntouched && detail.gestureStartSwallowed &&
+               detail.documentDidNotGrow && detail.scaleStillOne && detail.canvasOptedOut;
+  return { pass, detail };
+});
+
+// =====================================================================
 //  runner
 // =====================================================================
 window.SAVANNAH_TESTS = T;
